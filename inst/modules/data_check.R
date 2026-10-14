@@ -1439,6 +1439,15 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   summary_table$column_n[is.na(summary_table$column_n)] <- 0L
   summary_table$empty_col_n[is.na(summary_table$empty_col_n)] <- 0L
 
+  # A brief report (report_type() "brief" or "simple_brief", set while the
+  # modules run) is about what to improve. How the files were grouped into
+  # studies, and whether the grouping step got an answer, is not something the
+  # author needs to act on there (decided 2026-10-14), so those sentences are
+  # left to the full report.
+  if (.report_is_brief(report_type())) {
+    summary_studies <- NULL
+    summary_ungrouped <- NULL
+  }
   summary_text <- c(summary_files, summary_data, summary_studies,
                      summary_ungrouped, summary_nolocal, summary_omitted,
                      summary_workspace, summary_nontabular, summary_trial_level) |>
@@ -2046,7 +2055,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
                 " (%d of them only via short-scale straightlining, which can be normal answering)",
                 n_short) else ""))
   }
-  if (nrow(demo_df) > 0) {
+  # Which columns hold demographics is information, not something to fix, so
+  # a brief report (see the study-group sentences above) leaves it out.
+  if (nrow(demo_df) > 0 && !.report_is_brief(report_type())) {
     kinds <- sort(unique(demo_df$demographic))
     dv_summary_text <- paste0(dv_summary_text,
       sprintf(" We detected demographic column%s for %s.",

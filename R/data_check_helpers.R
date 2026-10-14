@@ -1609,6 +1609,13 @@ data_study_roster <- function(paper) {
   # within the model's limits. Each batch is numbered 1..n within itself so the
   # model returns small indices; we map them back via the batch's global rows.
   send_rows <- which(send)
+  # With LLM use switched off, nothing is sent: llm() refuses ("Set
+  # llm_use(TRUE) to use LLM functions"), and that refusal used to be caught
+  # here like a failed request, so every file was reported as "the model
+  # request failed" -- on the hosted apps, which never switch LLM use on, for
+  # every run (found 2026-10-14). The files go straight to the fallback rules
+  # below, as this function's documentation already promised.
+  if (!llm_use()) send_rows <- integer(0)
   batches <- split(send_rows, ceiling(seq_along(send_rows) / batch_size))
 
   any_ok <- FALSE

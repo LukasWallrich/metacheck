@@ -1173,3 +1173,49 @@ test_that("data_check still uses a tabset in full mode", {
   expect_match(rpt, "## study1.csv", fixed = TRUE)
   expect_match(rpt, "## study2.csv", fixed = TRUE)
 })
+
+test_that("a brief report leaves out the study-group and demographics sentences", {
+  # A brief report is about what to improve: how files were grouped into
+  # studies, and which columns hold demographics, are left to the full report
+  # (decided 2026-10-14).
+  d <- withr::local_tempdir()
+  utils::write.csv(data.frame(
+    id = 1:6, Age = c(21, 25, 30, 22, 28, 35),
+    Gender = c("Male", "female", "Female", "male", "Male", "Female"),
+    score = c(1.2, 3.4, 2.2, 4.1, 3.3, 2.8)),
+    file.path(d, "study1_data.csv"), row.names = FALSE)
+  writeLines("Data for study 1.", file.path(d, "README.md"))
+  withr::defer(report_type("full"))
+
+  summary_for <- function(rt) {
+    report_type(rt)
+    suppressWarnings(suppressMessages(module_run(
+      test_paper(), "data_check", local_path = d, local_only = TRUE)))$summary_text
+  }
+  full <- summary_for("full")
+  expect_match(full, "study group")
+  expect_match(full, "demographic column")
+  for (rt in c("brief", "simple_brief")) {
+    s <- summary_for(rt)
+    expect_no_match(s, "study group")
+    expect_no_match(s, "did not get an answer")
+    expect_no_match(s, "demographic")
+    # the data-quality sentence stays
+    expect_match(s, "data-quality checks")
+  }
+})
+
+test_that("data_group_llm makes no model request and reports nothing unanswered when LLM use is off", {
+  # With llm_use(FALSE), llm() refuses; that refusal used to be caught like a
+  # failed request, so every file was reported as unanswered ("the model
+  # request failed") on the hosted apps (found 2026-10-14).
+  llm_use(FALSE)
+  local_mocked_bindings(llm = function(...) stop("llm() must not be called"))
+  files <- data.frame(
+    file_name = c("data.csv", "analysis.R", "stimulus1.png", "notes.txt"),
+    file_path = c("data.csv", "analysis.R", "materials/stimulus1.png", "notes.txt"),
+    data_type = c("data", "code", "materials", "documentation"))
+  grp <- data_group_llm(files)
+  expect_length(attr(grp, "unresolved"), 0)
+  expect_false(anyNA(grp$group))
+})
