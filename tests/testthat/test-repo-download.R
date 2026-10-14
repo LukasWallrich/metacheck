@@ -177,6 +177,17 @@ test_that("failed downloads are reported and recorded, not swallowed", {
   expect_equal(fa$file_url, files$file_url[2])
 })
 
+# Captured as plain top-level code before any test below replaces them, and
+# put back explicitly after the tests that do (see the note on
+# .real_req_perform below: local_mocked_bindings()'s own restore does not
+# reliably take effect in this setup). Verified 2026-10-13: the constant
+# .dryad_doi() stand-in of the two Dryad quota tests was still in place in
+# the OSF/Zenodo routing tests that follow them, so every repo there was
+# treated as a Dryad dataset.
+.real_zip_fetch_members <- get(".zip_fetch_members", envir = asNamespace("metacheck"),
+                               inherits = FALSE)
+.real_dryad_doi <- get(".dryad_doi", envir = asNamespace("metacheck"), inherits = FALSE)
+
 # Build a files data.frame shaped like repo_check's zip-peek expansion: no
 # file_url (an archive-member row has none), but archive_url/archive_member
 # instead (see download_repo_files()'s own header comment on this block).
@@ -671,6 +682,7 @@ test_that("Dryad datasets with enough files still use zip", {
   dl <- download_repo_files(files, max_file_size = 10, max_download_size = 100)
   expect_true(all(!is.na(dl$file_location)))
 })
+assignInNamespace(".dryad_doi", .real_dryad_doi, ns = "metacheck")
 
 test_that(".download_many_parallel reports HTTP errors and retries a truncated download", {
   # Real (non-mocked) file:// downloads, exercising the actual success path,
@@ -1024,4 +1036,91 @@ test_that("download_repo_files(skip_on_api_limit = TRUE) records exhausted-quota
   fa <- attr(dl, "failed")
   expect_equal(nrow(fa), nrow(files))
   expect_true(all(startsWith(fa$error, "API rate limit exhausted:")))
+})
+
+# ── Archive members: whole-archive mode for every host ──────────────────────
+# download_repo_files() used to allow .zip_fetch_members()'s whole-archive mode
+# for Dryad only (max_whole_bytes = 0 everywhere else). Every host now passes
+# the archive's budget and lets the cost rule decide; Dryad alone counts
+# requests only (request_bytes = Inf).
+
+test_that("archive members on any host may use whole-archive mode; Dryad counts requests only", {
+  seen <- list()
+  local_mocked_bindings(
+    .zip_fetch_members = function(url, names, dest, ..., max_whole_bytes = 0,
+                                  request_bytes = 1048576, size = NULL) {
+      seen[[url]] <<- list(max_whole_bytes = max_whole_bytes,
+                           request_bytes = request_bytes, size = size)
+      data.frame(name = names, path = NA_character_, size = 100, ok = FALSE,
+                 error = "not fetched in this test", stringsAsFactors = FALSE)
+    }
+  )
+  files <- rbind(make_archive_member_files(), make_archive_member_files())
+  files$archive_url[2] <- "https://datadryad.org/api/v2/files/1/download"
+  files$archive_size <- c(5000, 6000)
+  for (r in files$repo_url) unlink(metacheck:::.repo_cache_subdir(r), recursive = TRUE)
+  suppressMessages(download_repo_files(files, max_download_size = 10))
+
+  other <- seen[[files$archive_url[1]]]
+  expect_equal(other$max_whole_bytes, 10 * 1024 * 1024)
+  expect_equal(other$request_bytes, 1048576)
+  expect_equal(other$size, 5000)   # carried from repo_check's listing
+  dryad <- seen[[files$archive_url[2]]]
+  expect_equal(dryad$max_whole_bytes, 10 * 1024 * 1024)
+  expect_true(is.infinite(dryad$request_bytes))
+  expect_equal(dryad$size, 6000)
+})
+
+assignInNamespace(".zip_fetch_members", .real_zip_fetch_members, ns = "metacheck")
+test_that("an archive member inside a zip already on disk is extracted without a request", {
+  # A ResearchBox box is downloaded whole by repo_check, so repo_check's
+  # expansion of a zip inside it records the zip's local path as archive_url.
+  d <- withr::local_tempdir()
+  writeLines("x <- 1", file.path(d, "member.R"))
+  withr::with_dir(d, utils::zip("inner.zip", "member.R", flags = "-q"))
+  zip <- file.path(d, "inner.zip")
+  skip_if_not(file.exists(zip), "zip utility unavailable")
+  files <- make_archive_member_files()
+  files$archive_url <- zip
+  unlink(metacheck:::.repo_cache_subdir(files$repo_url[1]), recursive = TRUE)
+  httr2::local_mocked_responses(function(req) stop("no request expected"))
+
+  dl <- download_repo_files(files)
+  expect_false(is.na(dl$file_location[1]))
+  expect_equal(readLines(dl$file_location[1]), "x <- 1")
+  expect_equal(nrow(attr(dl, "failed")), 0)
+})
+
+# ── Dryad bulk download: any Dryad DOI form ─────────────────────────────────
+# The bulk path matched only "datadryad.org" or "doi.org/10.5061/dryad", so a
+# dataset cited by one of Dryad's other DOI prefixes, or as a bare
+# "10.5061/dryad.x", fell back to file-by-file. .dryad_doi() is real here (not
+# mocked), so the test covers the prefixes it knows.
+test_that("the Dryad bulk download is used for every Dryad DOI form", {
+  for (repo in c("https://doi.org/10.25338/B8N33J", "10.5061/dryad.testbare1")) {
+    n <- 16
+    files <- data.frame(
+      repo_url = rep(repo, n),
+      file_name = paste0("f", seq_len(n), ".csv"),
+      file_path = paste0("f", seq_len(n), ".csv"),
+      file_url = sprintf("https://datadryad.org/api/v2/files/%d/download", seq_len(n)),
+      file_size = rep(1024, n),
+      file_location = NA_character_,
+      stringsAsFactors = FALSE
+    )
+    unlink(metacheck:::.repo_cache_subdir(repo), recursive = TRUE)
+    zip_url <- NULL
+    local_mocked_bindings(
+      .download_zip_to_cache = function(files, row_idx, zip_url, ...) {
+        zip_url <<- zip_url
+        files$file_location[row_idx] <- files$.cache_path[row_idx]
+        files
+      },
+      .package = "metacheck"
+    )
+    dl <- suppressMessages(download_repo_files(files, max_file_size = 10,
+                                               max_download_size = 100))
+    expect_match(zip_url, "datadryad\\.org/api/v2/datasets/doi%3A10\\.")
+    expect_true(all(!is.na(dl$file_location)))
+  }
 })

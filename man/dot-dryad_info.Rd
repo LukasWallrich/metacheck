@@ -12,7 +12,8 @@
 \item{pb}{a progress bar passed from another function}
 }
 \value{
-a data frame of information
+a data frame of information, including \code{storage_size},
+\code{files_total} and \code{files_incomplete} (see \code{\link[=dryad_info]{dryad_info()}})
 }
 \description{
 Retrieve info from one Dryad dataset

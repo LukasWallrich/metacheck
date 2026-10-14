@@ -178,3 +178,62 @@ test_that("github_info", {
   expect_equal(names(info$languages), c("repo", "language", "bytes"))
   expect_true(all(repo == info$languages$repo))
 }, "mock")
+
+
+test_that("github_tree_files lists a repo with API requests only, no github.com HEAD", local({
+  # Regression test (2026-10-13 survey): github_tree_files() first sent a
+  # HEAD request to the github.com page (via github_repo()) although the
+  # /repos/{owner}/{repo} request that follows answers the same question.
+  # Requests are answered by a mock, so this records every URL and method.
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- c(seen, paste(req$method %||% "GET", req$url))
+      if (grepl("/git/trees/", req$url)) {
+        body <- list(truncated = FALSE, tree = list(
+          list(path = "README.md", type = "blob", size = 12),
+          list(path = "R", type = "tree"),
+          list(path = "R/a.R", type = "blob", size = 34)))
+      } else {
+        body <- list(default_branch = "main", license = list(spdx_id = "MIT"))
+      }
+      httr2::response(status_code = 200,
+                      headers = list(`Content-Type` = "application/json"),
+                      body = charToRaw(jsonlite::toJSON(body, auto_unbox = TRUE)))
+    },
+    .package = "httr2"
+  )
+
+  res <- github_tree_files("https://github.com/owner/repo")
+  expect_false(res$gated)
+  expect_equal(res$license, "MIT")
+  expect_equal(res$files$path, c("README.md", "R/a.R"))
+  expect_equal(seen, c(
+    "GET https://api.github.com/repos/owner/repo",
+    "GET https://api.github.com/repos/owner/repo/git/trees/main?recursive=1"))
+}))
+
+
+test_that("github_tree_files reports a 404 from the API as an invalid repository", local({
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- c(seen, req$url)
+      httr2::response(status_code = 404)
+    },
+    .package = "httr2"
+  )
+
+  res <- github_tree_files("owner/does-not-exist")
+  expect_true(res$gated)
+  expect_equal(res$reason, "invalid or inaccessible GitHub repository")
+  expect_null(res$files)
+  # one API request, and no fallback crawl through github_files()
+  expect_equal(seen, "https://api.github.com/repos/owner/does-not-exist")
+
+  # text that is not shaped like owner/repo never reaches the network at all
+  seen <- character(0)
+  res <- github_tree_files("not a repository")
+  expect_true(res$gated)
+  expect_length(seen, 0)
+}))

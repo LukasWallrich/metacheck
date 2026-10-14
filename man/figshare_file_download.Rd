@@ -50,14 +50,16 @@ Creates a directory for the article and downloads all of its files.
 Returns (invisibly) a data frame with file info.
 }
 \details{
-Unlike Dataverse, OSF, or Zenodo, Figshare's v2 API documents no
-whole-article bulk-download endpoint (verified 2026-08-16: no
-\code{ndownloader.figshare.com/articles/...} zip route appears anywhere in
-https://docs.figshare.com/) -- every file's \code{download_url} is its own
-request, so this always downloads file by file. A \code{.zip} already present in
-the article is still handled the same way \code{dataverse_file_download()}
-handles one: fetched whole and left as a zip unless \code{unzip_types} asks for
-only specific members out of it.
+Files are downloaded one by one, each from its own \code{download_url}. Figshare
+does document a whole-article zip (\verb{GET /v2/articles/\{id\}/download}, which
+redirects to \verb{ndownloader.figshare.com/articles/<id>/versions/<v>} and
+serves \code{application/zip} with a \code{Content-Length}, verified 2026-10-13), but
+it is not used here: it always contains every file, so it cannot honour the
+size limits below, and how it lays out files kept in folders was not
+verified. Files in folders (Figshare's \code{folder_structure}) are saved under
+those folders. A \code{.zip} already present in the article is handled the same
+way \code{dataverse_file_download()} handles one: fetched whole and left as a
+zip unless \code{unzip_types} asks for only specific members out of it.
 
 You can limit downloads to only files under a specific size (defaults to
 10MB) and only a maximum download size (largest files will be omitted until

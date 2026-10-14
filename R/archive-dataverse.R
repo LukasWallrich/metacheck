@@ -371,8 +371,8 @@
 # was confirmed wrong for a real paper (10.17026/dans-2b8-gx7j genuinely
 # lives on lifesciences.datastations.nl, not archaeology.datastations.nl,
 # the first-listed host sharing that prefix). Resolved instead via
-# .dataverse_resolve_doi_host(), which follows the DOI's own live redirect
-# -- the same resolution any human reader of the citation would go through.
+# .dataverse_resolve_doi_host(), which reads the URL the DOI is registered to
+# -- the same place any human reader following the citation would land.
 .dataverse_host_from_doi <- function(doi) {
   doi <- as.character(doi)
   out <- rep(NA_character_, length(doi))
@@ -403,28 +403,68 @@
   out
 }
 
-# Resolve which of several candidate hosts a DOI actually belongs to by
-# following the DOI's own live redirect (doi.org -> the installation's real
-# dataset URL) -- see .dataverse_host_from_doi()'s header comment. Falls
-# back to the first candidate if the redirect cannot be followed or does not
-# land on any of them, keeping the previous (sometimes-wrong, but never
-# worse) behaviour rather than turning a resolvable citation into an
-# unresolvable one.
-.dataverse_resolve_doi_host <- function(doi, candidates) {
-  resolved <- tryCatch({
-    resp <- httr2::request(paste0("https://doi.org/", doi)) |>
-      httr2::req_error(is_error = \(resp) FALSE) |>
-      httr2::req_perform()
-    httr2::resp_url(resp)
-  }, error = \(e) NA_character_)
+# Same-session memo of .dataverse_resolve_doi_host() results, keyed by the
+# lower-cased DOI (DOIs are case-insensitive). The same shared-prefix DOI is
+# resolved at least twice per pipeline run -- once by dataverse_links() and
+# again by dataverse_info(), each through its own .dataverse_parse() call --
+# and the answer cannot change within a session.
+.dataverse_doi_host_cache <- new.env(parent = emptyenv())
 
-  if (!is.na(resolved)) {
-    for (host in candidates) {
-      if (grepl(host, resolved, fixed = TRUE)) return(host)
-    }
+# Resolve which of several candidate hosts a DOI actually belongs to from the
+# DOI's own registered landing URL -- see .dataverse_host_from_doi()'s header
+# comment. Falls back to the first candidate if the DOI cannot be looked up
+# or its URL is on none of them, keeping the previous (sometimes-wrong, but
+# never worse) behaviour rather than turning a resolvable citation into an
+# unresolvable one.
+#
+# Asks the doi.org handle API (https://doi.org/api/handles/<doi>?type=URL)
+# for the registered URL instead of following doi.org's redirect: the
+# redirect also downloads the installation's whole landing page, which took
+# ~3.8 s against ~0.35 s for the handle record (measured 2026-10-13 on DANS
+# 10.17026/dans-2b8-gx7j, whose handle record names
+# lifesciences.datastations.nl/citation?persistentId=...). The handle API
+# answers a DOI case-insensitively and returns responseCode 100 with no
+# values for a DOI that does not exist (both confirmed live 2026-10-13).
+#
+# The registered URL's hostname is compared EXACTLY against each candidate,
+# not as a substring: the Polish RODBUK family shares prefixes between
+# rodbuk.pl and its subdomains (e.g. 10.26106 is listed for both rodbuk.pl
+# and uj.rodbuk.pl), and "rodbuk.pl" is a substring of every
+# "<x>.rodbuk.pl" URL, so the earlier substring test returned rodbuk.pl for
+# a DOI registered at uj.rodbuk.pl whenever rodbuk.pl came first in the list.
+.dataverse_resolve_doi_host <- function(doi, candidates) {
+  key <- tolower(doi)
+  if (exists(key, envir = .dataverse_doi_host_cache, inherits = FALSE)) {
+    return(get(key, envir = .dataverse_doi_host_cache, inherits = FALSE))
   }
 
-  candidates[[1]]
+  # NULL = the lookup itself failed (network error, unreadable reply): not
+  # memoised, so a later call can try again. A readable reply -- with or
+  # without a URL in it -- is a definite answer and is memoised.
+  rec <- tryCatch({
+    resp <- httr2::request(paste0("https://doi.org/api/handles/",
+                                  utils::URLencode(doi), "?type=URL")) |>
+      httr2::req_timeout(30) |>
+      httr2::req_error(is_error = \(resp) FALSE) |>
+      httr2::req_perform()
+    httr2::resp_body_json(resp)
+  }, error = \(e) NULL)
+
+  urls <- vapply(rec$values %||% list(), \(v) {
+    if (identical(v$type, "URL")) as.character(v$data$value %empty_or% NA_character_)
+    else NA_character_
+  }, character(1))
+  urls <- urls[!is.na(urls)]
+  resolved_hosts <- tolower(vapply(urls, \(u) {
+    tryCatch(httr2::url_parse(u)$hostname %empty_or% NA_character_,
+             error = \(e) NA_character_)
+  }, character(1)))
+
+  hit <- candidates[tolower(candidates) %in% resolved_hosts]
+  host <- if (length(hit) > 0) hit[[1]] else candidates[[1]]
+
+  if (!is.null(rec)) assign(key, host, envir = .dataverse_doi_host_cache)
+  host
 }
 
 #' Find Dataverse Links in Papers
@@ -623,6 +663,14 @@ dataverse_info <- function(dataverse_url, id_col = 1, pb = NULL, cache = FALSE) 
   ) |> unique()
   ids <- ids[!is.na(ids$dataverse_url), , drop = FALSE]
   valid <- ids[!is.na(ids$dataverse_host) & !is.na(ids$dataverse_doi), , drop = FALSE]
+  # One query per DATASET, not per url: dataverse_links() routinely returns
+  # two different urls for one dataset -- the dataset.xhtml link itself plus
+  # the bare DOI its own other_dv_doi pattern finds INSIDE that same link --
+  # and `ids` (unique on url, host and doi together) keeps both, so the loop
+  # below fetched the same dataset JSON twice (measured 2026-10-13 on Harvard
+  # doi:10.7910/DVN/SVVULN). The join further down is keyed on (host, doi)
+  # alone, so every url still receives the one result.
+  valid <- valid[!duplicated(valid[, c("dataverse_host", "dataverse_doi")]), , drop = FALSE]
 
   if (nrow(valid) == 0) {
     ("No valid Dataverse links") |>
@@ -1057,7 +1105,8 @@ dataverse_file_download <- function(host, doi,
       got <- tryCatch(
         .dataverse_zip_members(files$self[[i]], dest = download_to,
                                keep_types = unzip_types,
-                               max_file_size = max_file_size),
+                               max_file_size = max_file_size,
+                               size = files$size[[i]]),
         error = \(e) NULL)
       if (!is.null(got)) {
         files$extracted[i] <- sum(got$ok %in% TRUE)
@@ -1173,6 +1222,9 @@ dataverse_file_download <- function(host, doi,
 #'   documentation and skips materials, matching [zip_decision()]
 #' @param max_file_size largest member to extract (in MB), applied per member
 #'   exactly as the dataset-level cap is applied per file
+#' @param size the zip's size in bytes as Dataverse lists it (`filesize`), or
+#'   `NULL`. Passed on to [zip_peek()] so it does not have to send a `HEAD`
+#'   request to learn it.
 #'
 #' @returns a data frame with one row per extracted member (`name`, `path`,
 #'   `size`, `ok`), or `NULL` when the archive could not be listed and the
@@ -1180,8 +1232,8 @@ dataverse_file_download <- function(host, doi,
 #' @keywords internal
 .dataverse_zip_members <- function(url, dest,
                                    keep_types = c("data", "documentation"),
-                                   max_file_size = 10) {
-  listing <- tryCatch(zip_peek(url), error = \(e) NULL)
+                                   max_file_size = 10, size = NULL) {
+  listing <- tryCatch(zip_peek(url, size = size), error = \(e) NULL)
   if (is.null(listing) || nrow(listing) == 0) return(NULL)
 
   types <- data_classify_files(basename(listing$name))

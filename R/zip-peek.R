@@ -108,9 +108,67 @@
     httr2::req_perform_connection()
   on.exit(close(resp), add = TRUE)
   status <- httr2::resp_status(resp)
+  # A suffix range ("bytes=-n") never covers the whole file on purpose, so a
+  # 200 answer here means the host ignores Range (see .range_ignored_record()).
+  if (status == 200L && grepl("^bytes=-", range)) .range_ignored_record(url, resp)
   list(status = status,
        total = .content_range_total(resp),
        body = if (status == 206L) httr2::resp_body_raw(resp) else NULL)
+}
+
+# ── Hosts that ignore Range ──────────────────────────────────────────────────
+# Some hosts answer a ranged GET with 200 and the complete file: PsychArchives'
+# /rest/bitstreams/<id>/retrieve (verified live 2026-10-13: "Range: bytes=0-9"
+# came back 200 with the full 4644-byte file), the OSF's proxy for files in a
+# GitHub add-on, and Zenodo's whole-record files-archive. A peek of such a file
+# cannot work, so once a host has shown it, later peeks this session give up
+# before sending anything (zip_peek() and .http_range_bytes() check
+# .range_ignored_known() first) instead of paying a HEAD and a GET each time.
+#
+# The record is keyed on the host plus the SHAPE of the path (every path
+# segment holding a digit replaced by "*", so ".../bitstreams/<uuid>/retrieve"
+# covers every PsychArchives file), not on the host alone: zenodo.org serves
+# its per-file /content URLs with ranges honoured and its files-archive
+# without, so a host-wide record would stop every later Zenodo peek. For the
+# same reason nothing is recorded when the answer came from a DIFFERENT host
+# after a redirect: osf.io/download/<id>/ redirects both OSF Storage files
+# (ranges honoured) and GitHub add-on files (ranges ignored) to other hosts,
+# and the two request URLs look alike, so whether ranges work there is a
+# property of the file, not of osf.io. Reset per R session, like
+# .zip_peek_cache: a host can change how it behaves.
+.range_ignored_hosts <- new.env(parent = emptyenv())
+
+.range_ignored_key <- function(url) {
+  u <- tryCatch(httr2::url_parse(url), error = function(e) NULL)
+  if (is.null(u) || is.null(u$hostname) || !nzchar(u$hostname)) return(NA_character_)
+  segs <- strsplit(u$path %||% "", "/", fixed = TRUE)[[1]]
+  segs <- segs[nzchar(segs)]
+  segs[grepl("[0-9]", segs)] <- "*"
+  paste0(tolower(u$hostname), "/", paste(segs, collapse = "/"))
+}
+
+.range_ignored_known <- function(url) {
+  key <- .range_ignored_key(url)
+  !is.na(key) && exists(key, envir = .range_ignored_hosts, inherits = FALSE)
+}
+
+# Record that `url`'s host ignored a range request, unless `resp` came from a
+# different host after a redirect (see the section comment above).
+.range_ignored_record <- function(url, resp = NULL) {
+  key <- .range_ignored_key(url)
+  if (is.na(key)) return(invisible(FALSE))
+  final <- if (is.null(resp)) url else resp$url %||% url
+  host_of <- function(x) tolower(tryCatch(httr2::url_parse(x)$hostname,
+                                          error = function(e) NA_character_) %||% NA_character_)
+  if (!identical(host_of(url), host_of(final))) return(invisible(FALSE))
+  assign(key, TRUE, envir = .range_ignored_hosts)
+  invisible(TRUE)
+}
+
+# Size of a 200 answer's body as the host reported it (Content-Length), or NA.
+.resp_content_length <- function(resp) {
+  cl <- suppressWarnings(as.numeric(httr2::resp_header(resp, "content-length")))
+  if (length(cl) != 1 || !is.finite(cl) || cl < 0) NA_real_ else cl
 }
 
 # Size in bytes from a one-byte ranged GET, or NA. The fallback for when a
@@ -124,10 +182,21 @@
 }
 
 # Fetch the last `n` bytes of a URL via an HTTP Range request. Returns the raw
-# bytes (possibly fewer than n if the file is smaller), or NULL on failure / if
-# the server ignored the range (returned 200 with the whole body). The file's
-# total size is attached as attr(, "total") (NA when the host did not report
-# it), so zip_peek() can size its larger retry even when HEAD gave nothing.
+# bytes (possibly fewer than n if the file is smaller), or NULL on failure. The
+# file's total size is attached as attr(, "total") (NA when the host did not
+# report it), so zip_peek() can size its larger retry even when HEAD gave
+# nothing.
+#
+# A host that ignores the range answers 200 with the whole file. That answer
+# is only read when the file is small -- at most max(n, 2 MB), by the known
+# size or the answer's own Content-Length -- because the tail is then inside
+# it at little cost. Anything larger is closed unread and NULL returned (the
+# caller falls back to downloading the archive, as before). This used to go
+# through req_perform(), which reads the whole body before the status can be
+# looked at: a peek of a multi-gigabyte PsychArchives zip, whose /retrieve
+# endpoint ignores Range, transferred the entire file into memory. Sent
+# through req_perform_connection() now, like .http_range_get(), so the status
+# and headers are read before any of the body.
 #
 # `total`: the file size if already known; NULL to ask for it with HEAD first;
 # NA when HEAD already failed, in which case the tail is requested by its
@@ -166,12 +235,23 @@
                        backoff = .storage_backoff,
                        after = .storage_retry_after_factory(skip_on_api_limit)) |>
       httr2::req_error(is_error = function(r) FALSE) |>
-      httr2::req_perform()
-    # 206 = partial content (range honoured). 200 = whole file (range ignored):
-    # only usable if it's small enough that we got the tail anyway.
+      httr2::req_perform_connection()
+    on.exit(close(r), add = TRUE)
+    status <- httr2::resp_status(r)
+    # 206 = partial content (range honoured). 200 = whole file: only read
+    # when it is small (see the comment above).
     body <- NULL
-    if (httr2::resp_status(r) == 206) body <- httr2::resp_body_raw(r)
-    if (httr2::resp_status(r) == 200) body <- utils::tail(httr2::resp_body_raw(r), n)
+    if (status == 206L) body <- httr2::resp_body_raw(r)
+    if (status == 200L) {
+      # A range from byte 0 asks for the whole file, which a host may answer
+      # with a plain 200 while still honouring other ranges, so only a range
+      # starting later shows that the host ignores Range.
+      if (start > 0) .range_ignored_record(url, r)
+      body_size <- .resp_content_length(r)
+      if (is.na(body_size)) body_size <- total
+      if (!is.finite(body_size) || body_size > max(n, 2 * 1048576)) return(NULL)
+      body <- utils::tail(httr2::resp_body_raw(r), n)
+    }
     if (!is.null(body)) attr(body, "total") <- total
     body
   }, error = function(e) NULL)
@@ -207,10 +287,10 @@
 # meant to avoid. Returns raw bytes, or NULL when the host ignored the range.
 #
 # Retried via req_retry() for the same reason as .http_range_tail() -- see its
-# comment (issue #384). This is the call .zip_member_fetch() makes TWICE per
-# member (once for the local header, once for the compressed data), so a
-# single-member fetch inside a loop over many members is exactly the
-# back-to-back-request pattern a host's burst limit is most likely to catch.
+# comment (issue #384). This is the call a member fetch makes for every
+# member, or every run of nearby members (.zip_range_plan()), so a fetch
+# inside a loop over many members is exactly the back-to-back-request pattern
+# a host's burst limit is most likely to catch.
 #
 # `reason`, if given, is an environment the caller reads afterwards: on any
 # failure this writes a one-line explanation into `reason$msg` (a caught error's
@@ -233,10 +313,27 @@
 .range_status_is_transient <- function(resp) {
   !(httr2::resp_status(resp) %in% c(200L, 206L))
 }
-.http_range_bytes <- function(url, from, to, skip_on_api_limit = FALSE, reason = NULL) {
+#
+# Sent through req_perform_connection() (see .http_range_tail()'s comment): a
+# host that ignores the range answers 200 with the whole archive, which is now
+# closed unread instead of being transferred into memory first and then
+# discarded. A host seen doing that is remembered (.range_ignored_record()),
+# and later requests to it this session fail at once.
+#
+# `allow_short = TRUE` accepts an answer shorter than asked for when its
+# Content-Range shows it stops at the end of the file. A member fetch asks for
+# a margin past the member's own bytes (see .zip_range_plan()), and for the
+# last member of a small archive that margin can reach past the end of the
+# file; a host then sends the bytes up to the end, as RFC 9110 says it should.
+.http_range_bytes <- function(url, from, to, skip_on_api_limit = FALSE, reason = NULL,
+                              allow_short = FALSE) {
   tryCatch({
     if (!is.finite(from) || !is.finite(to) || from < 0 || to < from) {
       if (!is.null(reason)) reason$msg <- "invalid byte range"
+      return(NULL)
+    }
+    if (.range_ignored_known(url)) {
+      if (!is.null(reason)) reason$msg <- "HTTP 200 (range not honoured; host seen ignoring ranges earlier this session)"
       return(NULL)
     }
     # See .http_range_tail()'s own comment on this same call: check the
@@ -255,14 +352,34 @@
                        backoff = .storage_backoff,
                        after = .storage_retry_after_factory(skip_on_api_limit)) |>
       httr2::req_error(is_error = function(r) FALSE) |>
-      httr2::req_perform()
+      httr2::req_perform_connection()
+    on.exit(close(r), add = TRUE)
     status <- httr2::resp_status(r)
+    # A range from byte 0 that reaches past the end of a small file covers the
+    # whole file, which a host may answer with a plain 200 while honouring
+    # other ranges. With `allow_short`, that whole (small) file is exactly
+    # what a 206 cut at the end of the file would have held.
+    if (status == 200L && from == 0 && isTRUE(allow_short)) {
+      cl <- .resp_content_length(r)
+      if (is.finite(cl) && cl <= to + 1) {
+        body <- httr2::resp_body_raw(r)
+        if (length(body) == cl) return(body)
+      }
+    }
     if (status != 206) {
+      # Only a range starting past byte 0 shows that the host ignores Range
+      # (see .http_range_tail()).
+      if (status == 200L && from > 0) .range_ignored_record(url, r)
       if (!is.null(reason)) reason$msg <- sprintf("HTTP %d (range not honoured)", status)
       return(NULL)
     }
     body <- httr2::resp_body_raw(r)
-    if (length(body) != (to - from + 1)) {   # short/over-long read
+    ends_at_eof <- function() {
+      total <- .content_range_total(r)
+      is.finite(total) && from + length(body) == total
+    }
+    if (length(body) > (to - from + 1) ||
+        (length(body) < (to - from + 1) && !(isTRUE(allow_short) && ends_at_eof()))) {
       if (!is.null(reason)) reason$msg <- "short read (range request returned the wrong length)"
       return(NULL)
     }
@@ -282,11 +399,45 @@
 # `offset` (where this member's local header starts in the archive), and `crc`
 # (the integrity check). They are read from bytes the walk already had to step
 # over, so collecting them costs nothing. See .zip_member_fetch().
+#
+# Zip64. An archive over 4 GB, or with more than 65,535 entries, cannot state
+# its central directory's size, offset or entry count in the 2- and 4-byte
+# fields of the ordinary end record, so it writes 0xFFFF/0xFFFFFFFF there and
+# puts the real values in a Zip64 end record (56 bytes, signature PK\06\06)
+# followed by a Zip64 locator (20 bytes, PK\06\07) that sits immediately
+# before the ordinary end record. The central directory then ends where the
+# Zip64 end record begins, not where the ordinary end record begins, so
+# before this was handled the walk started 76 bytes too early, found no entry
+# signature, and the archive could not be listed at all. Each entry likewise
+# writes 0xFFFFFFFF in any of its uncompressed size, compressed size or local
+# header offset that does not fit, and puts the real value in its "Zip64
+# extended information" extra field (header ID 0x0001), which holds 8-byte
+# values for ONLY the fields that carry the placeholder, always in the order
+# uncompressed size, compressed size, offset (then a 4-byte disk number when
+# that field is 0xFFFF). Verified 2026-10-13 against the 7.6 GB zip of
+# Figshare article 10.6084/m9.figshare.28052888.v1: 867 entries, 591 of whose
+# offsets are stored only in that extra field; with both handled, the same
+# 128 KB tail lists every entry with a usable offset.
+#
+# The tail's absolute position in the archive is needed only to find the Zip64
+# end record by the offset the locator gives; `raw` carries the archive's total
+# size as attr(, "total") when the caller knows it (.http_range_tail() sets
+# it). Without it, the record is looked for directly before the locator, where
+# every writer puts it.
+#
+# The result carries attr(, "cd_offset"): where the central directory starts
+# in the archive, i.e. where the last member's bytes must end. A member fetch
+# uses it to bound its request (see .zip_range_plan()).
 .parse_zip_central_dir <- function(raw) {
   n <- length(raw)
   if (n < 22) return(NULL)
-  eocd_sig <- as.raw(c(0x50, 0x4b, 0x05, 0x06))   # "PK\05\06"
-  cd_sig   <- as.raw(c(0x50, 0x4b, 0x01, 0x02))   # "PK\01\02" central-dir header
+  eocd_sig  <- as.raw(c(0x50, 0x4b, 0x05, 0x06))   # "PK\05\06"
+  cd_sig    <- as.raw(c(0x50, 0x4b, 0x01, 0x02))   # "PK\01\02" central-dir header
+  loc64_sig <- as.raw(c(0x50, 0x4b, 0x06, 0x07))   # "PK\06\07" Zip64 locator
+  rec64_sig <- as.raw(c(0x50, 0x4b, 0x06, 0x06))   # "PK\06\06" Zip64 end record
+  sig_at <- function(at, sig) {
+    at >= 1 && at + 3 <= n && identical(raw[at:(at + 3)], sig)
+  }
 
   # Find the EOCD signature, scanning from the end (comment may follow it).
   eocd <- NA_integer_
@@ -300,17 +451,56 @@
   #   +10 (2) total entries, +12 (4) central-dir size, +16 (4) central-dir offset
   n_entries <- .le_int(raw, eocd + 10, 2)
   cd_size   <- .le_int(raw, eocd + 12, 4)
+  cd_offset <- .le_int(raw, eocd + 16, 4)
+  cd_end    <- eocd
 
-  # The central directory ends right before the EOCD record and is cd_size bytes
-  # long, so within our tail it starts at (eocd - cd_size) when fully present.
-  cd_start <- eocd - cd_size
+  # Zip64 end record, found through the locator right before the EOCD. Its
+  # fields (offsets relative to its signature): +32 (8) total entries,
+  # +40 (8) central-dir size, +48 (8) central-dir offset.
+  loc <- eocd - 20
+  if (sig_at(loc, loc64_sig)) {
+    rec <- NA_real_
+    total <- suppressWarnings(as.numeric(attr(raw, "total") %||% NA_real_))
+    if (length(total) == 1 && is.finite(total) && total >= n) {
+      at <- .le_int(raw, loc + 8, 8) - (total - n) + 1
+      if (sig_at(at, rec64_sig)) rec <- at
+    }
+    if (is.na(rec) && loc - 56 >= 1) {
+      # Directly before the locator (no extensible data), else scan back.
+      for (at in (loc - 56):max(1, loc - 56 - 65536)) {
+        if (sig_at(at, rec64_sig)) { rec <- at; break }
+      }
+    }
+    if (!is.na(rec)) {
+      n_entries <- .le_int(raw, rec + 32, 8)
+      cd_size   <- .le_int(raw, rec + 40, 8)
+      cd_offset <- .le_int(raw, rec + 48, 8)
+      cd_end    <- rec
+    } else if (n_entries == 65535 || cd_size == 4294967295) {
+      return(NULL)   # Zip64 end record not in the tail, and it is needed
+    }
+    # (Otherwise the four bytes that looked like a locator were part of the
+    # last entry, and the ordinary end record's values stand.)
+  }
+
+  # The central directory ends right before the (Zip64) end record and is
+  # cd_size bytes long, so within our tail it starts at (cd_end - cd_size) when
+  # fully present.
+  cd_start <- cd_end - cd_size
   if (cd_start < 1) return(NULL)   # central directory not fully in the tail
 
-  names <- character(0); sizes <- numeric(0)
-  methods <- numeric(0); csizes <- numeric(0)
-  offsets <- numeric(0); crcs <- numeric(0)
+  # Preallocated: growing six vectors with c() costs time proportional to the
+  # square of the entry count, which a Zip64 archive can put past 65,535. An
+  # entry is at least 46 bytes, which bounds the count a corrupt end record
+  # could claim.
+  n_max <- min(n_entries, floor((cd_end - cd_start) / 46))
+  names <- character(n_max); sizes <- numeric(n_max)
+  methods <- numeric(n_max); csizes <- numeric(n_max)
+  offsets <- numeric(n_max); crcs <- numeric(n_max)
+  ff4 <- 4294967295
+  n_read <- 0
   p <- cd_start
-  for (e in seq_len(n_entries)) {
+  for (e in seq_len(n_max)) {
     if (p + 46 > n) break
     if (!identical(raw[p:(p + 3)], cd_sig)) break
     method  <- .le_int(raw, p + 10, 2)   # 0 = stored, 8 = deflate
@@ -320,27 +510,72 @@
     name_len <- .le_int(raw, p + 28, 2)
     extra_len <- .le_int(raw, p + 30, 2)
     comm_len  <- .le_int(raw, p + 32, 2)
+    disk    <- .le_int(raw, p + 34, 2)
     offset  <- .le_int(raw, p + 42, 4)   # local header offset within the archive
-    nm <- rawToChar(raw[(p + 46):(p + 46 + name_len - 1)])
+    if (p + 46 + name_len + extra_len - 1 > n) break   # entry runs past the tail
+    nm <- if (name_len > 0) rawToChar(raw[(p + 46):(p + 46 + name_len - 1)]) else ""
     Encoding(nm) <- "UTF-8"
-    names <- c(names, nm); sizes <- c(sizes, usize)
-    methods <- c(methods, method); csizes <- c(csizes, csize)
-    offsets <- c(offsets, offset); crcs <- c(crcs, crc)
+    if (extra_len > 0 &&
+        (usize == ff4 || csize == ff4 || offset == ff4 || disk == 65535)) {
+      z <- .zip64_extra(raw, p + 46 + name_len, extra_len,
+                        need = c(usize == ff4, csize == ff4, offset == ff4))
+      if (!is.null(z)) {
+        if (usize == ff4 && !is.na(z[1]))  usize  <- z[1]
+        if (csize == ff4 && !is.na(z[2]))  csize  <- z[2]
+        if (offset == ff4 && !is.na(z[3])) offset <- z[3]
+      }
+    }
+    n_read <- n_read + 1
+    names[n_read] <- nm; sizes[n_read] <- usize
+    methods[n_read] <- method; csizes[n_read] <- csize
+    offsets[n_read] <- offset; crcs[n_read] <- crc
     p <- p + 46 + name_len + extra_len + comm_len
   }
-  if (length(names) == 0) return(NULL)
-  # Zip64: an archive (or member) over 4 GB stores 0xFFFFFFFF in these 4-byte
-  # fields and puts the real value in a per-entry extra field this parser does
-  # not read. Listing still works -- the names are correct and that is what the
-  # peek is for -- but a member fetch must not treat the sentinel as a real byte
-  # offset, so it is marked NA and .zip_member_fetch() refuses it.
-  zip64 <- 4294967295
-  sizes[sizes == zip64] <- NA_real_
-  csizes[csizes == zip64] <- NA_real_
-  offsets[offsets == zip64] <- NA_real_
-  data.frame(name = names, size = sizes, method = methods, csize = csizes,
-             offset = offsets, crc = crcs, stringsAsFactors = FALSE)
+  if (n_read == 0) return(NULL)
+  keep <- seq_len(n_read)
+  names <- names[keep]; sizes <- sizes[keep]; methods <- methods[keep]
+  csizes <- csizes[keep]; offsets <- offsets[keep]; crcs <- crcs[keep]
+  # A placeholder with no Zip64 extra field to resolve it (a malformed entry)
+  # must not be read as a real size or byte offset, so it is marked NA and
+  # .zip_member_fetch() refuses it. Listing still works: the names are correct
+  # and that is what the peek is for.
+  sizes[sizes == ff4] <- NA_real_
+  csizes[csizes == ff4] <- NA_real_
+  offsets[offsets == ff4] <- NA_real_
+  out <- data.frame(name = names, size = sizes, method = methods, csize = csizes,
+                    offset = offsets, crc = crcs, stringsAsFactors = FALSE)
+  attr(out, "cd_offset") <- if (cd_offset == ff4) NA_real_ else cd_offset
+  out
 }
+
+# Read the Zip64 extended-information extra field (header ID 0x0001) from an
+# entry's extra block of `len` bytes starting at `at`. `need` says which of
+# uncompressed size, compressed size and local header offset hold the
+# placeholder in the fixed fields; only those are present, in that order (see
+# .parse_zip_central_dir()). Returns a numeric(3) with NA for a field not
+# needed or not present, or NULL when the block holds no Zip64 field.
+.zip64_extra <- function(raw, at, len, need) {
+  end <- at + len - 1
+  q <- at
+  while (q + 3 <= end) {
+    id <- .le_int(raw, q, 2)
+    sz <- .le_int(raw, q + 2, 2)
+    if (q + 3 + sz > end) break   # field claims more bytes than the block has
+    if (id == 1) {
+      vals <- rep(NA_real_, 3)
+      pos <- q + 4
+      for (k in which(need)) {
+        if (pos + 7 > q + 3 + sz) break
+        vals[k] <- .le_int(raw, pos, 8)
+        pos <- pos + 8
+      }
+      return(vals)
+    }
+    q <- q + 4 + sz
+  }
+  NULL
+}
+
 
 #' Peek at the contents of a remote ZIP file without downloading it
 #'
@@ -349,7 +584,9 @@
 #' inside. This lets a downloader decide whether a zip is worth fetching (does it
 #' contain data, or only stimuli/assets?) before spending the bandwidth.
 #'
-#' @param url the download URL of a ZIP file
+#' @param url the download URL of a ZIP file, or the path of a ZIP file
+#'   already on disk (e.g. one inside a downloaded ResearchBox), which is then
+#'   read directly without any request
 #' @param tail_bytes how many bytes of the tail to fetch (default 128 KB; raised
 #'   automatically on retry when the central directory is larger)
 #' @param cache if `TRUE`, persist this URL's result to disk (see
@@ -363,14 +600,21 @@
 #'   out the host's reset -- see [download_repo_files()]'s parameter of the
 #'   same name. Falls back to `getOption("metacheck.skip_on_api_limit")` when
 #'   not given directly.
+#' @param size the archive's size in bytes, when the caller already knows it
+#'   (e.g. from a repository's file listing). Skips the HEAD request otherwise
+#'   made to learn it -- on the OSF's file server every request costs several
+#'   seconds, however small the file. `NULL` or `NA` (the default) asks the
+#'   host as before.
 #'
 #' @returns a data.frame with columns `name` (entry path inside the zip) and
 #'   `size` (uncompressed bytes), excluding directory entries; or `NULL` when the
 #'   host does not support range requests or the listing cannot be read (the
 #'   caller should then download-and-inspect). Also returns `method`, `csize`,
 #'   `offset`, and `crc`, which describe where each member's bytes sit in the
-#'   archive so a single member can be fetched without the rest; `csize` and
-#'   `offset` are `NA` for a Zip64 archive, which cannot be fetched this way.
+#'   archive so a single member can be fetched without the rest. Zip64 archives
+#'   (over 4 GB or over 65,535 entries) are read in full, including the sizes
+#'   and offsets stored only in their Zip64 extra fields; `csize` and `offset`
+#'   are `NA` only for an entry whose listing is malformed.
 #' @export
 #' @keywords internal
 #' @examples
@@ -378,7 +622,7 @@
 #' zip_peek("https://osf.io/download/abcde/")
 #' }
 zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
-                     skip_on_api_limit = FALSE) {
+                     skip_on_api_limit = FALSE, size = NULL) {
   # Reuse an earlier peek of this exact URL from this same session -- SUCCESS
   # OR FAILURE. Originally only a success was cached, on the assumption a
   # refused/unsupported NULL "would still return NULL again quickly" -- true
@@ -400,6 +644,21 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     return(get(url, envir = .zip_peek_cache, inherits = FALSE))
   }
 
+  # A zip already on disk is listed from the file itself. ResearchBox rows
+  # carry the box's web page as file_url and the downloaded copy as
+  # file_location, so a zip inside a box used to be peeked at the web page --
+  # which answers a Range request with 406 (verified 2026-10-13), costing about
+  # 0.8 s per inner zip for nothing. Not cached: a local file can change.
+  if (.is_local_file(url)) return(.zip_list_local(url))
+
+  # A host already seen ignoring ranges this session (see
+  # .range_ignored_record()) would answer this peek with the whole file too,
+  # so give up before sending the HEAD and GET.
+  if (.range_ignored_known(url)) {
+    assign(url, NULL, envir = .zip_peek_cache)
+    return(NULL)
+  }
+
   # On-disk cache, one level further out than the in-memory one above: reused
   # across R processes, not just within one (issue #427). Gated on `cache`
   # (default FALSE) so an uncached caller's behavior is unchanged. A hit here
@@ -416,7 +675,17 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   # When HEAD gives none (S3-backed hosts refuse it, issue #424), total stays
   # NA: the first tail is then requested by distance from the end, and its
   # Content-Range supplies the size for the 1 MB retry.
-  total <- .head_size(url, skip_on_api_limit = skip_on_api_limit)
+  #
+  # A size the caller already has (from the repository's own file listing)
+  # replaces the HEAD request. That matters most on the OSF: its file server
+  # took 2 to 20 seconds to answer each request for a few-KB zip (measured
+  # 2026-10-13), so the HEAD alone could cost as much as the peek itself. With
+  # the size known, a zip no larger than the tail is fetched whole by one
+  # ranged GET (bytes=0-<size-1>), which .http_range_tail() accepts as a 206
+  # or a plain 200 alike.
+  known <- suppressWarnings(as.numeric(size %||% NA_real_))
+  total <- if (length(known) == 1 && is.finite(known) && known > 0) known else
+    .head_size(url, skip_on_api_limit = skip_on_api_limit)
 
   for (nb in unique(c(tail_bytes, 1048576))) {   # retry once with 1 MB tail
     raw <- .http_range_tail(url, nb, total = total,
@@ -429,7 +698,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     if (is.na(total)) total <- attr(raw, "total") %||% NA_real_
     cd <- .parse_zip_central_dir(raw)
     if (!is.null(cd)) {
-      cd <- cd[!grepl("/$", cd$name), , drop = FALSE]   # drop directory entries
+      cd <- .zip_drop_dirs(cd)
       assign(url, cd, envir = .zip_peek_cache)
       if (isTRUE(cache)) .zip_peek_cache_put(url, cd)
       return(cd)
@@ -439,6 +708,66 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   assign(url, NULL, envir = .zip_peek_cache)
   if (isTRUE(cache)) .zip_peek_cache_put(url, NULL)
   NULL
+}
+
+# Drop directory entries from a parsed listing, keeping its "cd_offset"
+# attribute (which subsetting a data.frame would discard).
+.zip_drop_dirs <- function(cd) {
+  out <- cd[!grepl("/$", cd$name), , drop = FALSE]
+  attr(out, "cd_offset") <- attr(cd, "cd_offset")
+  out
+}
+
+# TRUE when `x` names an existing local file rather than a URL. A URL scheme
+# ("https://", "file://") is never treated as a path, so a file:// URL still
+# goes through the HTTP code like any other URL.
+.is_local_file <- function(x) {
+  length(x) == 1 && !is.na(x) && nzchar(x) &&
+    !grepl("^[A-Za-z][A-Za-z0-9+.-]*://", x) &&
+    file.exists(x) && !dir.exists(x)
+}
+
+# For each row of a file table, the zip's local copy when there is one
+# (file_location names an existing file), else NA. A row with a local copy is
+# listed and read from disk (zip_peek() and .zip_fetch_members() accept a
+# path) rather than through its file_url. Needed for ResearchBox, whose rows
+# carry the box's web page as file_url and the copy unpacked from the box's
+# zip as file_location: a peek at the web page fails (406, ~0.8 s each,
+# verified 2026-10-13).
+.zip_local_source <- function(files) {
+  loc <- files$file_location %||% rep(NA_character_, nrow(files))
+  vapply(loc, function(p) if (.is_local_file(p)) p else NA_character_,
+         character(1), USE.NAMES = FALSE)
+}
+
+# List a zip that is already on disk, with the same columns zip_peek() returns
+# for a remote one: the central directory is read from the file's last 1 MB by
+# the same parser. A central directory larger than that falls back to
+# utils::unzip(list = TRUE), which gives names and sizes only (method, csize,
+# offset and crc NA: they are not needed, since a local member is extracted
+# with unzip rather than fetched by byte range). NULL when the file is not a
+# readable zip.
+.zip_list_local <- function(path, tail_bytes = 1048576) {
+  total <- file.size(path)
+  if (is.na(total) || total < 22) return(NULL)
+  n <- min(total, tail_bytes)
+  raw <- tryCatch({
+    con <- file(path, "rb")
+    on.exit(close(con), add = TRUE)
+    seek(con, total - n)
+    readBin(con, "raw", n)
+  }, error = function(e) NULL)
+  if (is.null(raw)) return(NULL)
+  attr(raw, "total") <- total
+  cd <- .parse_zip_central_dir(raw)
+  if (is.null(cd)) {
+    lst <- tryCatch(utils::unzip(path, list = TRUE), error = function(e) NULL)
+    if (is.null(lst) || nrow(lst) == 0) return(NULL)
+    cd <- data.frame(name = lst$Name, size = as.numeric(lst$Length),
+                     method = NA_real_, csize = NA_real_, offset = NA_real_,
+                     crc = NA_real_, stringsAsFactors = FALSE)
+  }
+  .zip_drop_dirs(cd)
 }
 
 # ── Single-member extraction ─────────────────────────────────────────────────
@@ -453,12 +782,15 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 # recovered from a 129.8 MB archive in 1.2 seconds, transferring 2.06 MB, and its
 # CRC32 matched the value stored in the archive's own central directory.
 #
-# Two hosts behave differently and both matter here. A Zenodo per-file URL
-# (/api/records/<id>/files/<name>/content) answers 206 with the requested bytes.
-# The OSF refuses ranges entirely, and Zenodo's own whole-record `files-archive`
-# endpoint ignores the Range header and returns the complete body, so neither
-# can be read this way -- .http_range_bytes() treats that 200 as a failure and
-# the caller falls back to downloading the archive.
+# Hosts behave differently here. A Zenodo per-file URL
+# (/api/records/<id>/files/<name>/content) answers 206 with the requested bytes,
+# and so does an OSF file in OSF storage (osf.io/download/<id>/, which redirects
+# to a signed storage URL; verified 2026-10-13 -- an earlier note here said the
+# OSF refused ranges, which is no longer true). A file in an add-on linked to
+# an OSF project (e.g. GitHub, proxied by the OSF) and Zenodo's whole-record
+# `files-archive` endpoint ignore the Range header and return the complete
+# body, so neither can be read this way -- .http_range_bytes() treats that 200
+# as a failure and the caller falls back to downloading the archive.
 
 # Decompress one member's raw bytes.
 #
@@ -508,6 +840,15 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 # the local header must be read to locate the data rather than computing the
 # position from the central directory.
 #
+# One range request per member, not two. This used to ask for the 30-byte
+# local header first and then for the data, so every member cost two
+# round trips. It now asks for the header, the name, the compressed data and
+# a margin of `margin` bytes (1 KB) at once (.zip_range_plan()), and reads the
+# header from the start of that answer; the margin covers a local extra field
+# longer than the central one (28 bytes in the case above). Only when the
+# local extra field is longer than the margin is a second request made, for
+# the bytes still missing (.zip_member_from_buffer()).
+#
 # Returns raw bytes of the decompressed member, or NULL on any failure.
 #
 # `reason`, if given, is an environment the caller reads afterwards: on any
@@ -515,31 +856,111 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 # record WHY a member was never downloaded instead of a bare, indistinguishable
 # NULL (#429) -- e.g. a transient range-request failure (worth a retry) vs. a
 # corrupt local header or a CRC mismatch (retrying won't help).
+#
+# `cd`, if given, is the archive's whole listing (from zip_peek()), used only
+# to bound the request at the next member's local header (see
+# .zip_range_plan()).
 .zip_member_fetch <- function(url, entry, verify = TRUE, skip_on_api_limit = FALSE,
-                              reason = NULL) {
+                              reason = NULL, cd = NULL) {
   if (is.null(entry) || nrow(entry) != 1) {
     if (!is.null(reason)) reason$msg <- "invalid archive entry"
     return(NULL)
   }
-  if (is.na(entry$offset) || is.na(entry$csize)) {  # Zip64
-    if (!is.null(reason)) reason$msg <- "Zip64 entry (size/offset not stored in 32 bits)"
+  if (is.na(entry$offset) || is.na(entry$csize)) {
+    if (!is.null(reason))
+      reason$msg <- "Zip64 entry whose size/offset could not be read from the archive's listing"
     return(NULL)
   }
   if (entry$csize == 0) return(raw(0))                         # empty member
 
-  # Local file header: 30 fixed bytes, then name and extra fields.
-  lh <- .http_range_bytes(url, entry$offset, entry$offset + 29,
+  g <- .zip_range_plan(entry, cd %||% entry)[[1]]
+  buf <- .http_range_bytes(url, g$from, g$to, skip_on_api_limit = skip_on_api_limit,
+                           reason = reason, allow_short = TRUE)
+  if (is.null(buf)) return(NULL)
+  .zip_member_from_buffer(url, entry, buf, g$from, verify = verify,
                           skip_on_api_limit = skip_on_api_limit, reason = reason)
-  if (is.null(lh)) return(NULL)
-  if (!identical(lh[1:4], as.raw(c(0x50, 0x4b, 0x03, 0x04)))) {
+}
+
+# Byte ranges to request for the rows of `want` (from zip_peek()), as a list of
+# list(rows, from, to): `rows` the positions in `want` whose bytes lie in
+# [from, to] (0-based, inclusive).
+#
+# Each member needs its 30-byte local header, its name, its compressed data,
+# and the local extra field, whose length the central directory does not give
+# (`margin` bytes are allowed for it, see .zip_member_fetch()). The range is cut
+# off at the next local header or, for the last member, at the start of the
+# central directory (attr(cd, "cd_offset")): a member's bytes cannot run past
+# either, so the margin never asks for bytes that belong to something else.
+#
+# Members close together share one request. Harvard Dataverse
+# doi:10.7910/DVN/SVVULN holds the 7 code files code_check wants inside one
+# 23 KB stretch of its zip, which cost 14 requests with two per member
+# (measured 2026-10-13). Members are merged when the gap between them is at
+# most `max_gap` (64 KB: transferring that is cheaper than a round trip) and
+# the merged range stays within `max_span` (16 MB, which bounds the memory one
+# request's answer takes); a single member larger than `max_span` still gets
+# a request of its own, exactly as before.
+.zip_range_plan <- function(want, cd = want, margin = 1024, max_gap = 65536,
+                            max_span = 16 * 1048576) {
+  if (is.null(want) || nrow(want) == 0) return(list())
+  name_bytes <- nchar(want$name, type = "bytes")
+  from <- want$offset
+  need_to <- from + 30 + name_bytes + want$csize - 1   # without the extra field
+  to <- need_to + margin
+  bounds <- sort(unique(stats::na.omit(c(cd$offset, attr(cd, "cd_offset")))))
+  if (length(bounds) > 0) {
+    nxt <- bounds[findInterval(from, bounds) + 1]   # first bound after `from`
+    cut <- !is.na(nxt) & nxt - 1 < to
+    to[cut] <- pmax(need_to[cut], nxt[cut] - 1)
+  }
+
+  ord <- order(from)
+  plan <- list()
+  cur <- NULL
+  for (i in ord) {
+    if (!is.null(cur) && from[i] - cur$to - 1 <= max_gap &&
+        max(cur$to, to[i]) - cur$from + 1 <= max_span) {
+      cur$rows <- c(cur$rows, i)
+      cur$to <- max(cur$to, to[i])
+    } else {
+      if (!is.null(cur)) plan[[length(plan) + 1L]] <- cur
+      cur <- list(rows = i, from = from[i], to = to[i])
+    }
+  }
+  plan[[length(plan) + 1L]] <- cur
+  plan
+}
+
+# Read one member out of `buf`, the bytes of the archive from position
+# `buf_from` (0-based) on, as fetched for its range (.zip_range_plan()). Parses
+# the local header found at the member's offset, fetches whatever part of the
+# data `buf` does not hold (a local extra field longer than the margin, or a
+# range cut short), then decompresses and checks the result against the size
+# and CRC32 in the archive's own listing. Returns raw bytes or NULL, writing
+# the reason into `reason$msg` like .zip_member_fetch().
+.zip_member_from_buffer <- function(url, entry, buf, buf_from, verify = TRUE,
+                                    skip_on_api_limit = FALSE, reason = NULL) {
+  pos <- entry$offset - buf_from + 1          # 1-based index of the local header
+  if (pos < 1 || pos + 29 > length(buf)) {
+    if (!is.null(reason)) reason$msg <- "local file header not in the fetched range"
+    return(NULL)
+  }
+  if (!identical(buf[pos:(pos + 3)], as.raw(c(0x50, 0x4b, 0x03, 0x04)))) {
     if (!is.null(reason)) reason$msg <- "local file header signature mismatch"
     return(NULL)
   }
-  data_start <- entry$offset + 30 + .le_int(lh, 27, 2) + .le_int(lh, 29, 2)
-
-  comp <- .http_range_bytes(url, data_start, data_start + entry$csize - 1,
-                            skip_on_api_limit = skip_on_api_limit, reason = reason)
-  if (is.null(comp)) return(NULL)
+  data_from <- pos + 30 + .le_int(buf, pos + 26, 2) + .le_int(buf, pos + 28, 2)
+  data_to <- data_from + entry$csize - 1
+  if (data_to <= length(buf)) {
+    comp <- buf[data_from:data_to]
+  } else {
+    have <- if (data_from <= length(buf)) buf[data_from:length(buf)] else raw(0)
+    miss_from <- max(data_from, length(buf) + 1)
+    rest <- .http_range_bytes(url, buf_from + miss_from - 1, buf_from + data_to - 1,
+                              skip_on_api_limit = skip_on_api_limit, reason = reason)
+    if (is.null(rest)) return(NULL)
+    comp <- c(have, rest)
+  }
 
   out <- .zip_inflate_member(comp, entry$method, size = entry$size)
   if (is.null(out)) {
@@ -630,27 +1051,46 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 # so a transient failure worth retrying and a host that will never support
 # this looked identical after the fact (#429).
 #
-# Whole-archive mode (issue #471): every member costs two range requests
-# (.zip_member_fetch()), so an archive with N wanted members costs about 2N + 2
-# requests, against 1 for downloading the archive once. On a host with a strict
-# daily request quota (Dryad) that difference decides whether a corpus run takes
-# hours or days. When at least `min_whole_members` members are wanted and the
+# Members are fetched by byte range, one request per member or per run of
+# nearby members (.zip_range_plan()).
+#
+# Whole-archive mode (issue #471): downloading the archive once and extracting
+# the wanted members locally costs one request, against one per planned range.
+# It is used when at least `min_whole_members` members are wanted, the
 # archive's own size (estimated from its central directory, see
-# .zip_whole_size()) is at most `max_whole_bytes`, the archive is downloaded
-# once and the wanted members are extracted locally. Off by default
-# (`max_whole_bytes = 0`): the caller decides, because the archive-*.R platform
-# callers chose member fetching precisely to avoid transferring an archive that
-# is mostly material. `archive_path`, when given, is where the downloaded
-# archive is kept, so a restarted run reuses it instead of requesting it again;
-# when NULL it is a temporary file removed on exit. Any member the whole-archive
-# step could not deliver (download failed, rate limit, extraction failed) falls
-# through to the per-member range fetch below, so this never does worse than
-# before.
+# .zip_whole_size()) is at most `max_whole_bytes`, and it is the cheaper of
+# the two, counting each request as `request_bytes` bytes of transfer:
+#   request_bytes + archive size  <=  ranges * request_bytes + bytes in ranges.
+# `request_bytes` defaults to 1 MB: a range request cost about 0.6 s on
+# Figshare (38 requests in 23 s for data_check on article 33065816), about as
+# long as transferring 1 MB from these hosts (that article's whole 1.3 MB zip
+# came in one request in about 1 s; measured 2026-10-13). So a small archive
+# with many wanted members is downloaded whole, and a large archive from which
+# a few small members are wanted is not. `request_bytes = Inf` counts requests
+# only, so the archive is taken whenever it fits the budget: Dryad's callers
+# pass that, because every request there counts against a strict daily quota
+# (see download_repo_files()). Off by default (`max_whole_bytes = 0`): the
+# caller decides, because the archive-*.R platform callers chose member
+# fetching precisely to avoid transferring an archive that is mostly material.
+# `archive_path`, when given, is where the downloaded archive is kept, so a
+# restarted run reuses it instead of requesting it again; when NULL it is a
+# temporary file removed on exit. Any member the whole-archive step could not
+# deliver (download failed, rate limit, extraction failed) falls through to
+# the byte-range fetch below, so this never does worse than before.
+#
+# `url` may also be the path of a zip already on disk (a ResearchBox box is
+# downloaded and unpacked whole by repo_check, so a zip inside it is local):
+# the wanted members are then extracted from it directly, with no request.
+#
+# `size`, the archive's size when the caller knows it, is passed to
+# zip_peek() to save its HEAD request.
 .zip_fetch_members <- function(url, names = NULL, dest, verify = TRUE,
                                cache = FALSE, skip_on_api_limit = FALSE,
                                max_whole_bytes = 0, archive_path = NULL,
-                               min_whole_members = 3) {
-  cd <- tryCatch(zip_peek(url, cache = cache, skip_on_api_limit = skip_on_api_limit),
+                               min_whole_members = 3, request_bytes = 1048576,
+                               size = NULL) {
+  cd <- tryCatch(zip_peek(url, cache = cache, skip_on_api_limit = skip_on_api_limit,
+                          size = size),
                  error = function(e) NULL)
   if (is.null(cd) || nrow(cd) == 0) return(NULL)
 
@@ -662,8 +1102,27 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   error <- rep(NA_character_, nrow(want))
   targets <- vapply(want$name, .zip_member_target, character(1), dest = dest,
                     USE.NAMES = FALSE)
+  error[is.na(targets)] <- "entry path escapes the archive (path traversal)"
 
-  if (nrow(want) >= min_whole_members && isTRUE(max_whole_bytes > 0)) {
+  if (.is_local_file(url)) {
+    got <- tryCatch(.zip_extract_members(url, want, targets),
+                    error = function(e) rep(NA_character_, nrow(want)))
+    ok <- !is.na(got)
+    out_path[ok] <- got[ok]
+    error[!ok & !is.na(targets)] <- "could not extract the member from the local archive"
+    return(data.frame(name = want$name, path = out_path, size = want$size, ok = ok,
+                      error = error, stringsAsFactors = FALSE))
+  }
+
+  # Members with nothing to fetch (empty), or whose position is unknown, are
+  # handled one by one below; the rest are planned as byte ranges.
+  rangeable <- function(idx) idx[!is.na(targets[idx]) & !is.na(want$offset[idx]) &
+                                   !is.na(want$csize[idx]) & want$csize[idx] > 0]
+  todo <- rangeable(seq_len(nrow(want)))
+  plan <- .zip_range_plan(want[todo, , drop = FALSE], cd)
+
+  if (.zip_whole_is_cheaper(cd, want, plan, max_whole_bytes, min_whole_members,
+                            request_bytes)) {
     whole <- tryCatch(
       .zip_fetch_whole(url, cd, want, targets, max_bytes = max_whole_bytes,
                        archive_path = archive_path,
@@ -675,8 +1134,48 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     }
   }
 
-  for (i in seq_len(nrow(want))) {
-    if (ok[i]) next   # already extracted from the whole archive
+  write_member <- function(i, bytes) {
+    target <- targets[i]
+    dir.create(dirname(target), showWarnings = FALSE, recursive = TRUE)
+    written <- tryCatch({ writeBin(bytes, target); TRUE },
+                        error = function(e) FALSE)
+    if (!written) {
+      error[i] <<- "could not write the extracted member to disk"
+      return(invisible())
+    }
+    out_path[i] <<- target
+    ok[i] <<- TRUE
+    error[i] <<- NA_character_
+  }
+
+  # Byte ranges for whatever the whole archive did not deliver.
+  todo <- rangeable(which(!ok))
+  for (g in .zip_range_plan(want[todo, , drop = FALSE], cd)) {
+    reason <- new.env(parent = emptyenv())
+    buf <- .http_range_bytes(url, g$from, g$to, skip_on_api_limit = skip_on_api_limit,
+                             reason = reason, allow_short = TRUE)
+    for (i in todo[g$rows]) {
+      if (is.null(buf)) {
+        error[i] <- reason$msg %||% "unknown failure"
+        next
+      }
+      r_i <- new.env(parent = emptyenv())
+      bytes <- .zip_member_from_buffer(url, want[i, , drop = FALSE], buf, g$from,
+                                       verify = verify,
+                                       skip_on_api_limit = skip_on_api_limit,
+                                       reason = r_i)
+      if (is.null(bytes)) {
+        error[i] <- r_i$msg %||% "unknown failure"
+        next
+      }
+      write_member(i, bytes)
+    }
+  }
+
+  # The rest: empty members (no request) and members whose position the
+  # listing does not give (.zip_member_fetch() records why).
+  for (i in which(!ok & !is.na(targets))) {
+    if (i %in% todo) next   # already tried by range above
     reason <- new.env(parent = emptyenv())
     bytes <- .zip_member_fetch(url, want[i, , drop = FALSE], verify = verify,
                                skip_on_api_limit = skip_on_api_limit,
@@ -685,23 +1184,22 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
       error[i] <- reason$msg %||% "unknown failure"
       next
     }
-    target <- targets[i]
-    if (is.na(target)) {
-      error[i] <- "entry path escapes the archive (path traversal)"
-      next
-    }
-    dir.create(dirname(target), showWarnings = FALSE, recursive = TRUE)
-    written <- tryCatch({ writeBin(bytes, target); TRUE },
-                        error = function(e) FALSE)
-    if (!written) {
-      error[i] <- "could not write the extracted member to disk"
-      next
-    }
-    out_path[i] <- target
-    ok[i] <- TRUE
+    write_member(i, bytes)
   }
   data.frame(name = want$name, path = out_path, size = want$size, ok = ok,
              error = error, stringsAsFactors = FALSE)
+}
+
+# Whether downloading the whole archive is cheaper than fetching `plan`'s
+# byte ranges; see .zip_fetch_members() for the rule and its measurements.
+.zip_whole_is_cheaper <- function(cd, want, plan, max_whole_bytes,
+                                  min_whole_members = 3, request_bytes = 1048576) {
+  if (nrow(want) < min_whole_members || !isTRUE(max_whole_bytes > 0)) return(FALSE)
+  size <- .zip_whole_size(cd)
+  if (is.na(size) || size > max_whole_bytes) return(FALSE)
+  if (is.infinite(request_bytes)) return(TRUE)
+  ranged_bytes <- sum(vapply(plan, \(g) g$to - g$from + 1, numeric(1)))
+  request_bytes + size <= length(plan) * request_bytes + ranged_bytes
 }
 
 # Where a member named `name` is written under `dest`, or NA when its path would
@@ -720,13 +1218,16 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 # data, plus the central directory and its end record that follow it. Extra
 # fields are not in `cd`, so this can be short by a few dozen bytes per member
 # (31 per member for an Info-ZIP archive) -- close enough for a size cap and a
-# timeout. NA when any
-# entry is Zip64 (offset or compressed size not stored).
+# timeout. A Zip64 archive's own end records (76 bytes) are added when the
+# archive is large enough to need them. NA when any entry's offset or
+# compressed size is unknown.
 .zip_whole_size <- function(cd) {
   if (is.null(cd) || nrow(cd) == 0 || anyNA(cd$offset) || anyNA(cd$csize))
     return(NA_real_)
   name_bytes <- nchar(cd$name, type = "bytes")
-  max(cd$offset + 30 + name_bytes + cd$csize) + sum(46 + name_bytes) + 22
+  data_end <- max(cd$offset + 30 + name_bytes + cd$csize)
+  zip64 <- if (data_end >= 4294967295 || nrow(cd) >= 65535) 76 else 0
+  data_end + sum(46 + name_bytes) + 22 + zip64
 }
 
 # Download a whole zip once and extract the rows of `want` (from zip_peek())
@@ -759,11 +1260,18 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
       return(NULL)
     }
   }
+  .zip_extract_members(archive_path, want, targets)
+}
 
-  # Extract into a scratch directory first, then copy each member to its
-  # target, so the paths on disk are the same as the per-member fetch writes
-  # (which strips leading "/" and drive letters) and a traversal name is never
-  # handed to unzip at all.
+# Extract the rows of `want` from the zip at `archive_path` (on disk) into
+# `targets` (same order; NA = refused by .zip_member_target()). Returns the
+# written path per member, or NA for one not delivered.
+#
+# Extracts into a scratch directory first, then copies each member to its
+# target, so the paths on disk are the same as the byte-range fetch writes
+# (which strips leading "/" and drive letters) and a traversal name is never
+# handed to unzip at all.
+.zip_extract_members <- function(archive_path, want, targets) {
   exdir <- tempfile("zipwhole")
   on.exit(unlink(exdir, recursive = TRUE), add = TRUE)
   safe <- !is.na(targets)
@@ -948,7 +1456,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 #' worth downloading if it contains actual data or a codebook; a zip of only
 #' stimuli/software is better linked than mirrored.
 #'
-#' @param url the zip's download URL
+#' @param url the zip's download URL, or the path of a zip already on disk
 #' @param skip_types data_type(s) that don't count as worth-downloading content
 #'   (e.g. `"materials"`)
 #' @param cache passed to [zip_peek()]: if `TRUE`, reuse an on-disk cached
@@ -956,6 +1464,9 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 #' @param skip_on_api_limit passed to [zip_peek()]: if `TRUE`, a confirmed
 #'   exhausted rate-limit bucket is treated as a failed peek instead of
 #'   waiting out the host's reset.
+#' @param size passed to [zip_peek()]: the zip's size in bytes when already
+#'   known (e.g. from the repository's file listing), which saves a HEAD
+#'   request. `NULL` (the default) asks the host.
 #'
 #' @returns a list with `worth` (`TRUE`/`FALSE`, or `NA` when the peek failed so
 #'   the caller can fall back to downloading), `reason`, `n_entries`, `types`
@@ -963,8 +1474,9 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 #' @export
 #' @keywords internal
 zip_decision <- function(url, skip_types = "materials", cache = FALSE,
-                         skip_on_api_limit = FALSE) {
-  peek <- zip_peek(url, cache = cache, skip_on_api_limit = skip_on_api_limit)
+                         skip_on_api_limit = FALSE, size = NULL) {
+  peek <- zip_peek(url, cache = cache, skip_on_api_limit = skip_on_api_limit,
+                   size = size)
   if (is.null(peek))
     return(list(worth = NA, reason = "could not peek (download to inspect)",
                 n_entries = NA_integer_, types = NULL, contents = NULL))

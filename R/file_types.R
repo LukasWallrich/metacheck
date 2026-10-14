@@ -2,7 +2,7 @@
 #'
 #' File types from extension, c("3D", "archive", "audio", "book", "code", "config", data", "exec", "font", "image", "slide", "stats", text", "video", "web")
 #'
-#' @format A data frame with 405 rows and 2 columns:
+#' @format A data frame with 377 rows (one per extension) and 2 columns:
 #' \describe{
 #'   \item{ext}{File extension}
 #'   \item{type}{Type of file}

@@ -313,6 +313,11 @@ zenodo_info <- function(zenodo_url, id_col = 1, pb = NULL, cache = FALSE) {
 }
 
 
+# Same-session memory of whether Zenodo's whole-record files-archive endpoint
+# works at all; `unavailable` is set TRUE after its first 404 (see the bulk
+# archive step in zenodo_file_download()). Reset only by restarting R.
+.zenodo_files_archive_state <- new.env(parent = emptyenv())
+
 #' Download all Zenodo Project Files
 #'
 #' Creates a directory for the Zenodo ID and downloads all of the files using a folder structure from the Zenodo project nodes and file storage structure. Returns (invisibly) a data frame with file info.
@@ -530,8 +535,8 @@ zenodo_file_download <- function(zenodo_id,
 
   # --- bulk archive, when every file in the record survived the size filters ---
   # files-archive is all-or-nothing for the record (undocumented in Zenodo's API
-  # reference, but a stable first-party endpoint -- the same URL Zenodo's own
-  # record pages link to as "Download all"). It is only used here when nothing
+  # reference; the URL Zenodo's own record pages linked to as "Download all",
+  # but answering 404 as of 2026-10-13 -- see below). It is only used here when nothing
   # was filtered out above, so the archive's contents are exactly the files we
   # want -- no wasted transport, unlike the general download_repo_files() case
   # where a caller may want only a subset of a record.
@@ -545,7 +550,14 @@ zenodo_file_download <- function(zenodo_id,
   # selected from it.
   unzip_me <- unzippable
 
-  if (n == n_in_record && !any(unzip_me)) {
+  # Not even tried once files-archive has answered 404 earlier this session:
+  # on 2026-10-13 it returned 404 for every record tested (7852893, 1123389,
+  # 4624962 -- GET, under both /api/records/ and /records/), so each record
+  # paid one wasted request before the file-by-file loop below did the real
+  # work. Remembered per session rather than removed outright, so the bulk
+  # path comes back by itself if Zenodo restores the endpoint.
+  if (n == n_in_record && !any(unzip_me) &&
+      !isTRUE(.zenodo_files_archive_state$unavailable)) {
     zip_url <- sprintf("https://zenodo.org/api/records/%s/files-archive", zenodo_id)
     zip_path <- file.path(temppath, "archive.zip")
     dl_ok <- tryCatch({
@@ -554,6 +566,12 @@ zenodo_file_download <- function(zenodo_id,
         httr2::req_error(is_error = \(resp) FALSE) |>
         httr2::req_retry(max_tries = 3, retry_on_failure = TRUE) |>
         httr2::req_perform(path = zip_path)
+      # Only a 404 marks the endpoint as gone: the record itself was just
+      # found by zenodo_info() above, so a 404 here is about files-archive,
+      # not the record. A timeout or 5xx is treated as passing trouble and
+      # the endpoint is tried again for the next record.
+      if (identical(as.integer(httr2::resp_status(resp)), 404L))
+        .zenodo_files_archive_state$unavailable <- TRUE
       httr2::resp_status(resp) == 200 && file.exists(zip_path) && file.size(zip_path) > 0
     }, error = \(e) FALSE)
 
@@ -574,9 +592,14 @@ zenodo_file_download <- function(zenodo_id,
       }
     }
     unlink(zip_path)
-    "Downloaded as one archive" |>
-      list(what = _) |>
-      pb$tick(0, tokens = _)
+    # Reported only when the archive really supplied every file; this used to
+    # print after any attempt, including a 404, so the log claimed a bulk
+    # download that never happened while the files actually came one by one.
+    if (used_bulk) {
+      "Downloaded as one archive" |>
+        list(what = _) |>
+        pb$tick(0, tokens = _)
+    }
   }
 
   # --- file-by-file fallback (used when the bulk archive was skipped, or
@@ -600,7 +623,8 @@ zenodo_file_download <- function(zenodo_id,
         got <- tryCatch(
           .zenodo_zip_members(files$self[[i]], dest = download_to,
                               keep_types = unzip_types,
-                              max_file_size = max_file_size),
+                              max_file_size = max_file_size,
+                              size = files$size[[i]]),
           error = \(e) NULL)
         if (!is.null(got)) {
           # A readable archive with nothing wanted inside is a success with zero
@@ -723,6 +747,9 @@ zenodo_file_download <- function(zenodo_id,
 #'   documentation and skips materials, matching [zip_decision()]
 #' @param max_file_size largest member to extract (in MB), applied per member
 #'   exactly as the record-level cap is applied per file
+#' @param size the zip's size in bytes as the record lists it, or `NULL`.
+#'   Passed on to [zip_peek()] so it does not have to send a `HEAD` request to
+#'   learn a size the record listing already gave.
 #'
 #' @returns a data frame with one row per extracted member (`name`, `path`,
 #'   `size`, `ok`), or `NULL` when the archive could not be listed and the
@@ -730,8 +757,8 @@ zenodo_file_download <- function(zenodo_id,
 #' @keywords internal
 .zenodo_zip_members <- function(url, dest,
                                 keep_types = c("data", "documentation"),
-                                max_file_size = 10) {
-  listing <- tryCatch(zip_peek(url), error = \(e) NULL)
+                                max_file_size = 10, size = NULL) {
+  listing <- tryCatch(zip_peek(url, size = size), error = \(e) NULL)
   if (is.null(listing) || nrow(listing) == 0) return(NULL)
 
   types <- data_classify_files(basename(listing$name))

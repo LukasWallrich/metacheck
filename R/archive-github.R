@@ -94,18 +94,10 @@ github_repo <- function(repo) {
     return(res)
   }
 
-  # get repo name ----
-  match <- regexec("(?<=^|/)([a-z0-9-])+/([a-z0-9\\._-])+(?=\\.git|/|$)",
-    repo,
-    perl = TRUE, ignore.case = TRUE
-  )
-  thematch <- regmatches(repo, match)
-
-  if (length(thematch) == 0 || length(thematch[[1]]) == 0) {
+  simple_repo <- .github_repo_name(repo)
+  if (is.null(simple_repo)) {
     return(NULL)
   }
-
-  simple_repo <- sub("\\.git$", "", x = thematch[[1]][[1]])
 
   url <- paste0("https://github.com/", simple_repo)
   resp <- httr2::request(url) |>
@@ -118,6 +110,32 @@ github_repo <- function(repo) {
   }
 
   return(simple_repo)
+}
+
+# The "owner/repo" text of a GitHub URL or bare mention, WITHOUT checking that
+# the repository exists (github_repo() adds that check with a HEAD request to
+# the github.com page). For a caller whose next step is a GitHub API request
+# about the same repository -- github_tree_files()'s /repos/{owner}/{repo} --
+# that HEAD is redundant: the API's own 404 gives the same answer, so the
+# check cost one extra request per repository (survey 2026-10-13). The
+# owner/repo pattern is still enforced here, which is what keeps an arbitrary
+# "word/word" text match near the word "github" (github_links()'s bare-mention
+# fallback) from reaching the API at all. Returns NULL when no owner/repo
+# pattern is found. Single value only.
+.github_repo_name <- function(repo) {
+  if (length(repo) != 1 || is.na(repo)) return(NULL)
+
+  match <- regexec("(?<=^|/)([a-z0-9-])+/([a-z0-9\\._-])+(?=\\.git|/|$)",
+    repo,
+    perl = TRUE, ignore.case = TRUE
+  )
+  thematch <- regmatches(repo, match)
+
+  if (length(thematch) == 0 || length(thematch[[1]]) == 0) {
+    return(NULL)
+  }
+
+  sub("\\.git$", "", x = thematch[[1]][[1]])
 }
 
 #' Get README from GitHub
@@ -304,12 +322,16 @@ github_files <- function(repo, dir = "",
 #' @export
 #' @keywords internal
 github_tree_files <- function(repo) {
-  clean_repo <- github_repo(repo)
-  if (is.null(clean_repo))
-    return(list(gated = TRUE,
-                reason = "invalid or inaccessible GitHub repository",
-                files  = NULL, default_branch = NA_character_,
-                license = NA_character_))
+  invalid <- list(gated = TRUE,
+                  reason = "invalid or inaccessible GitHub repository",
+                  files  = NULL, default_branch = NA_character_,
+                  license = NA_character_)
+
+  # Text pattern only -- no HEAD request to the github.com page first (see
+  # .github_repo_name()): the metadata request below answers "does this
+  # repository exist?" itself, with a 404.
+  clean_repo <- .github_repo_name(repo)
+  if (is.null(clean_repo)) return(invalid)
 
   # ── 1. Repo metadata (size + default branch, 1 request) ─────────────────────
   meta_resp <- tryCatch(
@@ -318,6 +340,12 @@ github_tree_files <- function(repo) {
       httr2::req_error(is_error = \(r) FALSE) |>
       httr2::req_perform(),
     error = \(e) NULL)
+  # 404 = no such repository, or a private one this token cannot see: the
+  # same outcome the github.com HEAD check used to report before this request
+  # was ever made. Any OTHER failure (403/429 rate limit, 5xx, no connection)
+  # says nothing about the repository, so it still falls through to the
+  # github_files() crawl below, as before.
+  if (!is.null(meta_resp) && httr2::resp_status(meta_resp) == 404) return(invalid)
   if (is.null(meta_resp) || httr2::resp_status(meta_resp) != 200) {
     files_df <- tryCatch(github_files(repo, recursive = TRUE), error = \(e) NULL)
     return(list(gated = FALSE, reason = NA_character_,

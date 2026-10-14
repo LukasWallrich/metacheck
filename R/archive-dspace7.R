@@ -190,6 +190,13 @@
 #' handle prefix with no host at all cannot be attributed to a specific
 #' installation -- see \code{.dspace7_parse()}).
 #'
+#' A DOI mentioned in the text is also looked up, and kept when it leads to
+#' one of these installations. The paper's own DOI, and DOIs under a prefix
+#' that another detector handles and no DSpace 7 installation uses (see
+#' \code{.dspace7_skip_doi_prefixes()}), are not looked up. The lookup reads the
+#' URL registered for the DOI from doi.org's handle API rather than visiting
+#' the landing page, and each DOI is looked up once per R session.
+#'
 #' @param paper a paper object or paperlist object
 #'
 #' @returns a table with the DSpace 7 url in the first (href) column
@@ -240,9 +247,31 @@ dspace7_links <- function(paper) {
     if (length(groups) >= 2) groups[[2]] else NA_character_
   }
 
+  #
+  # Resolving every DOI in every paper cost 0.4 to 6.5 s per DOI (measured
+  # 2026-10-13; about 0.85 DOIs per paper on a psychology corpus), and most
+  # of those DOIs could never lead to a DSpace 7 item: the paper's own DOI,
+  # and DOIs under a prefix another detector already handles and that no
+  # DSpace 7 installation uses (see .dspace7_skip_doi_prefixes()). Both are
+  # left out before any request is made, and the rest are looked up through
+  # doi.org's handle API instead of by following the redirect to the
+  # landing page -- see .dspace7_resolve_doi_url().
   other_ds7_doi <- if (nrow(doi_mentions) > 0) {
     doi_mentions$doi <- vapply(doi_mentions$href, .extract_doi, character(1))
-    dois <- unique(stats::na.omit(doi_mentions$doi))
+    doi_mentions <- doi_mentions[!is.na(doi_mentions$doi), , drop = FALSE]
+
+    # The paper's own DOI, matched per paper so that one paper of a
+    # paperlist citing another paper of the same list is still checked.
+    own <- tryCatch(paper_table(paper, "info", "doi"), error = \(e) NULL)
+    if (!is.null(own) && nrow(own) > 0 && all(c("paper_id", "doi") %in% names(own)) &&
+        "paper_id" %in% names(doi_mentions)) {
+      own_keys <- paste(own$paper_id, .dspace7_doi_key(own$doi))
+      is_own <- paste(doi_mentions$paper_id, .dspace7_doi_key(doi_mentions$doi)) %in% own_keys
+      doi_mentions <- doi_mentions[!is_own, , drop = FALSE]
+    }
+
+    prefix <- tolower(sub("/.*$", "", doi_mentions$doi))
+    dois <- unique(doi_mentions$doi[!prefix %in% .dspace7_skip_doi_prefixes()])
     # .dspace7_parse() needs the resolved landing-page URL itself (to read
     # off a uuid or handle from its path), not the bare DOI string, so the
     # resolved URL replaces href here rather than just gating on whether one
@@ -250,7 +279,7 @@ dspace7_links <- function(paper) {
     resolved_urls <- vapply(dois, .dspace7_resolve_doi_url, character(1))
     names(resolved_urls) <- dois
     rows <- doi_mentions[doi_mentions$doi %in% dois[!is.na(resolved_urls)], , drop = FALSE]
-    if (nrow(rows) > 0) rows$href <- resolved_urls[rows$doi]
+    if (nrow(rows) > 0) rows$href <- unname(resolved_urls[rows$doi])
     rows$doi <- NULL
     rows
   } else {
@@ -262,30 +291,148 @@ dspace7_links <- function(paper) {
     unique()
 }
 
-# Resolve a single DOI's live redirect and return the resolved URL if it
-# lands on a known DSpace 7 host, or NA if it does not resolve or lands
-# elsewhere -- see dspace7_links()'s header comment (issue #435).
-.dspace7_resolve_doi_url <- function(doi) {
-  resolved <- tryCatch({
-    resp <- httr2::request(paste0("https://doi.org/", doi)) |>
+# A DOI in a comparable form: lower case, without a doi.org/dx.doi.org
+# address or "doi:" label in front. Vectorised; NA stays NA.
+.dspace7_doi_key <- function(doi) {
+  doi <- tolower(trimws(as.character(doi)))
+  sub("^(?:https?://)?(?:dx\\.)?(?:doi\\.org/)?(?:doi:\\s*)?", "", doi, perl = TRUE)
+}
+
+# DOI prefixes dspace7_links() does not resolve: each belongs to a host
+# another detector already handles (OSF, Zenodo, Dryad, Figshare and its
+# institutional instances, 4TU.ResearchData, Mendeley Data, DataONE, UK Data
+# Service ReShare, PsychArchives, Dataverse), so a DOI under it cannot lead
+# to a DSpace 7 item. Read from the other detectors' own prefix tables
+# rather than copied, so a prefix added there is skipped here too.
+#
+# Checked against DataCite 2026-10-13, two ways: (1) for every host in
+# .dspace7_hosts(), DataCite's facet of the DOI prefixes registered with a
+# URL on that host (query url:*<host>*), and (2) 25 random DOIs from every
+# prefix below, following an hdl.handle.net registration once, checked for
+# a DSpace 7 host. One prefix turned up in both a Dataverse table and a
+# DSpace 7 installation: 10.23673 is listed for datadoi.ee (the University
+# of Tartu's Dataverse) but the same university also registers DOIs under
+# it for dspace.ut.ee, so it is still resolved.
+.dspace7_skip_doi_prefixes <- function() {
+  dataone <- vapply(.dataone_hosts(), \(h) h$doi_prefix %||% NA_character_, character(1))
+  skip <- c(
+    "10.17605",                                # OSF
+    "10.5281",                                 # Zenodo
+    .dryad_doi_prefixes(),                     # Dryad
+    "10.6084", names(.figshare_doi_prefix_hosts()),  # Figshare
+    "10.4121",                                 # 4TU.ResearchData
+    "10.17632",                                # Mendeley Data
+    stats::na.omit(dataone),                   # DataONE member nodes
+    "10.5255",                                 # UK Data Service ReShare
+    "10.23668",                                # PsychArchives
+    "10.7910", unlist(.dataverse_doi_prefix_hosts(), use.names = FALSE)  # Dataverse
+  )
+  setdiff(unique(tolower(skip)), "10.23673")
+}
+
+# Session cache of resolved DOIs (DOI key -> DSpace 7 URL, or NA when the
+# DOI leads elsewhere), so a DOI cited by many papers in a corpus is looked
+# up once. Only definite answers are kept: a request that failed (network
+# error, server error) is tried again the next time the DOI comes up.
+.dspace7_doi_cache <- new.env(parent = emptyenv())
+
+# TRUE when `url` lies on a known DSpace 7 host. The same fixed-string test
+# as before the handle API was used, so the set of recognised hosts is
+# unchanged.
+.dspace7_on_known_host <- function(url) {
+  if (length(url) != 1 || is.na(url)) return(FALSE)
+  any(vapply(.dspace7_hosts(), \(h) grepl(h, url, fixed = TRUE), logical(1)))
+}
+
+# The URL registered for one handle -- a DOI is a handle too -- read from a
+# Handle System proxy's JSON API, without visiting that URL. Used here and
+# by .researchdata4tu_resolve_uuid() (archive-4tu.R); doi_resolves()
+# (doi.R) asks the same API but only whether a URL exists.
+#
+# @param handle e.g. "10.13020/q3y6-h459" or "11299/208294"
+# @param api the proxy's handle API, doi.org's or hdl.handle.net's
+# @returns list(url = the registered URL or NA, ok = TRUE when the proxy
+#   gave a definite answer -- a URL, "handle not found" (responseCode 100,
+#   HTTP 404) or "no URL value" (responseCode 200) -- and FALSE when the
+#   request itself failed)
+.handle_registered_url <- function(handle, api = "https://doi.org/api/handles/") {
+  url <- paste0(api, utils::URLencode(handle, reserved = TRUE), "?type=URL")
+  resp <- tryCatch(
+    httr2::request(url) |>
+      httr2::req_timeout(30) |>
       httr2::req_error(is_error = \(resp) FALSE) |>
-      httr2::req_perform()
-    httr2::resp_url(resp)
-  }, error = \(e) NA_character_)
-
-  if (is.na(resolved)) return(NA_character_)
-
-  hosts <- .dspace7_hosts()
-  for (host in hosts) {
-    if (grepl(host, resolved, fixed = TRUE)) return(resolved)
+      httr2::req_perform(),
+    error = \(e) NULL)
+  if (is.null(resp)) return(list(url = NA_character_, ok = FALSE))
+  body <- tryCatch(httr2::resp_body_json(resp, check_type = FALSE), error = \(e) NULL)
+  code <- body$responseCode %||% NA
+  if (identical(as.integer(code), 1L)) {
+    vals <- Filter(\(v) identical(v$type, "URL"), body$values %||% list())
+    value <- if (length(vals) > 0) vals[[1]]$data$value %empty_or% NA_character_ else NA_character_
+    return(list(url = as.character(value), ok = TRUE))
   }
-  NA_character_
+  list(url = NA_character_, ok = isTRUE(as.integer(code) %in% c(100L, 200L)))
+}
+
+# Resolve a single DOI and return the URL it leads to if that is on a known
+# DSpace 7 host, or NA if it does not resolve or leads elsewhere -- see
+# dspace7_links()'s header comment (issue #435).
+#
+# Uses the Handle System's JSON API rather than following the DOI's
+# redirects: GET https://doi.org/api/handles/<doi>?type=URL returns the
+# registered URL in about 0.35 s without downloading any landing page
+# (following the redirects took 0.4 to 6.5 s per DOI, measured 2026-10-13).
+# Two kinds of registered URL need one more step, each also a handle-API
+# lookup at hdl.handle.net:
+#   - an hdl.handle.net address. Many DSpace installations register their
+#     DOIs this way, e.g. 10.13020/q3y6-h459 -> hdl.handle.net/11299/208294
+#     -> conservancy.umn.edu (verified 2026-10-13).
+#   - a DSpace /handle/<handle> page on a host that is not in
+#     .dspace7_hosts(): the installation's former address, kept in the DOI
+#     record after the repository moved, e.g. 10.35090 DOIs registered at
+#     smartech.gatech.edu, which now redirects to repository.gatech.edu.
+#     The handle record itself is updated when a repository moves, so it
+#     leads to the current address.
+# Results are cached for the session (see .dspace7_doi_cache).
+.dspace7_resolve_doi_url <- function(doi) {
+  key <- .dspace7_doi_key(doi)
+  if (is.na(key) || !nzchar(key)) return(NA_character_)
+  if (exists(key, envir = .dspace7_doi_cache, inherits = FALSE))
+    return(get(key, envir = .dspace7_doi_cache, inherits = FALSE))
+
+  hdl_api <- "https://hdl.handle.net/api/handles/"
+  reg <- .handle_registered_url(doi)
+  url <- reg$url
+  ok <- reg$ok
+
+  hdl_rx <- "^https?://(?:hdl\\.)?handle\\.net/([^?#]+)"
+  if (ok && !is.na(url) && grepl(hdl_rx, url, ignore.case = TRUE, perl = TRUE)) {
+    handle <- utils::URLdecode(sub(hdl_rx, "\\1", url, ignore.case = TRUE, perl = TRUE))
+    reg <- .handle_registered_url(handle, api = hdl_api)
+    url <- reg$url
+    ok <- reg$ok
+  }
+
+  if (ok && !is.na(url) && !.dspace7_on_known_host(url)) {
+    handle <- regmatches(url, regexpr("(?<=/handle/)[0-9]{1,5}(?:\\.[0-9]+){0,2}/[0-9A-Za-z.]+",
+                                      url, perl = TRUE))
+    if (length(handle) > 0) {
+      reg <- .handle_registered_url(sub("[.,;]+$", "", handle), api = hdl_api)
+      if (!reg$ok) ok <- FALSE
+      if (.dspace7_on_known_host(reg$url)) url <- reg$url
+    }
+  }
+
+  resolved <- if (ok && .dspace7_on_known_host(url)) url else NA_character_
+  if (ok) assign(key, resolved, envir = .dspace7_doi_cache)
+  resolved
 }
 
 # One DSpace 7 REST request returning parsed JSON, or NULL on any failure /
-# non-200. Mirrors .psycharchives_rest()'s error handling.
-.dspace7_rest <- function(path, host) {
-  url <- paste0("https://", host, "/server/api", path)
+# non-200. Mirrors .psycharchives_rest()'s error handling. `path` is
+# relative to the installation's /server/api; `url` instead takes a full
+# address, for following a `_links.next` page link as given.
+.dspace7_rest <- function(path, host, url = paste0("https://", host, "/server/api", path)) {
   tryCatch({
     resp <- httr2::request(url) |>
       httr2::req_headers(Accept = "application/json") |>
@@ -296,10 +443,94 @@ dspace7_links <- function(paper) {
   }, error = \(e) NULL)
 }
 
+# The uuid of the item a handle names, from /pid/find without following its
+# redirect. /pid/find answers 302 with the item's own address
+# (".../server/api/core/items/<uuid>", verified 2026-10-13 on
+# conservancy.umn.edu 11299/208294 and repository.gatech.edu 1853/67239);
+# following it downloads the whole item, which then had to be requested a
+# second time anyway, because query parameters such as `embed` do not
+# survive the redirect. Reading the uuid from the Location header instead
+# saves that download. A 200 answer (an installation that does not
+# redirect) is read the same way the followed redirect used to be.
+.dspace7_find_uuid <- function(host, handle) {
+  url <- paste0("https://", host, "/server/api/pid/find?id=",
+                utils::URLencode(handle, reserved = TRUE))
+  resp <- tryCatch(
+    httr2::request(url) |>
+      httr2::req_headers(Accept = "application/json") |>
+      httr2::req_options(followlocation = FALSE) |>
+      httr2::req_error(is_error = \(resp) FALSE) |>
+      httr2::req_perform(),
+    error = \(e) NULL)
+  if (is.null(resp)) return(NA_character_)
+
+  status <- httr2::resp_status(resp)
+  uuid_pat <- "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+  if (status >= 300 && status < 400) {
+    loc <- httr2::resp_header(resp, "location") %||% ""
+    m <- regmatches(loc, regexpr(uuid_pat, loc, ignore.case = TRUE))
+    return(if (length(m) > 0) tolower(m) else NA_character_)
+  }
+  if (status == 200) {
+    found <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
+    return(found$uuid %empty_or% NA_character_)
+  }
+  NA_character_
+}
+
+# One item, with its bundles and their bitstreams embedded, in a single
+# request. Verified live 2026-10-13: /core/items/<uuid>?embed=bundles/
+# bitstreams returns the item, its bundles and each bundle's bitstreams
+# together (previously three requests: the item, /bundles, and the ORIGINAL
+# bundle's /bitstreams), and embed.size=bundles/bitstreams=200 (accepted,
+# though not documented) raises the embedded bitstream page from DSpace's
+# default 20 to 200.
+.dspace7_item <- function(host, uuid) {
+  .dspace7_rest(paste0("/core/items/", uuid,
+                       "?embed=bundles/bitstreams&embed.size=bundles/bitstreams=200"),
+                host = host)
+}
+
+# Every bitstream of one bundle. A bitstream listing is a page (20 by
+# default; 200 when embedded by .dspace7_item()), and the code used to read
+# only the first one, so an item with more files than that was silently
+# cut short. Each further page is reached through `_links.next`, an
+# absolute address such as ".../core/bundles/<uuid>/bitstreams?page=1&size=1"
+# (verified 2026-10-13 on conservancy.umn.edu with embed.size 1). When the
+# installation did not embed the bitstreams, they are requested directly.
+# Warns when fewer bitstreams arrive than the page reports in total.
+.dspace7_bitstreams <- function(bundle, host) {
+  page <- bundle[["_embedded"]][["bitstreams"]]
+  if (is.null(page)) {
+    page <- .dspace7_rest(paste0("/core/bundles/", bundle$uuid, "/bitstreams?size=200"),
+                          host = host)
+  }
+  out <- page[["_embedded"]][["bitstreams"]] %||% list()
+  total <- page$page$totalElements
+  next_href <- page[["_links"]][["next"]][["href"]]
+  seen <- character(0)
+  while (!is.null(next_href) && !next_href %in% seen) {
+    seen <- c(seen, next_href)
+    nxt <- .dspace7_rest(url = next_href)
+    if (is.null(nxt)) break
+    out <- c(out, nxt[["_embedded"]][["bitstreams"]] %||% list())
+    next_href <- nxt[["_links"]][["next"]][["href"]]
+  }
+  if (!is.null(total) && length(out) < total) {
+    warning(sprintf(
+      "%s listed only %d of the %d files of bundle %s. Files not listed are not retrieved, so this listing is incomplete. Run again later.",
+      host, length(out), as.integer(total), bundle$uuid %||% ""), call. = FALSE)
+  }
+  out
+}
+
 # Retrieve one item's info (title/authors/doi/license/date + its ORIGINAL
 # bundle's public files) from a DSpace 7 installation. Resolves by uuid
-# directly when known (one request); otherwise by handle via /pid/find (two
-# requests: resolve, then the same item lookup a direct uuid would have used).
+# directly when known (one request, with bundles and bitstreams embedded --
+# see .dspace7_item()); otherwise by handle, reading the uuid from
+# /pid/find's redirect first (two requests -- see .dspace7_find_uuid()).
+# This used to take four requests for a handle (pid/find followed to the
+# item, the same item again, /bundles, /bitstreams) and three for a uuid.
 .dspace7_info <- function(host, uuid = NA_character_, handle = NA_character_, pb = NULL) {
   if (is.null(pb)) {
     pb <- pb(NA, "(:spin) :what")
@@ -314,12 +545,12 @@ dspace7_links <- function(paper) {
 
   item <- NULL
   if (!is.na(uuid) && nzchar(uuid)) {
-    item <- .dspace7_rest(paste0("/core/items/", uuid), host = host)
+    item <- .dspace7_item(host, uuid)
   }
   if (is.null(item) && !is.na(handle) && nzchar(handle)) {
-    found <- .dspace7_rest(paste0("/pid/find?id=", utils::URLencode(handle, reserved = TRUE)), host = host)
-    if (!is.null(found) && !is.null(found$uuid)) {
-      item <- .dspace7_rest(paste0("/core/items/", found$uuid), host = host)
+    found_uuid <- .dspace7_find_uuid(host, handle)
+    if (!is.na(found_uuid)) {
+      item <- .dspace7_item(host, found_uuid)
     }
   }
   if (is.null(item) || is.null(item$uuid)) {
@@ -361,13 +592,18 @@ dspace7_links <- function(paper) {
   # 2026-09-11 (see the note at the top of this file).
   file_list <- data.frame(name = character(0), size = numeric(0),
                           checksum = character(0), retrieve = character(0))
-  bundles <- .dspace7_rest(paste0("/core/items/", item$uuid, "/bundles"), host = host)
+  # The bundles normally arrive embedded in the item (see .dspace7_item());
+  # an installation that ignores `embed` is asked for them separately, as
+  # before.
+  bundles <- item[["_embedded"]][["bundles"]]
+  if (is.null(bundles)) {
+    bundles <- .dspace7_rest(paste0("/core/items/", item$uuid, "/bundles"), host = host)
+  }
   bundle_list <- bundles[["_embedded"]][["bundles"]] %||% list()
   original <- NULL
   for (b in bundle_list) if (identical(b$name, "ORIGINAL")) original <- b
   if (!is.null(original)) {
-    bs <- .dspace7_rest(paste0("/core/bundles/", original$uuid, "/bitstreams"), host = host)
-    bitstreams <- bs[["_embedded"]][["bitstreams"]] %||% list()
+    bitstreams <- .dspace7_bitstreams(original, host = host)
     if (length(bitstreams) > 0) {
       # %empty_or% (not %||%) because a field can come back as a length-zero
       # value rather than NULL; vapply(..., character(1)/numeric(1)) requires

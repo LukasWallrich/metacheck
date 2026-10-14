@@ -148,6 +148,39 @@ test_that(".batch_query normalizes a connection-level failure to NULL", {
 })
 
 
+test_that(".batch_query waits between batches but not after the last one", local({
+  # Regression test (2026-10-13 survey): the courtesy delay ran after EVERY
+  # batch, including the last, so a single-URL lookup -- what every *_info()
+  # record query sends -- paid a flat extra `delay` with no request after it
+  # to pace. Sys.sleep() is in base R and cannot be mocked, so this is timed:
+  # requests are answered instantly by the mock, leaving the delay as the
+  # only time spent. The bounds are wide so a slow machine cannot fail it.
+  n_calls <- 0
+  local_mocked_bindings(
+    req_perform_sequential = function(reqs, ...) {
+      n_calls <<- n_calls + 1
+      lapply(reqs, \(r) httr2::response(status_code = 200))
+    },
+    .package = "httr2"
+  )
+
+  # one URL, one batch: no sleep at all
+  t1 <- system.time(obs <- .batch_query("https://example.org/a", msg = NULL,
+                                        delay = 2))[["elapsed"]]
+  expect_length(obs, 1)
+  expect_lt(t1, 1.5)
+
+  # three URLs in batches of two: one sleep, between batch 1 and batch 2
+  t2 <- system.time(obs <- .batch_query(
+    paste0("https://example.org/", 1:3), batch_size = 2, msg = NULL,
+    delay = 1))[["elapsed"]]
+  expect_length(obs, 3)
+  expect_gte(t2, 0.9)
+  expect_lt(t2, 1.9)
+  expect_equal(n_calls, 3)   # 1 batch, then 2 batches
+}))
+
+
 test_that("path_sanitize", {
   expect_true(is.function(metacheck::path_sanitize))
   expect_no_error(helplist <- help(path_sanitize, metacheck))

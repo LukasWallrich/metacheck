@@ -121,9 +121,11 @@ test_that(".zip_inflate_member recovers a member larger than 32768 bytes", {
   expect_identical(recovered_lines, content)
 })
 
-test_that(".zip_member_fetch refuses a Zip64 entry instead of using the sentinel", {
-  # A >4GB archive stores 0xFFFFFFFF in the 4-byte fields, which the parser turns
-  # into NA. Fetching from that offset would request a meaningless byte range.
+test_that(".zip_member_fetch refuses an entry whose offset is unknown instead of using the sentinel", {
+  # A >4GB archive stores 0xFFFFFFFF in the 4-byte fields; the parser reads the
+  # real value from the entry's Zip64 extra field, and turns the placeholder
+  # into NA only when that field is missing. Fetching from that offset would
+  # request a meaningless byte range.
   entry <- data.frame(name = "big.dat", size = NA_real_, method = 8,
                       csize = NA_real_, offset = NA_real_, crc = 1)
   expect_null(metacheck:::.zip_member_fetch("http://example.invalid/x.zip", entry))
@@ -185,9 +187,13 @@ test_that(".zip_fetch_members downloads the archive once in whole-archive mode (
   url <- paste0("file:///", normalizePath(zip, winslash = "/"))
   dest <- file.path(d, "out")
   kept <- file.path(d, "kept.zip")
+  # request_bytes = Inf (requests counted only, as for Dryad) takes the
+  # archive whenever it fits the budget. With the default 1 MB per request
+  # this tiny archive's three adjacent members would be one range request,
+  # cheaper than the archive (see the .zip_whole_is_cheaper() test below).
   got <- metacheck:::.zip_fetch_members(url, names = c("a.csv", "b.csv", "sub/c.R"),
                                         dest = dest, max_whole_bytes = Inf,
-                                        archive_path = kept)
+                                        archive_path = kept, request_bytes = Inf)
   expect_true(all(got$ok))
   expect_equal(normalizePath(got$path), normalizePath(file.path(dest, got$name)))
   expect_equal(readLines(file.path(dest, "sub", "c.R")), "z <- 1")
@@ -558,4 +564,374 @@ test_that(".remote_size falls back to a ranged request when HEAD is refused", {
     httr2::response(403L)
   })
   expect_true(is.na(metacheck:::.remote_size("https://s3-like.example/private.csv")))
+})
+
+# ── Zip64 archives ──────────────────────────────────────────────────────────
+# A real Zip64 archive is over 4 GB or holds over 65,535 entries, too large to
+# build in a test, but the format does not depend on size: any archive may be
+# written with Zip64 records, and the placeholders (0xFFFFFFFF) mean the same
+# thing whatever the real values are. .test_zip64_bytes() writes one by hand,
+# with stored (uncompressed) members.
+
+# Little-endian bytes of a non-negative number.
+.le_bytes <- function(v, n) as.raw((v %/% 256^(0:(n - 1))) %% 256)
+
+# A Zip64 archive holding `members` (a named list of raw vectors). `zip64`
+# names the central-directory fields written as placeholders, with their real
+# values in each entry's Zip64 extra field: any of "usize", "csize",
+# "offset". `local_extra` is the length of a padding extra field added to each
+# member's LOCAL header only (the central directory does not record it), to
+# make a local header longer than its central copy, as real writers do.
+.test_zip64_bytes <- function(members, zip64 = c("usize", "csize", "offset"),
+                              local_extra = 0) {
+  ff4 <- .le_bytes(4294967295, 4)
+  fields <- c("usize", "csize", "offset")
+  locals <- list(); centrals <- list(); offset <- 0
+  for (nm in names(members)) {
+    data <- members[[nm]]
+    name <- charToRaw(nm)
+    crc <- .le_bytes(metacheck:::.crc32(data), 4)
+    size <- .le_bytes(length(data), 4)
+    pad <- if (local_extra > 0)
+      c(.le_bytes(0xCAFE, 2), .le_bytes(local_extra - 4, 2), raw(local_extra - 4))
+    else raw(0)
+    local <- c(as.raw(c(0x50, 0x4b, 0x03, 0x04)), .le_bytes(45, 2), raw(2),
+               raw(2),                     # method 0: stored
+               raw(4), crc, size, size,
+               .le_bytes(length(name), 2), .le_bytes(length(pad), 2), name, pad, data)
+    vals <- c(usize = length(data), csize = length(data), offset = offset)
+    in_extra <- fields[fields %in% zip64]
+    extra <- if (length(in_extra) > 0)
+      c(.le_bytes(1, 2), .le_bytes(8 * length(in_extra), 2),
+        unlist(lapply(in_extra, \(f) .le_bytes(vals[[f]], 8))))
+    else raw(0)
+    field <- function(f) if (f %in% zip64) ff4 else .le_bytes(vals[[f]], 4)
+    central <- c(as.raw(c(0x50, 0x4b, 0x01, 0x02)), .le_bytes(45, 2), .le_bytes(45, 2),
+                 raw(2), raw(2), raw(4), crc, field("csize"), field("usize"),
+                 .le_bytes(length(name), 2), .le_bytes(length(extra), 2),
+                 raw(2), raw(2), raw(2), raw(4), field("offset"), name, extra)
+    locals[[nm]] <- local; centrals[[nm]] <- central
+    offset <- offset + length(local)
+  }
+  body <- unlist(locals, use.names = FALSE)
+  cd <- unlist(centrals, use.names = FALSE)
+  n <- length(members)
+  rec_at <- length(body) + length(cd)
+  rec64 <- c(as.raw(c(0x50, 0x4b, 0x06, 0x06)), .le_bytes(44, 8), .le_bytes(45, 2),
+             .le_bytes(45, 2), raw(4), raw(4), .le_bytes(n, 8), .le_bytes(n, 8),
+             .le_bytes(length(cd), 8), .le_bytes(length(body), 8))
+  loc64 <- c(as.raw(c(0x50, 0x4b, 0x06, 0x07)), raw(4), .le_bytes(rec_at, 8),
+             .le_bytes(1, 4))
+  eocd <- c(as.raw(c(0x50, 0x4b, 0x05, 0x06)), raw(2), raw(2),
+            .le_bytes(65535, 2), .le_bytes(65535, 2), ff4, ff4, raw(2))
+  c(body, cd, rec64, loc64, eocd)
+}
+
+# A mocked host serving `bytes` that honours ranges and reports the final URL
+# as the requested one (so .range_ignored_record() sees no redirect); every
+# request is logged. `ignore_range = TRUE` answers every GET with 200 and the
+# whole body, as PsychArchives does.
+.range_host <- function(bytes, log, ignore_range = FALSE) {
+  total <- length(bytes)
+  function(req) {
+    method <- req$method %||% "GET"
+    range <- req$headers$Range %||% NA_character_
+    log$calls <- c(log$calls, paste(method, range))
+    if (identical(method, "HEAD"))
+      return(httr2::response(200L, url = req$url,
+                             headers = list(`Content-Length` = as.character(total))))
+    if (ignore_range || is.na(range))
+      return(httr2::response(200L, url = req$url,
+                             headers = list(`Content-Length` = as.character(total)),
+                             body = bytes))
+    if (grepl("^bytes=-", range)) {
+      from <- max(0, total - as.numeric(sub("^bytes=-", "", range))); to <- total - 1
+    } else {
+      lims <- as.numeric(strsplit(sub("^bytes=", "", range), "-")[[1]])
+      from <- lims[1]; to <- min(lims[2], total - 1)
+    }
+    httr2::response(206L, url = req$url,
+      headers = list(`Content-Range` = sprintf("bytes %.0f-%.0f/%d", from, to, total)),
+      body = bytes[(from + 1):(to + 1)])
+  }
+}
+
+.test_members <- function() {
+  list("data/a.csv" = charToRaw(strrep("id,x\n1,2\n", 40)),
+       "b.R"        = charToRaw("x <- 1\n"),
+       "c.txt"      = charToRaw("notes\n"))
+}
+
+test_that(".parse_zip_central_dir reads a Zip64 archive's sizes and offsets", {
+  members <- .test_members()
+  bytes <- .test_zip64_bytes(members)
+  cd <- metacheck:::.parse_zip_central_dir(bytes)
+  expect_equal(cd$name, names(members))
+  expect_equal(cd$size, unname(as.numeric(lengths(members))))
+  expect_equal(cd$csize, unname(as.numeric(lengths(members))))
+  expect_false(anyNA(cd$offset))
+  # Each offset points at that member's local header signature.
+  for (o in cd$offset)
+    expect_identical(bytes[(o + 1):(o + 4)], as.raw(c(0x50, 0x4b, 0x03, 0x04)))
+  # The central directory starts where the last member's bytes end.
+  expect_equal(attr(cd, "cd_offset"), max(cd$offset) + 30 + nchar("c.txt") + 6)
+
+  # The same when the tail is only part of the archive and its total size is
+  # known (the Zip64 end record is then found by its absolute offset).
+  tail <- utils::tail(bytes, length(bytes) - 10)
+  attr(tail, "total") <- length(bytes)
+  expect_equal(metacheck:::.parse_zip_central_dir(tail)$offset, cd$offset)
+})
+
+test_that(".parse_zip_central_dir reads a Zip64 extra field holding only the offset", {
+  # The Figshare case (10.6084/m9.figshare.28052888.v1): sizes fit in 32 bits,
+  # offsets past 4 GB do not, so the extra field holds the offset alone.
+  members <- .test_members()
+  cd <- metacheck:::.parse_zip_central_dir(.test_zip64_bytes(members, zip64 = "offset"))
+  expect_equal(cd$size, unname(as.numeric(lengths(members))))
+  expect_false(anyNA(cd$offset))
+  expect_equal(cd$offset[1], 0)
+})
+
+test_that(".parse_zip_central_dir marks a placeholder with no Zip64 field as NA", {
+  members <- .test_members()
+  bytes <- .test_zip64_bytes(members, zip64 = "offset")
+  cd_ok <- metacheck:::.parse_zip_central_dir(bytes)
+  # Turn the first entry's extra-field ID into an unrelated one: the offset
+  # placeholder then has no real value to replace it.
+  cd_start <- attr(cd_ok, "cd_offset") + 1
+  extra_at <- cd_start + 46 + nchar(names(members)[1])
+  bytes[extra_at:(extra_at + 1)] <- .le_bytes(0x7075, 2)
+  cd <- metacheck:::.parse_zip_central_dir(bytes)
+  expect_equal(nrow(cd), 3)
+  expect_true(is.na(cd$offset[1]))
+  expect_false(anyNA(cd$offset[2:3]))
+})
+
+test_that("zip_peek() lists a Zip64 archive and its members can be fetched", {
+  members <- .test_members()
+  bytes <- .test_zip64_bytes(members)
+  url <- "https://range-host.example/zip64.zip"
+  withr::defer(suppressWarnings(rm(list = url, envir = metacheck:::.zip_peek_cache)))
+  log <- new.env(); log$calls <- character(0)
+  httr2::local_mocked_responses(.range_host(bytes, log))
+
+  cd <- metacheck:::zip_peek(url, size = length(bytes))
+  expect_setequal(cd$name, names(members))
+  d <- withr::local_tempdir()
+  got <- metacheck:::.zip_fetch_members(url, dest = d)
+  expect_true(all(got$ok))
+  for (nm in names(members))
+    expect_identical(readBin(file.path(d, nm), "raw", 1e4), members[[nm]])
+})
+
+test_that("a member is fetched with one range request, and nearby members share one", {
+  d0 <- withr::local_tempdir()
+  bytes <- .test_zip_bytes(d0)
+  skip_if(is.null(bytes), "zip utility unavailable")
+  url <- "https://range-host.example/one-request.zip"
+  withr::defer(suppressWarnings(rm(list = url, envir = metacheck:::.zip_peek_cache)))
+  log <- new.env(); log$calls <- character(0)
+  httr2::local_mocked_responses(.range_host(bytes, log))
+  cd <- metacheck:::zip_peek(url, size = length(bytes))
+
+  # One member: one request (it used to be two, header then data).
+  log$calls <- character(0)
+  got <- metacheck:::.zip_member_fetch(url, cd[cd$name == "data.csv", , drop = FALSE])
+  expect_identical(got, readBin(file.path(d0, "data.csv"), "raw", 1e5))
+  expect_length(log$calls, 1)
+
+  # Both members sit next to each other: one request for the two.
+  log$calls <- character(0)
+  d <- withr::local_tempdir()
+  fetched <- metacheck:::.zip_fetch_members(url, dest = d)
+  expect_true(all(fetched$ok))
+  expect_length(log$calls, 1)
+  expect_identical(readBin(file.path(d, "notes.txt"), "raw", 100),
+                   readBin(file.path(d0, "notes.txt"), "raw", 100))
+})
+
+test_that(".zip_range_plan merges members within the gap and splits the rest", {
+  want <- data.frame(name = c("a", "b", "c"), size = 10, method = 0,
+                     csize = c(100, 100, 100), offset = c(0, 200, 1e6), crc = NA)
+  plan <- metacheck:::.zip_range_plan(want, max_gap = 65536)
+  expect_length(plan, 2)
+  expect_equal(plan[[1]]$rows, 1:2)
+  expect_equal(plan[[2]]$rows, 3)
+  # A range stops at the next local header instead of running the 1 KB margin
+  # into it ...
+  expect_equal(plan[[1]]$to, 200 + 30 + 1 + 100 + 1024 - 1)
+  expect_equal(metacheck:::.zip_range_plan(want[1, ], want)[[1]]$to, 199)
+  # ... and at the start of the central directory for the last member.
+  cd <- want; attr(cd, "cd_offset") <- 1e6 + 131
+  expect_equal(metacheck:::.zip_range_plan(want[3, ], cd)[[1]]$to, 1e6 + 130)
+  # Without a gap allowance every member is requested on its own.
+  expect_length(metacheck:::.zip_range_plan(want, max_gap = -1), 3)
+})
+
+test_that("a local extra field longer than the margin costs a second request, not a failure", {
+  members <- .test_members()
+  bytes <- .test_zip64_bytes(members, local_extra = 3000)
+  url <- "https://range-host.example/long-extra.zip"
+  withr::defer(suppressWarnings(rm(list = url, envir = metacheck:::.zip_peek_cache)))
+  log <- new.env(); log$calls <- character(0)
+  httr2::local_mocked_responses(.range_host(bytes, log))
+  cd <- metacheck:::zip_peek(url, size = length(bytes))
+  # No later bound (a listing of this member alone), so the 1 KB margin is all
+  # the first request covers.
+  entry <- cd[cd$name == "b.R", , drop = FALSE]
+  log$calls <- character(0)
+  got <- metacheck:::.zip_member_fetch(url, entry)
+  expect_identical(got, members[["b.R"]])
+  expect_length(log$calls, 2)
+})
+
+test_that(".http_range_bytes accepts a range cut short at the end of the file only when asked", {
+  log <- new.env(); log$calls <- character(0)
+  httr2::local_mocked_responses(.range_host(as.raw(1:100), log))
+  url <- "https://range-host.example/short.bin"
+  expect_identical(metacheck:::.http_range_bytes(url, 90, 200, allow_short = TRUE),
+                   as.raw(91:100))
+  reason <- new.env(parent = emptyenv())
+  expect_null(metacheck:::.http_range_bytes(url, 90, 200, reason = reason))
+  expect_match(reason$msg, "short read")
+})
+
+test_that(".zip_whole_is_cheaper weighs requests against bytes", {
+  cd <- data.frame(name = sprintf("f%02d.csv", 1:20), size = 1000, method = 0,
+                   csize = 1000, offset = seq(0, by = 1e6, length.out = 20), crc = NA)
+  plan <- metacheck:::.zip_range_plan(cd, cd)   # 20 members 1 MB apart: 20 requests
+  expect_length(plan, 20)
+  # A ~19 MB archive against 20 requests of ~2 KB each: the archive is cheaper.
+  expect_true(metacheck:::.zip_whole_is_cheaper(cd, cd, plan, Inf))
+  # ... but not when it does not fit the budget, or the caller turned it off.
+  expect_false(metacheck:::.zip_whole_is_cheaper(cd, cd, plan, 1e6))
+  expect_false(metacheck:::.zip_whole_is_cheaper(cd, cd, plan, 0))
+  # Three members from the same archive: three requests cost less than 19 MB.
+  few <- cd[1:3, ]
+  expect_false(metacheck:::.zip_whole_is_cheaper(cd, few,
+    metacheck:::.zip_range_plan(few, cd), Inf))
+  # Counting requests only (Dryad's quota), three members are enough.
+  expect_true(metacheck:::.zip_whole_is_cheaper(cd, few,
+    metacheck:::.zip_range_plan(few, cd), Inf, request_bytes = Inf))
+  # Fewer members than min_whole_members never take the archive.
+  expect_false(metacheck:::.zip_whole_is_cheaper(cd, cd[1:2, ],
+    metacheck:::.zip_range_plan(cd[1:2, ], cd), Inf, request_bytes = Inf))
+})
+
+# ── Hosts that ignore Range ─────────────────────────────────────────────────
+
+test_that(".range_ignored_key keeps the path's shape and wildcards ids", {
+  expect_equal(
+    metacheck:::.range_ignored_key("https://www.psycharchives.org/rest/bitstreams/112719a3-3346/retrieve"),
+    "www.psycharchives.org/rest/bitstreams/*/retrieve")
+  # Zenodo's per-file URLs and its files-archive get different keys.
+  expect_false(identical(
+    metacheck:::.range_ignored_key("https://zenodo.org/api/records/123/files-archive"),
+    metacheck:::.range_ignored_key("https://zenodo.org/api/records/123/files/a.zip/content")))
+})
+
+test_that("a host that ignores Range is not read whole and is skipped afterwards", {
+  withr::defer(rm(list = ls(envir = metacheck:::.range_ignored_hosts),
+                  envir = metacheck:::.range_ignored_hosts))
+  big <- as.raw(rep(1:255, length.out = 3 * 1048576))   # 3 MB, over the 2 MB limit
+  log <- new.env(); log$calls <- character(0)
+  httr2::local_mocked_responses(.range_host(big, log, ignore_range = TRUE))
+  url1 <- "https://ignores.example/bitstreams/111/retrieve"
+  url2 <- "https://ignores.example/bitstreams/222/retrieve"
+  withr::defer(suppressWarnings(rm(list = c(url1, url2), envir = metacheck:::.zip_peek_cache)))
+
+  expect_null(metacheck:::.http_range_tail(url1, 131072, total = length(big)))
+  expect_true(metacheck:::.range_ignored_known(url2))   # same host and path shape
+
+  # A later peek on that host sends nothing at all.
+  log$calls <- character(0)
+  expect_null(metacheck:::zip_peek(url2, size = length(big)))
+  expect_length(log$calls, 0)
+  reason <- new.env(parent = emptyenv())
+  expect_null(metacheck:::.http_range_bytes(url2, 0, 10, reason = reason))
+  expect_match(reason$msg, "range not honoured")
+  expect_length(log$calls, 0)
+})
+
+test_that("a small file sent whole by a host that ignores Range is still read", {
+  withr::defer(rm(list = ls(envir = metacheck:::.range_ignored_hosts),
+                  envir = metacheck:::.range_ignored_hosts))
+  d <- withr::local_tempdir()
+  bytes <- .test_zip_bytes(d)
+  skip_if(is.null(bytes), "zip utility unavailable")
+  log <- new.env(); log$calls <- character(0)
+  httr2::local_mocked_responses(.range_host(bytes, log, ignore_range = TRUE))
+  url <- "https://ignores-small.example/files/1/retrieve"
+  # A tail shorter than the file: the 200 answer holds the tail, and the file
+  # is far under 2 MB, so it is read.
+  raw <- metacheck:::.http_range_tail(url, 64, total = length(bytes))
+  expect_identical(as.vector(raw), utils::tail(bytes, 64))
+  expect_true(metacheck:::.range_ignored_known(url))
+})
+
+test_that("a 200 that came from another host after a redirect is not recorded", {
+  withr::defer(rm(list = ls(envir = metacheck:::.range_ignored_hosts),
+                  envir = metacheck:::.range_ignored_hosts))
+  url <- "https://osf.io/download/6891f2f7157709eae14783e1/"
+  resp <- httr2::response(200L, url = "https://files.osf.io/v1/resources/x/providers/github/a.zip")
+  expect_false(metacheck:::.range_ignored_record(url, resp))
+  expect_false(metacheck:::.range_ignored_known(url))
+  resp_same <- httr2::response(200L, url = url)
+  expect_true(metacheck:::.range_ignored_record(url, resp_same))
+  expect_true(metacheck:::.range_ignored_known(url))
+})
+
+# ── Zips already on disk ────────────────────────────────────────────────────
+
+test_that("zip_peek() lists a zip on disk without a request, and its members extract locally", {
+  d <- withr::local_tempdir()
+  bytes <- .test_zip_bytes(d)
+  skip_if(is.null(bytes), "zip utility unavailable")
+  path <- file.path(d, "t.zip")
+  httr2::local_mocked_responses(function(req) stop("no request expected"))
+
+  cd <- metacheck:::zip_peek(path)
+  expect_setequal(cd$name, c("data.csv", "notes.txt"))
+  # The same columns a remote peek gives, with the same values.
+  expect_equal(cd, metacheck:::.parse_zip_central_dir(bytes), ignore_attr = TRUE)
+  # Not cached: a local file can change.
+  expect_false(exists(path, envir = metacheck:::.zip_peek_cache, inherits = FALSE))
+
+  out <- file.path(d, "out")
+  got <- metacheck:::.zip_fetch_members(path, names = "notes.txt", dest = out)
+  expect_true(got$ok)
+  expect_identical(readBin(got$path, "raw", 100),
+                   readBin(file.path(d, "notes.txt"), "raw", 100))
+
+  expect_equal(metacheck:::.zip_local_source(data.frame(
+    file_location = c(path, NA, file.path(d, "missing.zip")))),
+    c(path, NA, NA))
+})
+
+test_that("zip_decision() passes a known size on to zip_peek()", {
+  seen <- NULL
+  local_mocked_bindings(zip_peek = function(url, ..., size = NULL) {
+    seen <<- size
+    data.frame(name = "study.csv", size = 1)
+  })
+  zip_decision("http://x/data.zip", size = 1234)
+  expect_equal(seen, 1234)
+})
+assignInNamespace("zip_peek", .real_zip_peek, ns = "metacheck")
+
+test_that("a whole small file sent as 200 for a range from byte 0 is accepted, not recorded", {
+  withr::defer(rm(list = ls(envir = metacheck:::.range_ignored_hosts),
+                  envir = metacheck:::.range_ignored_hosts))
+  # The first member of a tiny archive, requested with its 1 KB margin, covers
+  # the whole file; a host may answer that with a plain 200.
+  log <- new.env(); log$calls <- character(0)
+  httr2::local_mocked_responses(.range_host(as.raw(1:100), log, ignore_range = TRUE))
+  url <- "https://whole-ok.example/files/1/tiny.zip"
+  expect_identical(metacheck:::.http_range_bytes(url, 0, 500, allow_short = TRUE),
+                   as.raw(1:100))
+  expect_false(metacheck:::.range_ignored_known(url))
+  # Without allow_short the exact range is required, as before.
+  expect_null(metacheck:::.http_range_bytes(url, 0, 500))
+  expect_false(metacheck:::.range_ignored_known(url))
 })

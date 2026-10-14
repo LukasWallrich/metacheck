@@ -537,7 +537,8 @@ reshare_file_download <- function(reshare_id,
       got <- tryCatch(
         .reshare_zip_members(files$self[[i]], dest = download_to,
                             keep_types = unzip_types,
-                            max_file_size = max_file_size),
+                            max_file_size = max_file_size,
+                            size = if ("size" %in% names(files)) files$size[[i]] else NULL),
         error = \(e) NULL)
       if (!is.null(got)) {
         files$extracted[i] <- sum(got$ok %in% TRUE)
@@ -647,14 +648,18 @@ reshare_file_download <- function(reshare_id,
 #' @param max_file_size largest member to extract (in MB), applied per member
 #'   exactly as the deposit-level cap is applied per file
 #'
+#' @param size the zip's size in bytes as the listing gives it, or `NULL`.
+#'   Passed on to [zip_peek()] so it does not have to send a `HEAD` request to
+#'   learn a size the listing already gave.
+#'
 #' @returns a data frame with one row per extracted member (`name`, `path`,
 #'   `size`, `ok`), or `NULL` when the archive could not be listed and the
 #'   caller should download it whole instead
 #' @keywords internal
 .reshare_zip_members <- function(url, dest,
                                  keep_types = c("data", "documentation"),
-                                 max_file_size = 10) {
-  listing <- tryCatch(zip_peek(url), error = \(e) NULL)
+                                 max_file_size = 10, size = NULL) {
+  listing <- tryCatch(zip_peek(url, size = size), error = \(e) NULL)
   if (is.null(listing) || nrow(listing) == 0) return(NULL)
 
   types <- data_classify_files(basename(listing$name))

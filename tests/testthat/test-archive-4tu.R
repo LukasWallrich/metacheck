@@ -120,3 +120,78 @@ test_that("researchdata4tu_info retrieves real metadata when the API is reachabl
   expect_false(is.na(info$title))
   expect_false(is.na(info$doi))
 })
+
+
+# The test bodies below are wrapped in local(): helper.R's test_that()
+# wrapper evaluates a test's code in the test FILE's environment, so a
+# withr/testthat local_*() call made directly in it would stay in force
+# until the end of the file instead of the end of the test.
+
+test_that("researchdata4tu_info resolves only uuids from a 'uuid:' DOI", local({
+  # A bare-uuid DOI (10.4121/<uuid>) or a data.4tu.nl/datasets/<uuid>
+  # address carries the record's own uuid, which v2/articles/<uuid> accepts
+  # directly (verified 2026-10-13); resolving it built "10.4121/uuid:<uuid>",
+  # a DOI that does not exist. Only the legacy "uuid:" form needs resolving.
+  resolved <- character(0)
+  queried <- character(0)
+  local_mocked_bindings(
+    online = \(...) TRUE,
+    .researchdata4tu_resolve_uuid = function(uuid) {
+      resolved <<- c(resolved, uuid)
+      "12675218"
+    },
+    .figshare_info = function(id, host, pb = NULL) {
+      queried <<- c(queried, id)
+      data.frame(figshare_id = id, title = paste("title", id))
+    }
+  )
+  info <- researchdata4tu_info(c(
+    "https://doi.org/10.4121/uuid:04b25e70-ca3e-489f-9510-36385c1a4104",
+    "https://doi.org/10.4121/ce413614-1c82-4e81-90c0-323aa7d2fabd",
+    "https://data.4tu.nl/datasets/ce413614-1c82-4e81-90c0-323aa7d2fabd/1"
+  ))
+  expect_equal(resolved, "04b25e70-ca3e-489f-9510-36385c1a4104")
+  expect_setequal(queried, c("12675218", "ce413614-1c82-4e81-90c0-323aa7d2fabd"))
+  expect_equal(unname(info$researchdata4tu_id),
+               c("12675218", rep("ce413614-1c82-4e81-90c0-323aa7d2fabd", 2)))
+}))
+
+test_that(".researchdata4tu_resolve_uuid reads the numeric id from the handle API", local({
+  seen <- character(0)
+  httr2::local_mocked_responses(function(req) {
+    seen <<- c(seen, req$url)
+    if (grepl("04b25e70", req$url)) {
+      # the real registered URL, verified 2026-10-13
+      return(httr2::response_json(body = list(responseCode = 1, values = list(
+        list(type = "URL", data = list(value = "https://data.4tu.nl/articles/_/12675218/1"))))))
+    }
+    httr2::response_json(status_code = 404, body = list(responseCode = 100))
+  })
+  expect_equal(.researchdata4tu_resolve_uuid("04b25e70-ca3e-489f-9510-36385c1a4104"), "12675218")
+  expect_equal(seen, "https://doi.org/api/handles/10.4121%2Fuuid%3A04b25e70-ca3e-489f-9510-36385c1a4104?type=URL")
+  # an unregistered DOI falls back to the uuid itself, as before
+  expect_equal(.researchdata4tu_resolve_uuid("00000000-0000-0000-0000-000000000000"),
+               "00000000-0000-0000-0000-000000000000")
+}))
+
+test_that("researchdata4tu_file_download resolves a 'uuid:' DOI, and only that", local({
+  resolved <- character(0)
+  passed <- NULL
+  local_mocked_bindings(
+    .researchdata4tu_resolve_uuid = function(uuid) {
+      resolved <<- c(resolved, uuid)
+      "12675218"
+    },
+    figshare_file_download = function(figshare_id, ...) {
+      passed <<- figshare_id
+      NULL
+    }
+  )
+  researchdata4tu_file_download(c(
+    "https://doi.org/10.4121/uuid:04b25e70-ca3e-489f-9510-36385c1a4104",
+    "https://doi.org/10.4121/ce413614-1c82-4e81-90c0-323aa7d2fabd",
+    "16766929"))
+  expect_equal(resolved, "04b25e70-ca3e-489f-9510-36385c1a4104")
+  expect_equal(unname(passed),
+               c("12675218", "ce413614-1c82-4e81-90c0-323aa7d2fabd", "16766929"))
+}))

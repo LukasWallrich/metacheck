@@ -81,20 +81,19 @@ test_that(".mendeley_info marks a malformed id as unfound (real HTTP 400)", {
 })
 
 
-test_that(".mendeley_info documents current behaviour for a well-formed but nonexistent id", {
-  # A nonexistent (but well-formed) dataset id does NOT 404 at the HTTP
-  # layer -- confirmed live 2026-10-05: GET .../public-api/datasets/
-  # doesnotexist12345xyz returns HTTP 200 with body
-  # {"error":{"message":"error - dataset not found","status":404}}. The
-  # real 404 is only inside the JSON payload. .mendeley_info()'s check
-  # (resp_status != 200) does not catch this: the response parses fine as
-  # JSON, so every real field access falls through to `%empty_or% NA`
-  # because the expected fields simply aren't present in {"error": {...}}.
-  # The practical result, documented here rather than fixed: no `error`
-  # column is set at all, and every metadata field comes back NA. This is
-  # reported as a finding, not treated as desired behaviour.
-  info <- metacheck:::.mendeley_info("doesnotexist12345xyz")
-  expect_false("error" %in% names(info))
-  expect_true(is.na(info$title))
-  expect_true(is.na(info$doi))
+test_that(".mendeley_info reports a well-formed but nonexistent id as unfound", {
+  # Mendeley has answered this two ways: HTTP 200 with only an error in the
+  # body ({"error":{"message":"error - dataset not found","status":404}},
+  # 2026-10-05), and HTTP 400 (2026-10-14). Both are reported as "unfound";
+  # the live request below covers whichever Mendeley gives today, and the
+  # mocked one the 200-with-error answer.
+  info <- suppressWarnings(metacheck:::.mendeley_info("doesnotexist12345xyz"))
+  expect_equal(info$error, "unfound")
+
+  local({
+    httr2::local_mocked_responses(function(req) httr2::response_json(
+      body = list(error = list(message = "error - dataset not found", status = 404))))
+    info2 <- suppressWarnings(metacheck:::.mendeley_info("doesnotexist12345xyz"))
+    expect_equal(info2$error, "unfound")
+  })
 })

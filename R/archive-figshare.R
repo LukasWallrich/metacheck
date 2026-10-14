@@ -900,16 +900,100 @@ figshare_info <- function(figshare_url, id_col = 1, host = "api.figshare.com",
   obj$updated_date <-     rec$modified_date %empty_or% NA_character_
   obj$authors <-          list(authors)
   obj$license <-          rec$license$name %empty_or% NA_character_
-  obj$files <-            list(rec$files %||% list())
+
+  files <- rec$files %||% list()
+
+  # Figshare's own API specification describes the article response's
+  # `files` as a "List of up to 10 article files" (docs.figshare.com,
+  # swagger.json, checked 2026-10-13). In practice it returned all 103 files
+  # of article 33328980 that day, so the cap may not be enforced -- but if it
+  # ever is, a listing cut short would silently look like a complete one. The
+  # article's own `size` is the total of ALL its files (equal to the sum of
+  # the listed sizes for articles 28052888, 33328980 and 18093368, checked
+  # 2026-10-13), so a shortfall is the signal to fetch the full list from the
+  # paged files endpoint instead.
+  listed <- sum(vapply(files, \(f) as.numeric(f$size %empty_or% 0), numeric(1)),
+                na.rm = TRUE)
+  total <- suppressWarnings(as.numeric(rec$size %empty_or% NA_real_))
+  if (!is.na(total) && listed < total) {
+    all_files <- .figshare_article_files(figshare_id, host = host)
+    if (length(all_files) > length(files)) files <- all_files
+  }
+
+  # Figshare keeps an article's folder layout (e.g. Experiment_1/,
+  # Experiment_2/ in article 28052888) out of `files`, in a separate
+  # `folder_structure` object mapping each file id to its folder ("" for the
+  # top level) -- confirmed live 2026-10-13. Ignored, every file looked as if
+  # it sat at the top level, and two files with the same name in different
+  # folders overwrote each other on download. Each file entry gets a `path`
+  # ("<folder>/<name>", or just the name at the top level) for callers to use
+  # in place of the bare name; entries are otherwise left exactly as Figshare
+  # sent them.
+  folders <- rec$folder_structure %||% list()
+  files <- lapply(files, \(f) {
+    folder <- folders[[as.character(f$id %empty_or% "")]] %empty_or% ""
+    f$path <- .figshare_file_path(f$name %empty_or% NA_character_, folder)
+    f
+  })
+  obj$files <-            list(files)
 
   return(obj)
+}
+
+# A Figshare file's path inside its article: "<folder>/<name>", or just the
+# name when the folder is empty/absent. The folder text comes from the
+# article's metadata and becomes part of a path written to disk by
+# figshare_file_download(), so "", "." and ".." segments are dropped -- a
+# folder named "../x" must not place a file outside the download directory.
+.figshare_file_path <- function(name, folder = "") {
+  if (is.null(name) || length(name) != 1 || is.na(name)) return(NA_character_)
+  folder <- as.character(folder %empty_or% "")
+  if (is.na(folder)) folder <- ""
+  parts <- strsplit(folder, "[/\\\\]")[[1]]
+  parts <- parts[nzchar(parts) & !parts %in% c(".", "..")]
+  if (length(parts) == 0) return(name)
+  paste(c(parts, name), collapse = "/")
+}
+
+# Every file of one article, from the paged /v2/articles/{id}/files endpoint
+# (the fallback .figshare_info() uses when the article response's own
+# `files` list looks cut short). page_size = 1000 is accepted (confirmed live
+# 2026-10-13: 103 files in one page for article 33328980, and page 2 then
+# came back empty), so one request normally suffices; a page shorter than
+# page_size marks the end. Returns NULL when the endpoint cannot be read
+# (e.g. a Figshare-compatible host that lacks it), leaving the caller with
+# the list it already had.
+.figshare_article_files <- function(figshare_id, host = "api.figshare.com",
+                                    page_size = 1000, max_pages = 50) {
+  out <- list()
+  for (page in seq_len(max_pages)) {
+    # Figshare asks for no more than 1 request/second (docs.figshare.com,
+    # "Rate limiting"); .batch_query() no longer sleeps after a lone request.
+    if (page > 1) Sys.sleep(1)
+    api_url <- sprintf("https://%s/v2/articles/%s/files?page=%d&page_size=%d",
+                       host, figshare_id, page, page_size)
+    resp <- .batch_query(api_url, msg = NULL,
+                         req_func = \(req) .figshare_headers(req, host = host))[[1]]
+    if (is.null(resp) || httr2::resp_status(resp) != 200) {
+      return(if (length(out) > 0) out else NULL)
+    }
+    batch <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
+    if (!is.list(batch)) return(if (length(out) > 0) out else NULL)
+    out <- c(out, batch)
+    if (length(batch) < page_size) break
+  }
+  out
 }
 
 # Add the right auth header to a Figshare-compatible API/download request.
 # Public articles are readable without a token (verified live against
 # article 18093368: "is_public": true, retrieved with no Authorization
-# header); a token only raises rate limits and unlocks private articles, so
-# it is added whenever one is set rather than being required.
+# header); a token only unlocks private articles, so it is added whenever one
+# is set rather than being required. It does NOT buy a higher request rate:
+# Figshare's documentation says "We do not have automatic rate limiting in
+# place for API requests" and asks callers to stay at or below 1 request per
+# second either way (https://docs.figshare.com/, "Rate limiting", checked
+# 2026-10-13) -- an earlier version of this comment claimed otherwise.
 #
 # `host` selects WHICH token to look up: real Figshare uses figshare_pat(),
 # while 4TU.ResearchData (host = "data.4tu.nl") uses its own separate
@@ -935,8 +1019,10 @@ figshare_info <- function(figshare_url, id_col = 1, host = "api.figshare.com",
 #'
 #' Figshare issues personal access tokens from account settings
 #' (https://figshare.com/account/applications). A token is optional for
-#' reading public articles (used here only to raise rate limits or read
-#' private ones), unlike Dataverse where a token is per-installation.
+#' reading public articles and is used here only to read private ones (it
+#' does not raise any request limit: Figshare documents no automatic rate
+#' limiting and asks for at most 1 request per second either way), unlike
+#' Dataverse where a token is per-installation.
 #'
 #' Store it as the `FIGSHARE_PAT` environment variable so it is read every
 #' time R starts.
@@ -974,14 +1060,16 @@ figshare_pat <- function(pat = NULL) {
 #' Creates a directory for the article and downloads all of its files.
 #' Returns (invisibly) a data frame with file info.
 #'
-#' Unlike Dataverse, OSF, or Zenodo, Figshare's v2 API documents no
-#' whole-article bulk-download endpoint (verified 2026-08-16: no
-#' `ndownloader.figshare.com/articles/...` zip route appears anywhere in
-#' https://docs.figshare.com/) -- every file's `download_url` is its own
-#' request, so this always downloads file by file. A `.zip` already present in
-#' the article is still handled the same way `dataverse_file_download()`
-#' handles one: fetched whole and left as a zip unless `unzip_types` asks for
-#' only specific members out of it.
+#' Files are downloaded one by one, each from its own `download_url`. Figshare
+#' does document a whole-article zip (`GET /v2/articles/{id}/download`, which
+#' redirects to `ndownloader.figshare.com/articles/<id>/versions/<v>` and
+#' serves `application/zip` with a `Content-Length`, verified 2026-10-13), but
+#' it is not used here: it always contains every file, so it cannot honour the
+#' size limits below, and how it lays out files kept in folders was not
+#' verified. Files in folders (Figshare's `folder_structure`) are saved under
+#' those folders. A `.zip` already present in the article is handled the same
+#' way `dataverse_file_download()` handles one: fetched whole and left as a
+#' zip unless `unzip_types` asks for only specific members out of it.
 #'
 #' You can limit downloads to only files under a specific size (defaults to
 #' 10MB) and only a maximum download size (largest files will be omitted until
@@ -1107,7 +1195,11 @@ figshare_file_download <- function(figshare_id,
       key      = x$name %empty_or% NA_character_,
       size     = as.numeric(x$size %empty_or% NA_real_),
       checksum = x$computed_md5 %empty_or% NA_character_,
-      self     = x$download_url %empty_or% NA_character_
+      self     = x$download_url %empty_or% NA_character_,
+      # folder-qualified path from the article's folder_structure (see
+      # .figshare_info()); the bare name for a top-level file, or for an
+      # entry cached before `path` existed.
+      rel      = x$path %empty_or% x$name %empty_or% NA_character_
     )
   })
 
@@ -1203,7 +1295,8 @@ figshare_file_download <- function(figshare_id,
       got <- tryCatch(
         .figshare_zip_members(files$self[[i]], dest = download_to,
                               keep_types = unzip_types,
-                              max_file_size = max_file_size),
+                              max_file_size = max_file_size,
+                              size = files$size[[i]]),
         error = \(e) NULL)
       if (!is.null(got)) {
         files$extracted[i] <- sum(got$ok %in% TRUE)
@@ -1264,7 +1357,16 @@ figshare_file_download <- function(figshare_id,
     if (!is.na(files$extracted[i])) next
     if (isTRUE(files$downloaded[i])) {
       from <- file.path(temppath, files$id[[i]])
-      fname <- if (!is.na(files$key[[i]]) && nzchar(files$key[[i]])) files$key[[i]] else files$id[[i]]
+      # Saved under its folder inside the article (files$rel), so the
+      # article's own layout is kept and same-named files in different
+      # folders no longer overwrite each other.
+      fname <- if (!is.na(files$rel[[i]]) && nzchar(files$rel[[i]])) {
+        files$rel[[i]]
+      } else if (!is.na(files$key[[i]]) && nzchar(files$key[[i]])) {
+        files$key[[i]]
+      } else {
+        files$id[[i]]
+      }
       to <- file.path(download_to, fname)
       dir.create(dirname(to), showWarnings = FALSE, recursive = TRUE)
       file.copy(from, to, overwrite = TRUE)
@@ -1312,6 +1414,12 @@ figshare_file_download <- function(figshare_id,
 #'   documentation and skips materials, matching [zip_decision()]
 #' @param max_file_size largest member to extract (in MB), applied per member
 #'   exactly as the article-level cap is applied per file
+#' @param size the zip's size in bytes as the article lists it, or `NULL`.
+#'   Passed on to [zip_peek()], which otherwise sends a `HEAD` request to learn
+#'   it -- and a Figshare `download_url` redirects to a signed Amazon S3
+#'   address that answers `HEAD` with 403 (verified 2026-10-13 on file
+#'   51618395), so without the size every peek began with a request that
+#'   could only fail.
 #'
 #' @returns a data frame with one row per extracted member (`name`, `path`,
 #'   `size`, `ok`), or `NULL` when the archive could not be listed and the
@@ -1319,8 +1427,8 @@ figshare_file_download <- function(figshare_id,
 #' @keywords internal
 .figshare_zip_members <- function(url, dest,
                                   keep_types = c("data", "documentation"),
-                                  max_file_size = 10) {
-  listing <- tryCatch(zip_peek(url), error = \(e) NULL)
+                                  max_file_size = 10, size = NULL) {
+  listing <- tryCatch(zip_peek(url, size = size), error = \(e) NULL)
   if (is.null(listing) || nrow(listing) == 0) return(NULL)
 
   types <- data_classify_files(basename(listing$name))

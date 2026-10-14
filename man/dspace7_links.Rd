@@ -21,6 +21,13 @@ hyperlinks from the paper's own \code{url} table, plus a body-text
 fallback for a bare mention that still carries one of these hosts (a bare
 handle prefix with no host at all cannot be attributed to a specific
 installation -- see \code{.dspace7_parse()}).
+
+A DOI mentioned in the text is also looked up, and kept when it leads to
+one of these installations. The paper's own DOI, and DOIs under a prefix
+that another detector handles and no DSpace 7 installation uses (see
+\code{.dspace7_skip_doi_prefixes()}), are not looked up. The lookup reads the
+URL registered for the DOI from doi.org's handle API rather than visiting
+the landing page, and each DOI is looked up once per R session.
 }
 \examples{
 \dontrun{

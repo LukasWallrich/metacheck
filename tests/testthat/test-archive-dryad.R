@@ -109,3 +109,115 @@ test_that(".dryad_download_one_file reports a 401 distinctly from other failures
   expect_true(file.exists(target))
   expect_equal(rawToChar(readBin(target, "raw", n = file.size(target))), "file contents")
 })
+
+
+# The test bodies below are wrapped in local(): helper.R's test_that()
+# wrapper evaluates a test's code in the test FILE's environment, so a
+# withr/testthat local_*() call made directly in it would stay in force
+# until the end of the file instead of the end of the test.
+
+# Clear every Dryad credential for one test, so .dryad_headers() adds no
+# OAuth step (which would send its own token request past the mocks) and
+# the once-per-session "no Dryad API key" message stays quiet.
+local_no_dryad_key <- function(env = parent.frame()) {
+  withr::local_envvar(DRYAD_PAT = "", DRYAD_CLIENT_ID = "", DRYAD_CLIENT_SECRET = "",
+                      .local_envir = env)
+  withr::local_options(list(metacheck.dryad.pat = NULL,
+                            metacheck.dryad.client_id = NULL,
+                            metacheck.dryad.client_secret = NULL,
+                            metacheck.dryad_pat.notified = TRUE),
+                       .local_envir = env)
+}
+
+test_that(".dryad_list_files follows _links.next to the last page", local({
+  # Recorded 2026-10-13 from doi:10.5061/dryad.9ghx3ffgc (22 files), read at
+  # per_page = 10 so the 22 files arrive over three pages; the fixtures are
+  # trimmed to the fields metacheck reads. Before this fix only the first
+  # page (Dryad's default 20 files) was ever read.
+  local_no_dryad_key()
+  files <- metacheck:::.dryad_list_files("/api/v2/versions/104509/files",
+                                         dryad_doi = "10.5061/dryad.9ghx3ffgc",
+                                         per_page = 10)
+  expect_length(files, 22)
+  expect_equal(attr(files, "dryad_total"), 22)
+  expect_null(attr(files, "dryad_incomplete"))
+  paths <- vapply(files, \(f) f$path, character(1))
+  expect_equal(length(unique(paths)), 22)
+}), "mock")
+
+test_that(".dryad_info lists more than 20 files and reports storageSize", local({
+  local_no_dryad_key()
+  info <- metacheck:::.dryad_info("10.5061/dryad.9ghx3ffgc")
+  expect_length(info$files[[1]], 22)
+  expect_equal(info$storage_size, 756438)
+  expect_equal(info$files_total, 22)
+  expect_false(info$files_incomplete)
+  # storageSize equals the sum of the listed sizes for this dataset
+  expect_equal(sum(vapply(info$files[[1]], \(f) as.numeric(f$size), numeric(1))),
+               info$storage_size)
+}), "mock")
+
+test_that(".dryad_list_files warns and marks a listing that stops early", local({
+  local_no_dryad_key()
+  page1 <- list(
+    `_links` = list(`next` = list(href = "/api/v2/versions/1/files?page=2&per_page=100")),
+    count = 2, total = 3,
+    `_embedded` = list(`stash:files` = list(list(path = "a.csv", size = 1),
+                                            list(path = "b.csv", size = 2))))
+  httr2::local_mocked_responses(function(req) {
+    if (grepl("page=2", req$url)) return(httr2::response(status_code = 404, url = req$url))
+    httr2::response_json(body = page1)
+  })
+  expect_warning(
+    files <- metacheck:::.dryad_list_files("/api/v2/versions/1/files", dryad_doi = "10.5061/dryad.x"),
+    "only 2 of 3 files")
+  expect_length(files, 2)
+  expect_equal(attr(files, "dryad_incomplete"), c(expected = 3, got = 2))
+
+  # A first page that fails altogether is reported too, not returned as an
+  # empty dataset.
+  httr2::local_mocked_responses(function(req) httr2::response(status_code = 404, url = req$url))
+  expect_warning(
+    files <- metacheck:::.dryad_list_files("/api/v2/versions/1/files", dryad_doi = "10.5061/dryad.x"),
+    "only 0 of its files")
+  expect_length(files, 0)
+  expect_false(is.null(attr(files, "dryad_incomplete")))
+
+  # A single complete page: no warning, no mark.
+  one <- page1
+  one$`_links` <- list()
+  one$total <- 2
+  httr2::local_mocked_responses(function(req) httr2::response_json(body = one))
+  expect_no_warning(
+    files <- metacheck:::.dryad_list_files("/api/v2/versions/1/files"))
+  expect_length(files, 2)
+  expect_null(attr(files, "dryad_incomplete"))
+}))
+
+test_that(".dryad_verify_downloads checks SHA-256 as well as MD5 digests", local({
+  dir <- withr::local_tempdir()
+  writeLines("hello dryad", file.path(dir, "a.txt"))
+  writeLines("second file", file.path(dir, "b.txt"))
+  writeLines("third file", file.path(dir, "c.txt"))
+  sha_a <- metacheck:::.bibr12_sha256(file.path(dir, "a.txt"))
+  skip_if(is.na(sha_a), "no SHA-256 implementation available")
+  md5_b <- unname(tools::md5sum(file.path(dir, "b.txt")))
+
+  files <- data.frame(
+    path = c("a.txt", "b.txt", "c.txt"),
+    size = file.size(file.path(dir, c("a.txt", "b.txt", "c.txt"))),
+    checksum = c(sha_a, md5_b, strrep("0", 64)),
+    # digestType as Dryad publishes it ("sha-256", "md5")
+    checksum_type = c("sha-256", "md5", "sha-256"),
+    downloaded = TRUE
+  )
+  out <- metacheck:::.dryad_verify_downloads(files, dir)
+  expect_equal(out$checksum_ok, c(TRUE, TRUE, FALSE))
+  expect_equal(out$downloaded, c(TRUE, TRUE, FALSE))
+
+  # An unrecognised digest type is left unverified rather than failed.
+  files$checksum_type <- c("sha-512", "md5", NA)
+  out <- metacheck:::.dryad_verify_downloads(files, dir)
+  expect_equal(out$checksum_ok, c(NA, TRUE, NA))
+  expect_equal(out$downloaded, c(TRUE, TRUE, TRUE))
+}))

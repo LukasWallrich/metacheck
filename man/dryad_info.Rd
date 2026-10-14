@@ -23,7 +23,12 @@ otherwise re-spent on every restart re-listing datasets nothing new
 needs fetching for.}
 }
 \value{
-a data frame of information
+a data frame of information, one row per link, with the dataset's
+metadata, its file records in the list column \code{files}, and
+\code{storage_size} (the dataset's total size in bytes as Dryad reports it),
+\code{files_total} (the number of files Dryad reports), and
+\code{files_incomplete} (\code{TRUE} when fewer files could be listed than Dryad
+reports; a warning is given too)
 }
 \description{
 Retrieve info from Dryad by URL

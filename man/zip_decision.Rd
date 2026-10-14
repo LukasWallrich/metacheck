@@ -8,11 +8,12 @@ zip_decision(
   url,
   skip_types = "materials",
   cache = FALSE,
-  skip_on_api_limit = FALSE
+  skip_on_api_limit = FALSE,
+  size = NULL
 )
 }
 \arguments{
-\item{url}{the zip's download URL}
+\item{url}{the zip's download URL, or the path of a zip already on disk}
 
 \item{skip_types}{data_type(s) that don't count as worth-downloading content
 (e.g. \code{"materials"})}
@@ -23,6 +24,10 @@ peek across R sessions instead of re-peeking the archive.}
 \item{skip_on_api_limit}{passed to \code{\link[=zip_peek]{zip_peek()}}: if \code{TRUE}, a confirmed
 exhausted rate-limit bucket is treated as a failed peek instead of
 waiting out the host's reset.}
+
+\item{size}{passed to \code{\link[=zip_peek]{zip_peek()}}: the zip's size in bytes when already
+known (e.g. from the repository's file listing), which saves a HEAD
+request. \code{NULL} (the default) asks the host.}
 }
 \value{
 a list with \code{worth} (\code{TRUE}/\code{FALSE}, or \code{NA} when the peek failed so

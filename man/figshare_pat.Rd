@@ -15,8 +15,10 @@ the current token (character; \code{""} when none is set)
 \description{
 Figshare issues personal access tokens from account settings
 (https://figshare.com/account/applications). A token is optional for
-reading public articles (used here only to raise rate limits or read
-private ones), unlike Dataverse where a token is per-installation.
+reading public articles and is used here only to read private ones (it
+does not raise any request limit: Figshare documents no automatic rate
+limiting and asks for at most 1 request per second either way), unlike
+Dataverse where a token is per-installation.
 }
 \details{
 Store it as the \code{FIGSHARE_PAT} environment variable so it is read every

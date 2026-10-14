@@ -91,9 +91,14 @@ osf_pat <- function(pat = NULL) {
   # check a publicly available preprint (Nosek badges)
   probe <- "https://api.osf.io/v2/preprints/khbvy/"
 
+  # 15 s with one retry, not a single 5 s try: on 2026-10-13 the OSF API was
+  # slow for hours (single requests of 6-15 s), and a 5 s limit then reported
+  # a valid token as unverifiable ("the OSF may be down") -- which is how the
+  # test of this function failed while the OSF was answering correctly.
   req <- httr2::request(probe) |>
     httr2::req_error(is_error = \(r) FALSE)  |>
-    httr2::req_timeout(5) |>
+    httr2::req_timeout(15) |>
+    httr2::req_retry(max_tries = 2, retry_on_failure = TRUE) |>
     httr2::req_headers(
       `User-Agent` = "metacheck",
       Accept = "application/vnd.api+json"
@@ -108,7 +113,7 @@ osf_pat <- function(pat = NULL) {
   # public file not available - something wrong
   if (!sc_anon %in% 200L) {
     warning(
-      "The OSF_PAT could not be validated because the test file is not avilable; the OSF may be down.",
+      "The OSF_PAT could not be validated because the test file is not available; the OSF may be down.",
       call. = FALSE
     )
     return(FALSE)
@@ -247,6 +252,171 @@ osf_pat <- function(pat = NULL) {
   }
 
   return(info_table)
+}
+
+# The component tree below one OSF node, and every node's storage providers,
+# in as few requests as the OSF allows.
+#
+# Walking the tree one node at a time costs two requests per component: its
+# /children/ (to find the next level) and its /files/ (to find which storage
+# providers it uses -- osfstorage, and any add-on such as GitHub). One listing
+# of /nodes/?filter[root]=<project>&embed=files returns every component of the
+# project, at every depth, 100 per page, each with its providers embedded --
+# for pngda, 8 nodes in 1 request instead of 17 (measured 2026-10-13). The
+# embedded provider objects are the same objects /files/ returns, so they
+# parse to identical rows (checked with identical() on pngda's mc45x).
+#
+# `filter[root]` takes the PROJECT's id, so for a linked component the whole
+# project is listed and only the part below `osf_id` is kept, by following
+# each node's parent. Registrations work the same way on /registrations/.
+#
+# One deliberate difference from the node-by-node walk: the filtered listing
+# leaves out a private component that the token's owner can see without being
+# a contributor to it (verified on pngda's ybm3c, which /children/ returns
+# when the token's owner can see it). Such a component is not part of what a
+# paper shares with its readers, and on a hosted app it would show the token
+# owner's private files in someone else's report, so leaving it out is right.
+#
+# An embedded provider list carries only its first page (10 items); a node
+# with more than that is returned in `missing`, for the caller to list the
+# old way. Returns NULL when the tree could not be listed like this at all
+# (request failed, listing incomplete, or `osf_id` not in it), so the caller
+# walks it node by node as before.
+#
+# Returns list(nodes = parsed rows of the components below `osf_id`,
+# providers = parsed provider rows of `osf_id` and those components,
+# missing = files links of nodes whose providers still need listing).
+.osf_tree <- function(osf_id, osf_type, root) {
+  if (length(osf_type) != 1 || !osf_type %in% c("nodes", "registrations") ||
+      length(root) != 1 || is.na(root) || !nzchar(root)) return(NULL)
+  osf_api <- getOption("metacheck.osf.api")
+  url <- sprintf("%s/%s/?filter[root]=%s&embed=files", osf_api, osf_type, root)
+  all <- tryCatch(osf_get_all_pages(url), error = \(e) NULL)
+  if (is.null(all) || !is.null(attr(all, "osf_error")) ||
+      !is.null(attr(all, "osf_incomplete")) || !is.data.frame(all) ||
+      nrow(all) == 0 || !osf_id %in% all$id) return(NULL)
+
+  # Keep `osf_id` and everything below it.
+  parent <- all$relationships$parent$data$id %||% rep(NA_character_, nrow(all))
+  keep <- osf_id
+  frontier <- osf_id
+  while (length(frontier) > 0) {
+    kids <- setdiff(all$id[!is.na(parent) & parent %in% frontier], keep)
+    keep <- c(keep, kids)
+    frontier <- kids
+  }
+  sub <- all[all$id %in% keep, , drop = FALSE]
+  below <- sub[sub$id != osf_id, , drop = FALSE]
+  nodes <- if (nrow(below) > 0) .osf_parse_response(below) else NULL
+
+  # Each node's embedded provider list.
+  emb <- sub$embeds$files
+  providers <- data.frame()
+  missing <- character(0)
+  files_links <- sub$relationships$files$links$related$href %||%
+    rep(NA_character_, nrow(sub))
+  for (k in seq_len(nrow(sub))) {
+    p <- if (is.list(emb$data)) emb$data[[k]] else NULL
+    total <- emb$links$meta$total[k] %||% NA
+    complete <- is.data.frame(p) && nrow(p) > 0 &&
+      (is.na(total) || nrow(p) >= total)
+    if (complete) {
+      providers <- dplyr::bind_rows(providers, .osf_parse_response(p))
+    } else if (!is.na(files_links[k])) {
+      # No embed, an embed error, or more providers than its first page held.
+      missing <- c(missing, files_links[k])
+    }
+  }
+
+  list(nodes = nodes, providers = providers, missing = missing)
+}
+
+# A GitHub repository linked to an OSF node, listed through GitHub itself.
+#
+# Through the OSF, a linked GitHub repository is listed one folder per request,
+# each proxied to GitHub by the OSF's file service: 3 requests and 72 seconds
+# for scienceverse/demo, linked to mc45x (measured 2026-10-13), and the rows
+# come back without file sizes. GitHub's own recursive tree lists the whole
+# repository in 2 requests (github_tree_files(): 3 seconds there), with sizes.
+# The node's /addons/github/ settings name the repository ("owner/repo:"),
+# readable without a token for a public node (checked the same day).
+#
+# The rows are shaped like .osf_file_data()'s, with download links on
+# raw.githubusercontent.com instead of the OSF's proxy. Each `osf_id` is a
+# made-up "<node>-github-<n>", since only the OSF's proxy assigns real ones:
+# it is unique and safe as a file name, which is what osf_file_download()
+# uses it for.
+#
+# Returns NULL whenever this route cannot be used -- no GitHub settings, a
+# branch other than the default named in them, or GitHub not listing the
+# repository (e.g. a private repository, which the OSF can still show through
+# its owner's GitHub account) -- and the caller then lists it through the OSF
+# as before, so nothing is skipped.
+.osf_github_files <- function(node) {
+  osf_api <- getOption("metacheck.osf.api")
+  addon <- tryCatch(
+    osf_get_all_pages(sprintf("%s/nodes/%s/addons/github/", osf_api, node)),
+    error = \(e) NULL)
+  folder_id <- tryCatch(addon$attributes$folder_id, error = \(e) NULL)
+  if (!is.character(folder_id) || length(folder_id) != 1 ||
+      is.na(folder_id) || !nzchar(folder_id)) return(NULL)
+  repo <- sub(":.*$", "", folder_id)
+  branch <- sub("^[^:]*:?", "", folder_id)
+  if (nzchar(branch) || !grepl("^[^/[:space:]]+/[^/[:space:]]+$", repo)) return(NULL)
+
+  gh <- tryCatch(github_tree_files(repo), error = \(e) NULL)
+  f <- gh$files
+  if (is.null(gh) || isTRUE(gh$gated) || !is.data.frame(f) || nrow(f) == 0 ||
+      !all(c("name", "path", "download_url", "size") %in% names(f))) return(NULL)
+
+  file_rows <- data.frame(
+    osf_id = sprintf("%s-github-%d", node, seq_len(nrow(f))),
+    name = f$name,
+    description = NA_character_,
+    provider = "github",
+    osf_type = "files",
+    kind = "file",
+    filetype = filetype(f$name),
+    public = NA,
+    category = NA_character_,
+    size = f$size,
+    downloads = NA_integer_,
+    path = paste0("/", f$path),
+    self = NA_character_,
+    files = NA_character_,
+    download_url = f$download_url,
+    parent = node,
+    project = node
+  )
+
+  # Folder rows, as the OSF listing has them (a folder is never downloaded,
+  # but callers build save paths and counts from the full listing).
+  parts <- strsplit(f$path, "/", fixed = TRUE)
+  dirs <- unique(unlist(lapply(parts, \(p) {
+    if (length(p) < 2) return(character(0))
+    vapply(seq_len(length(p) - 1), \(k) paste(p[seq_len(k)], collapse = "/"), "")
+  })))
+  folder_rows <- if (length(dirs) > 0) data.frame(
+    osf_id = sprintf("%s-github-dir-%d", node, seq_along(dirs)),
+    name = basename(dirs),
+    description = NA_character_,
+    provider = "github",
+    osf_type = "files",
+    kind = "folder",
+    filetype = NA_character_,
+    public = NA,
+    category = NA_character_,
+    size = NA_integer_,
+    downloads = NA_integer_,
+    path = paste0("/", dirs, "/"),
+    self = NA_character_,
+    files = NA_character_,
+    download_url = NA_character_,
+    parent = node,
+    project = node
+  ) else NULL
+
+  dplyr::bind_rows(folder_rows, file_rows)
 }
 
 #' Parse an OSF API response into a data frame

@@ -192,8 +192,14 @@
       )
       if (!is.null(msg)) { pb$tick(length(idx)) }
 
-      # courtesy delay
-      Sys.sleep(delay)
+      # courtesy delay BETWEEN batches only. Sleeping after the final (or
+      # only) batch paced nothing -- no further request follows it from here
+      # -- and cost every single-URL caller (each *_info() record lookup goes
+      # through this one URL at a time) a flat extra `delay` (0.5 s) per
+      # record (found in a 2026-10-13 survey of request costs). The gap
+      # between batches stays, since it is the only pacing an unthrottled
+      # host gets (Figshare's docs ask for no more than 1 request/second).
+      if (b < length(batches)) Sys.sleep(delay)
     }
   } else { # non-parallel for mocking - workaround
     for (idx in seq_along(reqs)) {
@@ -204,8 +210,8 @@
       )
       if (!is.null(msg)) { pb$tick(1) }
 
-      # courtesy delay
-      Sys.sleep(delay)
+      # courtesy delay between requests, not after the last one (see above)
+      if (idx < length(reqs)) Sys.sleep(delay)
     }
   }
 

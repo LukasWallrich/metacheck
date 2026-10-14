@@ -260,6 +260,15 @@ mendeley_info <- function(mendeley_url, id_col = 1, pb = NULL, cache = FALSE) {
     obj$error <- "parse_error"
     return(obj)
   }
+  # A missing dataset has also been answered with HTTP 200 and only an error in
+  # the body ({"error":{"message":"error - dataset not found","status":404}},
+  # seen 2026-10-05; by 2026-10-14 the same request returned HTTP 400). Treat
+  # that body as "unfound" as well, rather than as a dataset with no fields.
+  if (!is.null(rec$error) && is.null(rec$id)) {
+    warning(mendeley_id, " could not be found", call. = FALSE)
+    obj$error <- "unfound"
+    return(obj)
+  }
 
   authors_field <- rec$contributors
   authors <- if (is.list(authors_field)) {

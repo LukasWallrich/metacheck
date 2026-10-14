@@ -150,7 +150,12 @@ dryad_links <- function(paper) {
 #'   otherwise re-spent on every restart re-listing datasets nothing new
 #'   needs fetching for.
 #'
-#' @returns a data frame of information
+#' @returns a data frame of information, one row per link, with the dataset's
+#'   metadata, its file records in the list column `files`, and
+#'   `storage_size` (the dataset's total size in bytes as Dryad reports it),
+#'   `files_total` (the number of files Dryad reports), and
+#'   `files_incomplete` (`TRUE` when fewer files could be listed than Dryad
+#'   reports; a warning is given too)
 #' @export
 #' @examples
 #' \dontrun{
@@ -218,7 +223,11 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
       id_info[[i]] <- cached
     } else {
       id_info[[i]] <- .dryad_info(doi, pb = pb)
-      if (isTRUE(cache) && .repo_info_ok(id_info[[i]]))
+      # An incomplete listing (see .dryad_list_files()) is not cached: a
+      # cached copy would be replayed on every later run, turning a page
+      # that failed once into files that are never seen again.
+      if (isTRUE(cache) && .repo_info_ok(id_info[[i]]) &&
+          !isTRUE(id_info[[i]]$files_incomplete))
         .repo_info_cache_put("dryad", doi, id_info[[i]])
     }
   }
@@ -241,7 +250,8 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
 #' @param dryad_doi the dataset's DOI (e.g. "10.5061/dryad.j1fd7")
 #' @param pb a progress bar passed from another function
 #'
-#' @returns a data frame of information
+#' @returns a data frame of information, including `storage_size`,
+#'   `files_total` and `files_incomplete` (see [dryad_info()])
 #' @keywords internal
 .dryad_info <- function(dryad_doi, pb = NULL) {
   if (is.null(pb)) {
@@ -293,15 +303,14 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
   # The files listing sits under the dataset's VERSION, not the dataset
   # itself (verified live: dataset JSON links to "stash:version" ->
   # /api/v2/versions/<id>, and only THAT resource links on to "stash:files").
+  # The listing is paged -- see .dryad_list_files() for why every page has
+  # to be followed.
   version_href <- rec$`_links`$`stash:version`$href
   files_list <- list()
+  incomplete <- NULL
   if (!is.null(version_href)) {
-    files_resp <- .batch_query(paste0("https://datadryad.org", version_href, "/files"),
-                               msg = NULL, req_func = .dryad_headers)[[1]]
-    if (!is.null(files_resp) && httr2::resp_status(files_resp) == 200) {
-      files_rec <- tryCatch(httr2::resp_body_json(files_resp), error = \(e) NULL)
-      files_list <- files_rec$`_embedded`$`stash:files` %||% list()
-    }
+    files_list <- .dryad_list_files(paste0(version_href, "/files"), dryad_doi = dryad_doi)
+    incomplete <- attr(files_list, "dryad_incomplete")
   }
 
   # Scalar fields use %empty_or% (not %||%) because a JSON field can come
@@ -317,7 +326,94 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
   obj$license <-          rec$license %empty_or% NA_character_
   obj$files <-            list(files_list)
 
+  # storageSize is the dataset's total size in bytes as Dryad itself reports
+  # it, independent of the file listing (verified 2026-10-13 on
+  # doi:10.5061/dryad.9ghx3ffgc: storageSize 756438 equals the sum of its 22
+  # listed file sizes exactly). Kept so the whole-dataset zip can be sized
+  # without summing a listing that may be incomplete. files_total is the
+  # number of files Dryad says the version holds (the listing's own
+  # `total`), and files_incomplete is TRUE when fewer than that arrived --
+  # the same check osf_get_all_pages() makes with its osf_incomplete
+  # attribute.
+  obj$storage_size <-     as.numeric(rec$storageSize %empty_or% NA_real_)
+  obj$files_total <-      as.numeric(attr(files_list, "dryad_total") %empty_or% NA_real_)
+  obj$files_incomplete <- !is.null(incomplete)
+
   return(obj)
+}
+
+# List every file of one Dryad dataset version, following the listing's
+# pages to the end.
+#
+# /api/v2/versions/<id>/files is paged: without a per_page parameter Dryad
+# returns only the first 20 files (its DEFAULT_PAGE_SIZE), with the rest
+# behind `_links.next`. Reading only that first page silently dropped every
+# later file -- verified 2026-10-13 on a real corpus, where 18 datasets
+# listed at exactly 20 files really held 21 to 185 files each (645 files
+# missed in all; doi:10.5061/dryad.wm37pvmkm has 185). Each page is
+# requested at per_page = 100 (the largest Dryad accepts), so a dataset of
+# up to 100 files costs one request, and `_links.next` is followed until it
+# is absent. Every page carries `total` (the version's file count) and the
+# `_links.next` href is relative ("/api/v2/versions/104509/files?page=2&
+# per_page=10", verified 2026-10-13 on doi:10.5061/dryad.9ghx3ffgc).
+#
+# When fewer files arrive than `total` reports (a later page failed, e.g. on
+# Dryad's rate limit), the listing is returned as far as it got, with a
+# warning and a `dryad_incomplete` attribute c(expected =, got =), mirroring
+# osf_get_all_pages()'s `osf_incomplete`. A first page that fails
+# altogether is reported the same way (expected = NA), since an empty list
+# would otherwise read as a dataset with no files.
+#
+# @param files_href the listing's path, "/api/v2/versions/<id>/files"
+# @param dryad_doi the dataset's DOI, used only in the warning
+# @param per_page files per page; 100 is Dryad's maximum
+# @returns a list of file records (as in `_embedded$stash:files`), with a
+#   `dryad_total` attribute (NULL when Dryad reported none) and, when the
+#   listing is short, a `dryad_incomplete` attribute
+.dryad_list_files <- function(files_href, dryad_doi = NA_character_, per_page = 100) {
+  .dryad_abs <- function(href) {
+    if (grepl("^https?://", href)) href else paste0("https://datadryad.org", href)
+  }
+  url <- paste0(.dryad_abs(files_href),
+                if (grepl("\\?", files_href)) "&" else "?",
+                "per_page=", per_page)
+
+  files <- list()
+  total <- NULL
+  failed <- FALSE
+  seen <- character(0)
+  while (!is.null(url)) {
+    # A `next` link pointing back at a page already read would loop forever.
+    if (url %in% seen) break
+    seen <- c(seen, url)
+
+    resp <- .batch_query(url, msg = NULL, req_func = .dryad_headers)[[1]]
+    if (is.null(resp) || httr2::resp_status(resp) != 200) {
+      failed <- TRUE
+      break
+    }
+    rec <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
+    if (is.null(rec)) {
+      failed <- TRUE
+      break
+    }
+    total <- total %||% rec$total
+    files <- c(files, rec$`_embedded`$`stash:files` %||% list())
+    next_href <- rec$`_links`$`next`$href
+    url <- if (is.null(next_href) || !nzchar(next_href)) NULL else .dryad_abs(next_href)
+  }
+
+  total <- suppressWarnings(as.numeric(total %empty_or% NA_real_))
+  short <- if (is.na(total)) failed else length(files) < total
+  attr(files, "dryad_total") <- if (is.na(total)) NULL else total
+  if (short) {
+    warning(sprintf(
+      "Dryad listed only %d of %s files for %s. Files not listed are not retrieved, so this listing is incomplete. Run again later (Dryad limits requests; see ?dryad_auth, which raises the limit).",
+      length(files), if (is.na(total)) "its" else format(total), dryad_doi),
+      call. = FALSE)
+    attr(files, "dryad_incomplete") <- c(expected = total, got = length(files))
+  }
+  files
 }
 
 # Add the right auth header to a Dryad API/download request. Dryad uses a
@@ -774,7 +870,8 @@ dryad_file_download <- function(dryad_doi,
       got <- tryCatch(
         .dryad_zip_members(files$self[[i]], dest = download_to,
                           keep_types = unzip_types,
-                          max_file_size = max_file_size),
+                          max_file_size = max_file_size,
+                          size = if ("size" %in% names(files)) files$size[[i]] else NULL),
         error = \(e) NULL)
       if (!is.null(got)) {
         files$extracted[i] <- sum(got$ok %in% TRUE)
@@ -877,14 +974,18 @@ dryad_file_download <- function(dryad_doi,
 #' @param max_file_size largest member to extract (in MB), applied per member
 #'   exactly as the dataset-level cap is applied per file
 #'
+#' @param size the zip's size in bytes as the listing gives it, or `NULL`.
+#'   Passed on to [zip_peek()] so it does not have to send a `HEAD` request to
+#'   learn a size the listing already gave.
+#'
 #' @returns a data frame with one row per extracted member (`name`, `path`,
 #'   `size`, `ok`), or `NULL` when the archive could not be listed and the
 #'   caller should download it whole instead
 #' @keywords internal
 .dryad_zip_members <- function(url, dest,
                                keep_types = c("data", "documentation"),
-                               max_file_size = 10) {
-  listing <- tryCatch(zip_peek(url), error = \(e) NULL)
+                               max_file_size = 10, size = NULL) {
+  listing <- tryCatch(zip_peek(url, size = size), error = \(e) NULL)
   if (is.null(listing) || nrow(listing) == 0) return(NULL)
 
   types <- data_classify_files(basename(listing$name))
@@ -903,7 +1004,7 @@ dryad_file_download <- function(dryad_doi,
 #'
 #' Mirrors [`.dataverse_verify_downloads()`]: confirms every file the
 #' download planned to save is present, is the size Dryad reported, and (when
-#' Dryad published an MD5 digest) matches the checksum.
+#' Dryad published an MD5 or SHA-256 digest) matches the checksum.
 #'
 #' A row whose `extracted` count is set is exempt from both checks, for the
 #' same reason as the Dataverse case: Dryad's size and digest describe the
@@ -945,15 +1046,25 @@ dryad_file_download <- function(dryad_doi,
   expected <- suppressWarnings(as.numeric(files$size %||% rep(NA_real_, nrow(files))))
   ok <- ok & (is.na(expected) | files$size_on_disk == expected) %in% TRUE
 
-  # Dryad's digestType has only ever been observed as "md5" (verified live on
-  # 3 files of a real dataset), but the field is published per-file rather
-  # than fixed, so the type is checked exactly as Dataverse's checksum_type
-  # is, rather than assumed.
-  is_md5 <- !is.na(files$checksum_type) & files$checksum_type == "md5"
-  to_hash <- which(ok & is_md5 & !is.na(files$checksum) &
-                     grepl("^[0-9a-f]{32}$", files$checksum, ignore.case = TRUE))
-  for (i in to_hash) {
-    got <- tryCatch(unname(tools::md5sum(full[[i]])), error = \(e) NA_character_)
+  # Dryad's digestType is published per file, and both "md5" (seen on 3 files
+  # of an older dataset) and "sha-256" occur: every one of the 22 files of
+  # doi:10.5061/dryad.9ghx3ffgc reports "sha-256" with a 64-character hex
+  # digest (verified 2026-10-13). Only MD5 used to be checked, so SHA-256
+  # files were never verified at all. The SHA-256 is computed with
+  # .bibr12_sha256() (tools::sha256sum() on R >= 4.5, else the digest
+  # package when installed); where neither is available, checksum_ok stays
+  # NA for those files -- not verified, rather than marked as failed.
+  type <- tolower(gsub("[^A-Za-z0-9]", "", files$checksum_type %||% rep(NA_character_, nrow(files))))
+  has_sum <- !is.na(files$checksum)
+  is_md5 <- !is.na(type) & type == "md5" & has_sum &
+    grepl("^[0-9a-f]{32}$", files$checksum, ignore.case = TRUE)
+  is_sha256 <- !is.na(type) & type == "sha256" & has_sum &
+    grepl("^[0-9a-f]{64}$", files$checksum, ignore.case = TRUE)
+  for (i in which(ok & (is_md5 | is_sha256))) {
+    got <- tryCatch(
+      if (is_md5[[i]]) unname(tools::md5sum(full[[i]])) else .bibr12_sha256(full[[i]]),
+      error = \(e) NA_character_)
+    if (is.na(got)) next
     files$checksum_ok[[i]] <- identical(tolower(got), tolower(files$checksum[[i]]))
   }
   ok <- ok & !(files$checksum_ok %in% FALSE)

@@ -126,30 +126,35 @@ researchdata4tu_links <- function(paper) {
   return(NA_character_)
 }
 
-# A uuid extracted by .researchdata4tu_id() (from either a "uuid:"-labelled
-# or bare-uuid DOI) is NOT the id data.4tu.nl's v2/articles/<id> endpoint
-# accepts -- confirmed live 2026-09-29 (issue #431): the DOI
-# "10.4121/uuid:04b25e70-ca3e-489f-9510-36385c1a4104" redirects to
-# "https://data.4tu.nl/articles/_/12675218/1", a different, numeric id for
-# the same record. The v2 API's own "either id or uuid" equivalence (see the
-# file-level note) held for the one article manually checked when this file
-# was written, but does not hold in general -- so a uuid is resolved to its
-# real numeric id here by following the DOI's live redirect, the same
-# resolution the API's own users would go through, rather than trusted as
-# API-equivalent to the id.
+# A uuid from a "uuid:"-labelled DOI is NOT an id data.4tu.nl's
+# v2/articles/<id> endpoint accepts -- confirmed live 2026-09-29 (issue
+# #431): the DOI "10.4121/uuid:04b25e70-ca3e-489f-9510-36385c1a4104" leads
+# to "https://data.4tu.nl/articles/_/12675218/1", a different, numeric id
+# for the same record, and v2/articles/04b25e70-... answers "This resource
+# does not exist." (verified again 2026-10-13). Such a uuid is resolved to
+# its numeric id here.
+#
+# A bare-uuid DOI (10.4121/<uuid>, and a data.4tu.nl/datasets/<uuid>
+# address) is different: that uuid is the record's own (container) uuid,
+# which v2/articles/<uuid> accepts directly (verified 2026-10-13 on
+# ce413614-1c82-4e81-90c0-323aa7d2fabd). It used to be sent here too, where
+# the DOI built from it, "10.4121/uuid:<uuid>", does not exist (doi.org
+# answers 404), so every such lookup was a wasted request before falling
+# back to the uuid anyway. researchdata4tu_info() now resolves only uuids
+# taken from a "uuid:" DOI.
+#
+# The registered URL is read from doi.org's handle API
+# (.handle_registered_url(), archive-dspace7.R) rather than by following
+# the DOI's redirects, which downloaded the article's landing page; the
+# registered URL already carries the numeric id (verified 2026-10-13:
+# 10.4121/uuid:04b25e70-... -> https://data.4tu.nl/articles/_/12675218/1).
 #
 # @param uuid a single 4TU.ResearchData uuid (no "10.4121/" prefix)
 # @returns the numeric article id, or the original uuid if resolution fails
 #   (keeps the previous, sometimes-working behaviour as a fallback rather
 #   than turning a resolvable article into an unresolvable one)
 .researchdata4tu_resolve_uuid <- function(uuid) {
-  doi_url <- paste0("https://doi.org/10.4121/uuid:", uuid)
-  resolved <- tryCatch({
-    resp <- httr2::request(doi_url) |>
-      httr2::req_error(is_error = \(resp) FALSE) |>
-      httr2::req_perform()
-    httr2::resp_url(resp)
-  }, error = \(e) NA_character_)
+  resolved <- .handle_registered_url(paste0("10.4121/uuid:", uuid))$url
 
   if (is.na(resolved)) return(uuid)
 
@@ -221,13 +226,14 @@ researchdata4tu_info <- function(researchdata4tu_url, id_col = 1, pb = NULL,
   ) |> unique()
   ids <- ids[!is.na(ids$researchdata4tu_url), , drop = FALSE]
 
-  # A uuid (rather than a numeric id) is not what v2/articles/<id> accepts --
-  # see .researchdata4tu_resolve_uuid()'s header comment (issue #431).
-  # Resolved BEFORE dedup/lookup below so every downstream join and cache key
-  # sees the real numeric id, matching what .figshare_info() will actually
-  # query.
+  # A uuid from a "uuid:" DOI is not what v2/articles/<id> accepts, while a
+  # bare uuid is -- see .researchdata4tu_resolve_uuid()'s header comment
+  # (issue #431). Only the former is resolved, BEFORE dedup/lookup below so
+  # every downstream join and cache key sees the real numeric id, matching
+  # what .figshare_info() will actually query.
   is_uuid <- grepl("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                   ids$researchdata4tu_id, ignore.case = TRUE)
+                   ids$researchdata4tu_id, ignore.case = TRUE) &
+    grepl("uuid:", ids$researchdata4tu_url, ignore.case = TRUE)
   if (any(is_uuid)) {
     resolved <- vapply(ids$researchdata4tu_id[is_uuid], .researchdata4tu_resolve_uuid, character(1))
     ids$researchdata4tu_id[is_uuid] <- resolved
@@ -361,7 +367,17 @@ researchdata4tu_file_download <- function(researchdata4tu_id,
                                           max_download_size = 100,
                                           unzip_types = NULL,
                                           pb = NULL) {
-  researchdata4tu_id <- .researchdata4tu_id(researchdata4tu_id) |>
+  # A uuid from a "uuid:" DOI is resolved to the numeric id the API accepts,
+  # exactly as researchdata4tu_info() does (see
+  # .researchdata4tu_resolve_uuid()); before, it was passed to the API as
+  # it was, which answers "This resource does not exist." for it.
+  ids <- .researchdata4tu_id(researchdata4tu_id)
+  labelled <- !is.na(ids) &
+    grepl("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", ids, ignore.case = TRUE) &
+    grepl("uuid:", researchdata4tu_id, ignore.case = TRUE)
+  if (any(labelled))
+    ids[labelled] <- vapply(ids[labelled], .researchdata4tu_resolve_uuid, character(1))
+  researchdata4tu_id <- ids |>
     stats::na.omit() |>
     unique()
   if (length(researchdata4tu_id) == 0) return(NULL)

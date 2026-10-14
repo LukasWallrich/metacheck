@@ -356,9 +356,12 @@ test_that("zenodo_file_download extracts only wanted members with unzip_types", 
   requested <- character(0)
   testthat::local_mocked_bindings(
     zenodo_info = .zip_record_info,
-    .zenodo_zip_members = function(url, dest, keep_types, max_file_size) {
+    .zenodo_zip_members = function(url, dest, keep_types, max_file_size,
+                                   size = NULL) {
       requested <<- c(requested, url)
       expect_equal(keep_types, "data")
+      # the listed size is handed on, so zip_peek() needs no HEAD request
+      expect_equal(size, 130 * 1024 * 1024)
       writeLines("id,x\n1,2", file.path(dest, "study.csv"))
       data.frame(name = "study.csv", path = file.path(dest, "study.csv"),
                  size = 9, ok = TRUE)
@@ -387,7 +390,8 @@ test_that("zenodo_file_download falls back to a whole download when the zip cann
   # the archive must then be fetched whole rather than silently skipped.
   testthat::local_mocked_bindings(
     zenodo_info = .zip_record_info,
-    .zenodo_zip_members = function(url, dest, keep_types, max_file_size) NULL
+    .zenodo_zip_members = function(url, dest, keep_types, max_file_size,
+                                   size = NULL) NULL
   )
   testthat::local_mocked_bindings(
     request = function(url) structure(list(url = url), class = "httr2_request"),
@@ -482,3 +486,65 @@ test_that("zenodo_info() does not crash on zenodo_links()'s own output for an un
     )
   )
 })
+
+
+test_that("zenodo_file_download stops trying files-archive after a 404 and says so truthfully", local({
+  # Regression test (2026-10-13 survey): files-archive answered 404 for every
+  # record tested (7852893, 1123389, 4624962), so each record paid one wasted
+  # request, and "Downloaded as one archive" was reported even then. After
+  # the first 404 the endpoint is skipped for the rest of the session, and
+  # the message appears only when the archive really supplied the files.
+  state <- metacheck:::.zenodo_files_archive_state
+  rm(list = ls(state, all.names = TRUE), envir = state)
+  withr::defer(rm(list = ls(state, all.names = TRUE), envir = state))
+
+  testthat::local_mocked_bindings(
+    zenodo_info = function(zenodo_url, id_col = 1, pb = NULL) {
+      zid <- .zenodo_id(zenodo_url)
+      data.frame(
+        zenodo_url = as.character(zenodo_url), zenodo_id = zid,
+        files = I(list(list(list(
+          id = paste0("f_", zid), key = "plain.csv", size = 8,
+          checksum = NA_character_,
+          links = list(self = paste0("https://files.example/", zid, "/plain.csv"))))))
+      )
+    }
+  )
+  requested <- character(0)
+  testthat::local_mocked_bindings(
+    request = function(url) structure(list(url = url), class = "httr2_request"),
+    req_timeout = function(req, seconds) req,
+    req_error = function(req, is_error) req,
+    req_retry = function(req, ...) req,
+    req_perform = function(req, path = NULL) {
+      requested <<- c(requested, req$url)
+      if (grepl("files-archive", req$url)) {
+        return(structure(list(status = 404, body = raw(0)), class = "httr2_response"))
+      }
+      structure(list(status = 200, body = charToRaw("x,y\n1,2\n")),
+                class = "httr2_response")
+    },
+    resp_status = function(resp) resp$status,
+    resp_body_raw = function(resp) resp$body,
+    .package = "httr2"
+  )
+  said <- character(0)
+  pb <- list(tick = function(len = 1, tokens = list()) {
+    said <<- c(said, tokens$what %||% character(0))
+    invisible()
+  }, terminate = function(...) invisible())
+
+  tmp <- withr::local_tempdir()
+  dl1 <- zenodo_file_download("11111", download_to = tmp, pb = pb)
+  dl2 <- zenodo_file_download("22222", download_to = tmp, pb = pb)
+
+  expect_true(dl1$downloaded[[1]])
+  expect_true(dl2$downloaded[[1]])
+  # files-archive tried once (record 11111), not again for record 22222
+  expect_equal(sum(grepl("files-archive", requested)), 1)
+  expect_equal(requested, c(
+    "https://zenodo.org/api/records/11111/files-archive",
+    "https://files.example/11111/plain.csv",
+    "https://files.example/22222/plain.csv"))
+  expect_false("Downloaded as one archive" %in% said)
+}))

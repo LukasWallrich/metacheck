@@ -1,0 +1,234 @@
+:root {
+  --green: #59935B;
+  --medgreen: #4a7d4c;
+  --darkgreen: #15342A;
+}
+
+body {
+  font-size: 16px;
+}
+
+.box-header {
+  padding: 0 10px 0 0;
+}
+.box-header h3 {
+  width: 100%;
+  padding: 10px;
+}
+
+.skin-black .main-header .navbar {
+  background-color: var(--green);
+}
+.skin-black .main-header .navbar>.sidebar-toggle {
+  color: #FFF;
+}
+
+.sidebar-menu {
+  font-size: 120%;
+}
+
+h3.box-title,
+.box-header,
+.btn-box-tool,
+.btn-box-tool:hover,
+.open .btn-box-tool {
+  color: white;
+  font-weight: 800;
+}
+
+#download_json + div.form-group,
+#download_script + div.form-group {
+  width: 50%;
+  display: inline-block;
+  margin-left: 1em;
+}
+
+.content-wrapper { overflow: auto; }
+
+#shiny-tab-out_tab .box-body h3 { display: none; }
+
+.box-header {
+  background-color: var(--green);
+}
+
+textarea { width: 100%; }
+
+/* override keytable style */
+table.dataTable tbody td.focus {
+  box-shadow: none !important;
+}
+
+/* researchbox_app.R's condensed, in-page report */
+.rbox-report {
+  background: #fff;
+  padding: 1.5em;
+  margin-top: 1em;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+.rbox-report table {
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+.rbox-report th,
+.rbox-report td {
+  border: 1px solid #ccc;
+  padding: 0.4em 0.7em;
+  text-align: left;
+}
+.rbox-report th {
+  background-color: #eee;
+}
+.rbox-report details {
+  margin: 1em 0;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 0.5em 1em;
+}
+.rbox-report summary {
+  cursor: pointer;
+  font-weight: bold;
+  list-style: none;         /* replace the browser's default triangle marker */
+}
+.rbox-report summary::-webkit-details-marker {
+  display: none;             /* Chrome/Safari draw the marker separately from list-style */
+}
+.rbox-report summary::before {
+  content: "▸ ";
+  display: inline-block;
+  color: var(--green);
+}
+.rbox-report details[open] > summary::before {
+  content: "▾ ";
+}
+.rbox-report summary:hover {
+  color: var(--medgreen);
+}
+.rbox-report pre {
+  background: #f5f5f5;
+  padding: 1em;
+  overflow-x: auto;
+}
+
+
+/* OSF app: a validation message ("Nothing downloaded yet") is placed by
+   Shiny outside the normal table flow, so the box drew its background to a
+   height that did not include it. Give the message ordinary block flow and
+   room to sit in, so the box grows around it. */
+#project_table .shiny-output-error-validation,
+#result_table .shiny-output-error-validation {
+  display: block;
+  padding: 0.5em 0 1em 0;
+  color: #666;
+}
+
+#project_table,
+#result_table {
+  min-height: 2.5em;
+}
+
+/* grid layout for the options checkboxes */
+.report-checks {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  row-gap: 0.4em;
+  column-gap: 1em;
+  margin-bottom: 0.5em;
+}
+.report-checks .shiny-input-container {
+  white-space: nowrap;
+  margin-bottom: 0;
+}
+.report-checks .checkbox label {
+  font-weight: 600;
+}
+
+/* tint the checkbox green when checked (default is grey/unchecked) */
+input[type="checkbox"], input[type="radio"] {
+  accent-color: var(--green) !important;
+  width: 1.05em;
+  height: 1.05em;
+}
+
+/* PDF upload field — full green treatment */
+.pdf-upload .input-group {
+  border: 2px solid var(--green);
+  padding-left: 1px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.pdf-upload .btn-file {
+  background-color: var(--green) !important;
+  color: #fff !important;
+  border: none;
+  font-weight: 600;
+}
+.pdf-upload .btn-file:hover,
+.pdf-upload .btn-file:focus {
+  background-color: var(--medgreen) !important;
+  color: #fff !important;
+}
+.pdf-upload .form-control {
+  background-color: rgba(89, 147, 91, 0.08) !important;
+  border: none;
+  box-shadow: none;
+}
+
+/* Options "Done" button */
+.btn-options-done {
+  background-color: var(--green) !important;
+  color: #fff !important;
+  border: none;
+  font-weight: 600;
+}
+.btn-options-done:hover,
+.btn-options-done:focus {
+  background-color: var(--medgreen) !important;
+  color: #fff !important;
+}
+
+
+#gdpr_privacy_ui ul {
+  padding-left: 0;
+}
+#gdpr_privacy_ui li {
+  list-style-type: none;
+  padding-left: 1.5em;
+  text-indent: -1.5em;
+}
+
+/* "save your report" warning shown after a report is generated */
+.report-save-note {
+  margin-top: 1em;
+  padding: 0.8em 1em;
+  border: 1px solid #e0c200;
+  border-left: 4px solid #e0c200;
+  border-radius: 4px;
+  background-color: #fff8e1;
+  color: #5c4b00;
+  line-height: 1.5;
+}
+.report-save-note .fa-triangle-exclamation,
+.report-save-note .fa-exclamation-triangle {
+  color: #b7950b;
+}
+
+/* In-app Report tab: full-bleed iframe + action row */
+.report-view-actions {
+  margin-bottom: 0.8em;
+  display: flex;
+  gap: 0.5em;
+  flex-wrap: wrap;
+}
+.report-frame {
+  width: 100%;
+  height: 80vh;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+}
+.report-empty {
+  padding: 1em;
+  color: #555;
+}

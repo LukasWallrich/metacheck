@@ -67,7 +67,11 @@ test_that("OSF", {
                     code_checked = 2,
                     code_abs_path = 3,
                     code_missing_files = 2)
-  expect_equal(mo$summary_table[, 1:5], exp[, 1:5])
+  # Compared by column name: summary_table has gained columns since this was
+  # written (code_setwd now sits between code_abs_path and
+  # code_missing_files), which a positional 1:5 comparison mistook for a
+  # changed result.
+  expect_equal(mo$summary_table[, names(exp)], exp)
 }, "mock")
 
 test_that("all code files are checked (no per-repo cap)", {
@@ -246,7 +250,9 @@ test_that("code_check records loaded packages per file and per paper", {
 
   # paper-level distinct union: dplyr + ggplot2 = 2
   expect_equal(mo$summary_table$code_packages_n, 2L)
-  expect_match(mo$summary_text, "2 distinct packages")
+  # The package count left the brief summary_text on purpose (commit 7208868,
+  # "trim redundant summary lines"); the full report still states it.
+  expect_match(paste(mo$report, collapse = "\n"), "2 distinct packages")
   expect_match(paste(mo$report, collapse = "\n"), "ggplot2")
 })
 

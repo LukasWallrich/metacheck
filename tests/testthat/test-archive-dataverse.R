@@ -343,9 +343,12 @@ test_that("dataverse_file_download extracts only wanted members with unzip_types
   requested <- character(0)
   testthat::local_mocked_bindings(
     .dataverse_info = .zip_dataset_info,
-    .dataverse_zip_members = function(url, dest, keep_types, max_file_size) {
+    .dataverse_zip_members = function(url, dest, keep_types, max_file_size,
+                                      size = NULL) {
       requested <<- c(requested, url)
       expect_equal(keep_types, "data")
+      # the listed filesize is handed on, so zip_peek() needs no HEAD request
+      expect_equal(size, 130 * 1024 * 1024)
       writeLines("id,x\n1,2", file.path(dest, "study.csv"))
       data.frame(name = "study.csv", path = file.path(dest, "study.csv"),
                  size = 9, ok = TRUE)
@@ -369,7 +372,8 @@ test_that("dataverse_file_download extracts only wanted members with unzip_types
 test_that("dataverse_file_download falls back to a whole download when the zip cannot be read", {
   testthat::local_mocked_bindings(
     .dataverse_info = .zip_dataset_info,
-    .dataverse_zip_members = function(url, dest, keep_types, max_file_size) NULL
+    .dataverse_zip_members = function(url, dest, keep_types, max_file_size,
+                                      size = NULL) NULL
   )
   testthat::local_mocked_bindings(
     request = function(url) structure(list(url = url), class = "httr2_request"),
@@ -429,3 +433,111 @@ test_that("unzip_types leaves datasets without a zip completely unchanged", {
   expect_true(is.na(dl$extracted[[1]]))
   expect_true(file.exists(file.path(tmp, "10.7910_DVN_PLAIN01", "plain.csv")))
 })
+
+
+test_that("dataverse_info queries a dataset once when two urls name it", local({
+  # Regression test (2026-10-13 survey): dataverse_links() returns the
+  # dataset.xhtml link AND the bare DOI found inside it as two rows, and
+  # dataverse_info() queried both -- measured live on Harvard
+  # doi:10.7910/DVN/SVVULN, whose dataset JSON was fetched twice.
+  calls <- character(0)
+  testthat::local_mocked_bindings(
+    online = \(...) TRUE,
+    .dataverse_info = function(host, doi, pb = NULL) {
+      calls <<- c(calls, paste(host, doi))
+      data.frame(dataverse_host = host, dataverse_doi = doi, title = "T")
+    }
+  )
+
+  paper <- test_paper(text = paste(
+    "Data: https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/SVVULN"))
+  links <- dataverse_links(paper)
+  # the duplication this guards against starts here: two urls, one dataset
+  expect_equal(nrow(links), 2)
+  expect_equal(unique(links$dataverse_doi), "10.7910/DVN/SVVULN")
+
+  info <- dataverse_info(links)
+  expect_equal(calls, "dataverse.harvard.edu 10.7910/DVN/SVVULN")
+  # both urls still receive the one result
+  expect_equal(nrow(info), 2)
+  expect_equal(info$title, c("T", "T"))
+}))
+
+
+test_that(".dataverse_resolve_doi_host reads the handle record, exactly, once per session", local({
+  # Shared-prefix DOIs (DANS 10.17026, RODBUK) are resolved by asking
+  # doi.org's handle API for the registered URL (~0.35 s) instead of
+  # downloading the landing page via the redirect (~3.8 s; both measured
+  # 2026-10-13), and the answer is remembered for the session because
+  # dataverse_links() and dataverse_info() each resolve the same DOI.
+  cache <- metacheck:::.dataverse_doi_host_cache
+  rm(list = ls(cache, all.names = TRUE), envir = cache)
+  withr::defer(rm(list = ls(cache, all.names = TRUE), envir = cache))
+
+  handle_reply <- function(url) list(
+    responseCode = 1,
+    values = list(list(index = 1, type = "URL",
+                       data = list(format = "string", value = url))))
+
+  requested <- character(0)
+  reply <- handle_reply(
+    "https://lifesciences.datastations.nl/citation?persistentId=doi:10.17026/dans-2b8-gx7j")
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      requested <<- c(requested, req$url)
+      httr2::response(status_code = 200)
+    },
+    resp_body_json = function(resp, ...) reply,
+    .package = "httr2"
+  )
+
+  dans <- c("archaeology.datastations.nl", "lifesciences.datastations.nl",
+            "phys-techsciences.datastations.nl", "ssh.datastations.nl")
+  expect_equal(
+    metacheck:::.dataverse_resolve_doi_host("10.17026/dans-2b8-gx7j", dans),
+    "lifesciences.datastations.nl")
+  expect_equal(requested,
+               "https://doi.org/api/handles/10.17026/dans-2b8-gx7j?type=URL")
+
+  # second call (any case -- DOIs are case-insensitive): no new request
+  expect_equal(
+    metacheck:::.dataverse_resolve_doi_host("10.17026/DANS-2B8-GX7J", dans),
+    "lifesciences.datastations.nl")
+  expect_length(requested, 1)
+
+  # The hostname must match exactly: "rodbuk.pl" is a substring of every
+  # "<x>.rodbuk.pl" URL, and a substring test returned rodbuk.pl for a DOI
+  # registered at uj.rodbuk.pl whenever rodbuk.pl was listed first.
+  reply <- handle_reply("https://uj.rodbuk.pl/dataset.xhtml?persistentId=doi:10.26106/abc")
+  expect_equal(
+    metacheck:::.dataverse_resolve_doi_host("10.26106/abc",
+                                             c("rodbuk.pl", "uj.rodbuk.pl")),
+    "uj.rodbuk.pl")
+
+  # A DOI with no URL in its handle record (responseCode 100) falls back to
+  # the first candidate, as before.
+  reply <- list(responseCode = 100, handle = "10.17026/nope")
+  expect_equal(
+    metacheck:::.dataverse_resolve_doi_host("10.17026/nope", dans),
+    "archaeology.datastations.nl")
+}))
+
+
+test_that(".dataverse_resolve_doi_host does not remember a failed lookup", local({
+  cache <- metacheck:::.dataverse_doi_host_cache
+  rm(list = ls(cache, all.names = TRUE), envir = cache)
+  withr::defer(rm(list = ls(cache, all.names = TRUE), envir = cache))
+
+  n <- 0
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) { n <<- n + 1; stop("no connection") },
+    .package = "httr2"
+  )
+  cands <- c("archaeology.datastations.nl", "ssh.datastations.nl")
+  expect_equal(metacheck:::.dataverse_resolve_doi_host("10.17026/x", cands),
+               "archaeology.datastations.nl")
+  expect_equal(metacheck:::.dataverse_resolve_doi_host("10.17026/x", cands),
+               "archaeology.datastations.nl")
+  # tried again the second time, since the first gave no answer
+  expect_equal(n, 2)
+}))

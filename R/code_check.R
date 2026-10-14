@@ -585,6 +585,10 @@ code_lang <- function(file_name) {
 # is a no-op whenever Gap 1 already supplied the real files, and only does
 # work for the case Gap 1 cannot cover (data_check did not run first).
 #
+# A zip whose file_location is a file on disk is listed and extracted from that
+# file instead, with no request (e.g. a zip inside a ResearchBox, whose box is
+# downloaded whole; see .zip_local_source(), R/zip-peek.R).
+#
 # Skipped entirely when a row has no file_url (a local file with no remote
 # archive to peek) or zip_peek() cannot list it (host does not support range
 # requests, or the central directory is not in the tail -- see zip_peek()'s
@@ -593,14 +597,25 @@ code_lang <- function(file_name) {
 # its contents that way instead.
 .code_expand_zip <- function(all_files, skip_on_api_limit = FALSE, cache = FALSE,
                              max_download_size = 500) {
-  is_zip <- grepl("\\.zip$", all_files$file_name, ignore.case = TRUE) &
-    !is.na(all_files$file_url) & nzchar(all_files$file_url %||% "")
+  has_url <- !is.na(all_files$file_url) & nzchar(all_files$file_url %||% "")
+  # A zip already on disk (a ResearchBox box is downloaded and unpacked whole
+  # by repo_check, so a zip inside it has file_location set and the box's web
+  # page as file_url) is read from the file: peeking at the web page only
+  # earned a 406 answer (verified 2026-10-13). See .zip_local_source().
+  # Only rows with a file_url, as before (a `local_path` zip is left to
+  # data_check's own expansion).
+  local_src <- .zip_local_source(all_files)
+  is_zip <- grepl("\\.zip$", all_files$file_name, ignore.case = TRUE) & has_url
   if (!any(is_zip)) return(all_files)
 
   new_rows <- list()
   for (i in which(is_zip)) {
-    url <- all_files$file_url[i]
-    peek <- tryCatch(zip_peek(url, cache = cache, skip_on_api_limit = skip_on_api_limit),
+    url <- if (!is.na(local_src[i])) local_src[i] else all_files$file_url[i]
+    # The listing's own size, where it gave one, saves a HEAD request per
+    # archive (see zip_peek()'s `size`).
+    zip_size <- all_files$file_size[i] %||% NULL
+    peek <- tryCatch(zip_peek(url, cache = cache, skip_on_api_limit = skip_on_api_limit,
+                              size = zip_size),
                      error = function(e) NULL)
     if (is.null(peek) || nrow(peek) == 0) next   # host/host-state can't be peeked
 
@@ -610,18 +625,21 @@ code_lang <- function(file_name) {
     dest <- .repo_cache_path(all_files$repo_url[i],
                              paste0(all_files$file_path[i] %||% all_files$file_name[i],
                                     ".contents"))
-    # A Dryad archive within the download budget is fetched whole, once,
-    # instead of two range requests per code member: Dryad's strict daily
-    # request quota otherwise stalls the run (issue #471; see
-    # .zip_fetch_members()). Kept at the zip's own cache path, where the
-    # ordinary download would also put it, so it is not requested again.
-    whole_bytes <- if (grepl("datadryad\\.org", url, ignore.case = TRUE))
-      max_download_size * 1024 * 1024 else 0
+    # An archive within the download budget may be fetched whole, once,
+    # instead of by byte range, whenever that is cheaper (see
+    # .zip_fetch_members()) -- this used to be done for Dryad only. Dryad
+    # takes the archive whenever it fits the budget (`request_bytes = Inf`),
+    # because its strict daily request quota otherwise stalls the run (issue
+    # #471). Kept at the zip's own cache path, where the ordinary download
+    # would also put it, so it is not requested again.
+    whole_bytes <- max_download_size * 1024 * 1024
+    request_bytes <- if (grepl("datadryad\\.org", url, ignore.case = TRUE)) Inf else 1048576
     fetched <- tryCatch(
       .zip_fetch_members(url, names = peek$name[is_code], dest = dest,
                         cache = cache, skip_on_api_limit = skip_on_api_limit,
                         max_whole_bytes = whole_bytes,
-                        archive_path = sub("\\.contents$", "", dest)),
+                        archive_path = sub("\\.contents$", "", dest),
+                        request_bytes = request_bytes, size = zip_size),
       error = function(e) NULL)
     if (is.null(fetched) || !any(fetched$ok)) next
 

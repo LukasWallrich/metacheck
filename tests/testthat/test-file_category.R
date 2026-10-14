@@ -10,10 +10,12 @@ test_that("file_category", {
   contents <- c("a.csv", "b.R", "codebook.xlsx", "readme.txt", "ambiguous", "file.json")
   summary <- file_category(contents)
   obs <- summary$file_category
-  exp <- c("data", "code", "codebook", "readme", NA, NA)
+  # .json is "data" in file_types since 2026-10-13 (it was listed as both code
+  # and data, which file_category() left undecided)
+  exp <- c("data", "code", "codebook", "readme", NA, "data")
   expect_equal(obs, exp)
 
-  # as data frame
+  # as data frame (an explicit "code;data" filetype is still left undecided)
   contents <- data.frame(
     name = c("a.csv", "b.R", "codebook.xlsx", "readme.txt", "ambiguous", "file.json"),
     category = c("code", "data", "data", "code", "code", NA),

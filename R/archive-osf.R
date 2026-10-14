@@ -236,8 +236,34 @@ osf_info <- function(osf_url, id_col = 1,
     # spinner that says only "Starting retrieval" for that long is
     # indistinguishable from a hang. Saying which level is being walked, and
     # how much has been found, makes a long wait legible.
-    children <- info
+    #
+    # Since 2026-10-13 the tree is first listed in one go per linked node
+    # (.osf_tree(): /nodes/?filter[root]=<project>&embed=files), which also
+    # returns every node's storage providers, so neither /children/ nor
+    # /files/ is requested per component. The loop below now only walks the
+    # nodes that listing could not cover (see .osf_tree() for when), exactly
+    # as before.
     child_collector <- data.frame()
+    provider_collector <- data.frame()
+    provider_missing <- character(0)
+    covered <- character(0)
+    is_container <- info$osf_type %in% c("nodes", "registrations") &
+      !is.na(info$children %||% NA_character_)
+    for (i in which(is_container)) {
+      sprintf("Listing the components of %s", info$osf_id[i]) |>
+        list(what = _) |>
+        pb$tick(0, tokens = _)
+      tree <- .osf_tree(info$osf_id[i], info$osf_type[i],
+                        info$project[i] %||% NA_character_)
+      if (is.null(tree)) next
+      covered <- c(covered, info$osf_id[i])
+      child_collector <- dplyr::bind_rows(child_collector, tree$nodes)
+      provider_collector <- dplyr::bind_rows(provider_collector, tree$providers)
+      provider_missing <- c(provider_missing, tree$missing)
+    }
+
+    children <- info[!info$osf_id %in% covered, , drop = FALSE]
+    walked <- data.frame()
     urls <- children$children[!is.na(children$children)]
     depth <- 0
     while (length(urls) > 0) {
@@ -249,6 +275,7 @@ osf_info <- function(osf_url, id_col = 1,
       resp <- lapply(urls, osf_get_all_pages) |> dplyr::bind_rows()
       children <- .osf_parse_response(resp)
       child_collector <- dplyr::bind_rows(child_collector, children)
+      walked <- dplyr::bind_rows(walked, children)
       urls <- children$children[!is.na(children$children)]
     }
     if (nrow(child_collector) > 0) {
@@ -258,12 +285,31 @@ osf_info <- function(osf_url, id_col = 1,
         pb$tick(0, tokens = _)
     }
 
-    # get all new node IDs to search for files
-    all_nodes <- dplyr::bind_rows(info, child_collector)
-    files <- all_nodes
-    urls <- files$files[!is.na(files$files)]
-    file_collector <- data.frame()
+    # Storage providers were already listed for every node .osf_tree()
+    # covered; the rest (nodes it did not cover, and file or folder links)
+    # are listed through their /files/ links as before.
+    uncovered <- dplyr::bind_rows(info[!info$osf_id %in% covered, , drop = FALSE],
+                                  walked)
+    urls <- c(uncovered$files[!is.na(uncovered$files %||% NA_character_)],
+              provider_missing,
+              provider_collector$files[!is.na(provider_collector$files %||% NA_character_)])
+    file_collector <- provider_collector
     while (length(urls) > 0) {
+      # A GitHub repository linked to a node is listed through GitHub itself
+      # (.osf_github_files()): 2 requests for the whole repository instead of
+      # one slow OSF-proxied request per folder. Only the provider's top
+      # folder is matched, so a fallback below lists it the old way in full.
+      is_gh <- grepl("/nodes/[a-z0-9]+/files/github/?$", urls)
+      for (u in urls[is_gh]) {
+        node <- sub("^.*/nodes/([a-z0-9]+)/files/github/?$", "\\1", u)
+        gh_rows <- .osf_github_files(node)
+        if (!is.null(gh_rows)) {
+          file_collector <- dplyr::bind_rows(file_collector, gh_rows)
+          urls <- setdiff(urls, u)
+        }
+      }
+      if (length(urls) == 0) break
+
       n_files <- sum(file_collector$kind %in% "file")
       sprintf("Listing files: %d folder%s to check (%d file%s found so far)",
               length(urls), plural(length(urls)), n_files, plural(n_files)) |>

@@ -316,6 +316,12 @@ test_that("gemini", {
 
 test_that(".llm_ollama_native", {
   expect_true(is.function(metacheck:::.llm_ollama_native))
+  # llm() refuses unless LLM use is switched on. This test used to rely on an
+  # earlier test's llm_use(TRUE) still being in force (helper.R's test_that()
+  # wrapper delayed that test's cleanup to the end of the file until
+  # 2026-10-13), so it switches it on itself.
+  llm_use(TRUE)
+  withr::defer(llm_use(FALSE))
 
   text <- "A"
   system_prompt <- "Is this a vowel? Answer only 'TRUE' or 'FALSE'."

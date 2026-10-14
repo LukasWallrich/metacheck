@@ -677,16 +677,19 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         }
       }
 
-      # doi/license (dc.identifier.doi / dc.rights) are carried as attributes
-      # by psycharchives_file_download() (same mechanism as pa_rights above,
-      # itself the "rights" attribute) rather than columns, since the file
-      # frame stays file-only -- no extra API call.
+      # doi/license (dc.identifier.doi / dc.rights.license, dc.rights.uri) are
+      # carried as attributes by psycharchives_file_download() (same mechanism
+      # as pa_rights above) rather than columns, since the file frame stays
+      # file-only -- no extra API call. The licence is its own attribute since
+      # 2026-10-13: dc.rights is the ACCESS level ("restrictedAccess"), which
+      # used to be reported here as the licence.
       pa_doi <- attr(pa_file_list, "doi")
-      if (length(pa_rights) > 0 || length(pa_doi) > 0) {
+      pa_license <- attr(pa_file_list, "license")
+      if (length(pa_rights) > 0 || length(pa_doi) > 0 || length(pa_license) > 0) {
         pa_meta_df <- data.frame(
           repo_url = pa_urls,
           doi = unname(pa_doi[pa_urls]),
-          license = unname(pa_rights[pa_urls])
+          license = unname(pa_license[pa_urls])
         )
       }
 
@@ -969,7 +972,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
             data.frame(
               repo_url = as.character(.fs_info$figshare_url[[i]]),
               file_name = as.character(f$name %empty_or% NA_character_),
-              file_path = as.character(f$name %empty_or% NA_character_),
+              # the file's folder within the record, where the listing gives
+              # one (Figshare's folder_structure, 2026-10-13), else its name
+              file_path = as.character(f$path %empty_or% f$name %empty_or% NA_character_),
               file_url = as.character(f$download_url %empty_or% NA_character_),
               file_location = NA_character_,
               file_size = as.numeric(f$size %empty_or% NA_real_)
@@ -1053,7 +1058,11 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
               file_path = as.character(f$path %empty_or% NA_character_),
               file_url = file_url,
               file_location = NA_character_,
-              file_size = as.numeric(f$size %empty_or% NA_real_)
+              file_size = as.numeric(f$size %empty_or% NA_real_),
+              # Dryad's own total for the dataset (storageSize), which
+              # .archive_size_estimate() prefers over summing the listed files
+              repo_size = as.numeric((.dryad_info_tbl$storage_size %||%
+                                      rep(NA_real_, nrow(.dryad_info_tbl)))[[i]])
             )
           })
 
@@ -1208,7 +1217,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
             data.frame(
               repo_url = as.character(.fourtu_info$researchdata4tu_url[[i]]),
               file_name = as.character(f$name %empty_or% NA_character_),
-              file_path = as.character(f$name %empty_or% NA_character_),
+              # the file's folder within the record, where the listing gives
+              # one (Figshare's folder_structure, 2026-10-13), else its name
+              file_path = as.character(f$path %empty_or% f$name %empty_or% NA_character_),
               file_url = as.character(f$download_url %empty_or% NA_character_),
               file_location = NA_character_,
               file_size = as.numeric(f$size %empty_or% NA_real_)
@@ -1546,15 +1557,28 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # peek (host ignores ranges, directory not in the tail) leaves the archive row
   # untouched, and data_check opens it after download as before.
   if (isTRUE(peek_zips) && nrow(all_files) > 0) {
-    is_zip <- .is_zip(all_files$file_name) &
-      !is.na(all_files$file_url) & nzchar(all_files$file_url %||% "")
+    # A zip that is already on disk is listed from the file, with no request:
+    # a ResearchBox box is downloaded and unpacked whole above, so a zip
+    # inside it has its copy in file_location and the box's web page as
+    # file_url -- peeking at that page only earned a 406 answer and cost about
+    # 0.8 s per inner zip (verified 2026-10-13). See .zip_local_source().
+    # Only rows with a file_url are expanded, as before: a zip from
+    # `local_path` (no file_url) is still opened by data_check after its
+    # download step, unchanged.
+    has_url <- !is.na(all_files$file_url) & nzchar(all_files$file_url %||% "")
+    zip_src <- .zip_local_source(all_files)
+    zip_src[is.na(zip_src)] <- all_files$file_url[is.na(zip_src)]
+    is_zip <- .is_zip(all_files$file_name) & has_url
     if (any(is_zip)) {
       zpb <- pb(sum(is_zip), "Reading zip contents [:bar] :current/:total")
       on.exit(zpb$terminate(), add = TRUE)
       expanded <- list(); consumed <- integer(0)
       for (i in which(is_zip)) {
-        peek <- tryCatch(zip_peek(all_files$file_url[i], cache = cache,
-                                  skip_on_api_limit = skip_on_api_limit),
+        # The listing's own size, where it gave one, saves a HEAD request per
+        # archive (see zip_peek()'s `size`).
+        peek <- tryCatch(zip_peek(zip_src[i], cache = cache,
+                                  skip_on_api_limit = skip_on_api_limit,
+                                  size = all_files$file_size[i]),
                         error = \(e) NULL)
         zpb$tick()
         if (is.null(peek) || nrow(peek) == 0) next
@@ -1576,8 +1600,16 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         # member itself. Carried here so a later download step (see
         # download_repo_files(), R/repo-download.R) can fetch it that way instead
         # of needing the whole archive. NA for every non-archive-member row.
-        rows$archive_url    <- all_files$file_url[i]
+        # For a zip already on disk this is the local path instead, which
+        # download_repo_files() extracts the member from directly.
+        rows$archive_url    <- zip_src[i]
         rows$archive_member <- peek$name
+        # The archive's own size, so the later member fetch can skip the HEAD
+        # request zip_peek() would otherwise make in a new session.
+        rows$archive_size   <- as.numeric(all_files$file_size[i] %||% NA_real_)
+        # The member has no copy of its own on disk yet (the inherited
+        # file_location is the archive's), so the download step fetches it.
+        rows$file_location  <- NA_character_
         # file_type must be re-derived from the INNER file's extension. Left
         # inherited it would still say "archive" for every entry, so a zip of 40
         # CSVs would report 40 archives and no data files in the summary counts

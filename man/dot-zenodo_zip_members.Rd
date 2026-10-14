@@ -8,7 +8,8 @@
   url,
   dest,
   keep_types = c("data", "documentation"),
-  max_file_size = 10
+  max_file_size = 10,
+  size = NULL
 )
 }
 \arguments{
@@ -22,6 +23,10 @@ documentation and skips materials, matching \code{\link[=zip_decision]{zip_decis
 
 \item{max_file_size}{largest member to extract (in MB), applied per member
 exactly as the record-level cap is applied per file}
+
+\item{size}{the zip's size in bytes as the record lists it, or \code{NULL}.
+Passed on to \code{\link[=zip_peek]{zip_peek()}} so it does not have to send a \code{HEAD} request to
+learn a size the record listing already gave.}
 }
 \value{
 a data frame with one row per extracted member (\code{name}, \code{path},

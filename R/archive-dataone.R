@@ -318,8 +318,10 @@ dataone_info <- function(dataone_url, id_col = 1, pb = NULL, cache = FALSE) {
 
 # One file's byte size via a HEAD request against its own object/<pid>
 # endpoint, read from the Content-Length header -- used only for the
-# no-<physical> fallback in .dataone_info() below, where size is not present
-# anywhere in the metadata document itself. Confirmed live 2026-09-29 (issue
+# no-<physical> case in .dataone_info() below, where size is not present
+# anywhere in the metadata document itself, and since 2026-10-13 only for a
+# file that .dataone_package_sizes()'s single Solr query did not cover (that
+# query normally answers for every file at once). Confirmed live 2026-09-29 (issue
 # #435 follow-up): a HEAD to object/<pid> returns Content-Length without
 # downloading the file. Returns NA_real_ on any failure (offline host,
 # non-200, missing header) rather than erroring, matching this file's other
@@ -335,6 +337,51 @@ dataone_info <- function(dataone_url, id_col = 1, pb = NULL, cache = FALSE) {
     len <- httr2::resp_header(resp, "Content-Length")
     suppressWarnings(as.numeric(len %empty_or% NA_real_))
   }, error = \(e) NA_real_)
+}
+
+# Byte sizes of every object a metadata document documents, from ONE query to
+# the member node's Solr index:
+#   <api_base>query/solr/?q=isDocumentedBy:"<pid>"&fl=id,fileName,size&rows=1000&wt=json
+# Replaces one .dataone_object_size() HEAD request per file for EML entities
+# that carry no <physical> element. Verified live 2026-10-13 on KNB
+# doi:10.5063/F11V5CFN (3 objects returned in one reply -- the EML document
+# itself plus its two urn:uuid data files, Seed_tracking_data.csv 213713 and
+# Trapping_data.csv 136236 bytes; the first matches the Content-Length the
+# old HEAD request reports) and on Arctic Data Center doi:10.18739/A2GT5FG86,
+# where Roots_4_15_21.csv is 3656 bytes in both the Solr reply and the EML's
+# own <size>. The metadata document's own row is returned too and
+# simply goes unused. rows = 1000 is far above any package seen so far; an
+# object beyond it is simply absent and gets the HEAD fallback.
+#
+# Returns a numeric vector named by object id, or numeric(0) when the node
+# has no /query/solr/ endpoint or the query fails for any reason (on
+# 2026-10-13 smithsonian.dataone.org and data.piscoweb.org refused the
+# connection outright, and metacat.tfri.gov.tw took ~7 s to answer) -- the
+# caller then falls back to the per-file HEAD request. No retries and a
+# bounded timeout, so an unreachable node costs one failed attempt, not a
+# backoff sequence.
+.dataone_package_sizes <- function(host, api_base, pid) {
+  q <- paste0('isDocumentedBy:"', gsub('"', '\\\\"', pid), '"')
+  url <- paste0("https://", host, api_base, "query/solr/?q=",
+                utils::URLencode(q, reserved = TRUE),
+                "&fl=id,fileName,size&rows=1000&wt=json")
+  rec <- tryCatch({
+    resp <- httr2::request(url) |>
+      httr2::req_headers(Accept = "application/json") |>
+      httr2::req_timeout(30) |>
+      httr2::req_error(is_error = \(resp) FALSE) |>
+      httr2::req_perform()
+    if (httr2::resp_status(resp) != 200) NULL else httr2::resp_body_json(resp)
+  }, error = \(e) NULL)
+
+  docs <- rec$response$docs
+  if (!is.list(docs) || length(docs) == 0) return(numeric(0))
+
+  ids <- vapply(docs, \(d) as.character(d$id %empty_or% NA_character_), character(1))
+  sizes <- vapply(docs, \(d) suppressWarnings(as.numeric(d$size %empty_or% NA_real_)),
+                  numeric(1))
+  keep <- !is.na(ids)
+  stats::setNames(sizes[keep], ids[keep])
 }
 
 #' Retrieve info from one DataONE object
@@ -462,17 +509,39 @@ dataone_info <- function(dataone_url, id_col = 1, pb = NULL, cache = FALSE) {
       NA_character_
     }
     # Size is not in the metadata document at all for this shape, unlike the
-    # <physical> branch above -- recovered with one HEAD request per file
-    # against the same object/<pid> endpoint file_url is built from
-    # downstream (repo_check.R), reading Content-Length. Confirmed live
-    # 2026-09-29: that endpoint returns it (see .dataone_object_size()).
-    size <- if (!is.na(pid)) .dataone_object_size(host, api_base, pid) else NA_real_
+    # <physical> branch above -- filled in below, after every entity has been
+    # read, so all missing sizes can be asked for in one request.
     list(
       key  = name %empty_or% NA_character_,
-      size = size,
+      size = NA_real_,
       pid  = pid
     )
   })
+
+  # Sizes for the no-<physical> entities: one Solr query on the member node
+  # for every object this metadata document documents (see
+  # .dataone_package_sizes()), instead of one HEAD request per file. A file
+  # the query did not answer for -- node without /query/solr/, failed query,
+  # or a pid missing from the result -- still gets the per-file HEAD
+  # (.dataone_object_size()), so no size that was found before is lost.
+  # Only the no-<physical> entities: a <physical> entity whose own <size> is
+  # blank was never looked up before either, and its pid comes from a URL
+  # (still percent-encoded) rather than from a node-local id.
+  no_physical <- vapply(entities, \(e) {
+    is.na(xml2::xml_find_first(e, ".//*[local-name()='physical']"))
+  }, logical(1))
+  need <- which(no_physical &
+                vapply(files, \(f) !is.na(f$pid), logical(1)))
+  if (length(need) > 0) {
+    sizes <- .dataone_package_sizes(host, api_base, pid)
+    for (j in need) {
+      s <- unname(sizes[files[[j]]$pid])
+      if (length(s) != 1 || is.na(s)) {
+        s <- .dataone_object_size(host, api_base, files[[j]]$pid)
+      }
+      files[[j]]$size <- s
+    }
+  }
   obj$files <- list(files)
 
   return(obj)

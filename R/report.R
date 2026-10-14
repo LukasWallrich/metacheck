@@ -901,18 +901,6 @@ report_qmd <- function(module_output, paper = list()) {
   )
 }
 
-#' Report from module output
-#'
-#' @param module_output the output of a `module_run()`
-#' @param header header level (default 2)
-#'
-#' @return text
-#' @export
-#'
-#' @examples
-#' paper <- demopaper()
-#' op <- module_run(paper, "stat_p_exact")
-#' module_report(op) |> cat()
 # A module title becomes both a Pandoc header-attribute id (module_report()'s
 # own `{#id .class}`, below) and a matching link target (the Summary
 # section's `[title](#id)`, in report_qmd() above) -- both MUST derive the
@@ -933,6 +921,18 @@ report_qmd <- function(module_output, paper = list()) {
     gsub("[^a-z0-9_-]", "", x = _)
 }
 
+#' Report from module output
+#'
+#' @param module_output the output of a `module_run()`
+#' @param header header level (default 2)
+#'
+#' @return text
+#' @export
+#'
+#' @examples
+#' paper <- demopaper()
+#' op <- module_run(paper, "stat_p_exact")
+#' module_report(op) |> cat()
 module_report <- function(module_output,
                           header = 3) {
   n <- NULL

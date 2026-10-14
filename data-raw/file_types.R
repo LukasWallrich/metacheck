@@ -10,8 +10,10 @@ types$type[types$type == "sheet"] <- "data"
 
 extensions <- list()
 extensions[["code"]] <- data.frame(
+  # "Rds" was listed here as well as under "data" below; lowercased, both are
+  # "rds" (R's saved-object format, which is data), so it is listed there only.
   ext = c("R", "Rmd", "qmd", "quarto",
-          "Rd", "Rds",
+          "Rd",
           "ado","dss",
           "Rnw", "jl", "ipynb",
           "ts", "dart", "sol", "vue", "svelte", "gradle")
@@ -73,9 +75,36 @@ for (nm in names(extensions)) {
 
 file_types <- do.call(dplyr::bind_rows, c(list(types), extensions))
 file_types$ext <- tolower(file_types$ext)
+
+# One type per extension. The community list and the lists above disagreed on
+# 27 extensions, which then had two rows each: every left_join(..., file_types,
+# by = "ext") (GitHub, GitLab, DSpace, PsychArchives and ResearchBox listings)
+# duplicated those files' rows, and file_category() saw a type such as
+# "code;data", which none of its firm rules match. Each gets the type that fits
+# how it occurs in a research repository (decided 2026-10-13):
+#   - data, not code/stats: saved data (jsPsych/JSON exports, R objects, SPSS
+#     portable files, JASP files, which bundle the dataset with its analyses)
+#   - code, not exec/web: shell scripts and program source (experiments
+#     written in JavaScript, server scripts)
+#   - web, not code: html/htm are usually a rendered report or output page
+#   - 3ds/yuv: two media types that both count as materials; one is kept
+type_override <- c(
+  json = "data", rds = "data", por = "data", jasp = "data",
+  sh = "code", bash = "code", zsh = "code", ksh = "code", csh = "code",
+  fish = "code", bat = "code",
+  js = "code", jsx = "code", ts = "code", tsx = "code", php = "code",
+  php3 = "code",
+  php4 = "code", php5 = "code", phtml = "code", asp = "code", aspx = "code",
+  jsp = "code", inc = "code",
+  html = "web", htm = "web",
+  `3ds` = "3D", yuv = "video"
+)
+over <- file_types$ext %in% names(type_override)
+file_types$type[over] <- unname(type_override[file_types$ext[over]])
+
 file_types <- unique(file_types) |>
-  #dplyr::summarise(type = paste(type, collapse = ";"), .by = ext) |>
   dplyr::arrange(ext)
+stopifnot(!anyDuplicated(file_types$ext))
 
 usethis::use_data(file_types, overwrite = TRUE, compress = "xz")
 usethis::use_r("file_types")

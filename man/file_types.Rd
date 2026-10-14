@@ -5,7 +5,7 @@
 \alias{file_types}
 \title{File Types}
 \format{
-A data frame with 405 rows and 2 columns:
+A data frame with 377 rows (one per extension) and 2 columns:
 \describe{
 \item{ext}{File extension}
 \item{type}{Type of file}

@@ -218,6 +218,18 @@ format_bib_authors <- function(authors) {
 
   # check status
   status <- httr2::resp_status(resp)
+  # A missing or wrong API key is refused with 401/403 (platform.metacheck.app
+  # did so on 2026-10-14; it used to answer 200 with a non-JSON page, which
+  # the content-type check below catches). Either way the server is up and the
+  # key is the problem, so say that rather than "not up and running".
+  if (status %in% c(401L, 403L)) {
+    if (error) {
+      stop("The server is running, but the API key is not valid",
+           call. = FALSE)
+    } else {
+      return(FALSE)
+    }
+  }
   if (status != 200) {
     if (error) {
       stop("The BIBR server does not appear up and running on the URL ",

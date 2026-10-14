@@ -28,7 +28,15 @@
   c(
     "www.psycharchives.org",         # PsychArchives, ZPID (Germany)
     "bonndoc.ulb.uni-bonn.de",       # bonndoc, University of Bonn (Germany)
-    "dspace.ut.ee",                  # University of Tartu Library (Estonia)
+    # dspace.ut.ee (University of Tartu) was listed here AND in
+    # .dspace7_hosts(), so every citation of it was looked up through both
+    # API families and listed twice. It runs DSpace 7: its /server/api
+    # answers with a HAL root document (application/hal+json, HTTP 200, in
+    # Internet Archive captures from 2024-01 to 2026-08-26), while its /rest
+    # is DSpace 7's optional copy of the old API, whose own index page reads
+    # "This REST API is deprecated and will be removed in v8" (capture of
+    # 2025-08-05). Kept in .dspace7_hosts() only (2026-10-13; the host
+    # itself did not answer from here that day, so the captures were used).
     "qsardb.org",                    # QsarDB
     "repositorio-digital.cide.edu",  # CIDE (Mexico)
     "ses.library.usyd.edu.au",       # University of Sydney eScholarship (Australia)
@@ -313,18 +321,39 @@ psycharchives_info <- function(pa_url, id_col = 1, pb = NULL, cache = FALSE) {
     return(obj)
   }
 
-  # Resolve the handle to a DSpace item (UUID) via the REST API.
-  item <- .psycharchives_rest(paste0("/handle/", handle), host = host)
-  if (is.null(item) || is.null(item$uuid)) {
+  # Resolve the handle to a DSpace item, with its metadata and bitstreams, in
+  # one request. Verified live 2026-10-13 on PsychArchives (20.500.12034/
+  # 17526, 20.500.12034/371.2 with 16 bitstreams, 20.500.11780/3774 and
+  # three more items): /rest/handle/<handle>?expand=metadata,bitstreams
+  # returns the item, all its metadata, and exactly the bitstream list that
+  # /items/<uuid>/bitstreams?limit=1000 returns, in the same order. This
+  # used to take three requests (/handle, /items/<uuid>?expand=metadata,
+  # /items/<uuid>/bitstreams). The expanded list has no length limit:
+  # DSpace 6's REST code builds it from every readable bitstream of every
+  # bundle, and /items/<uuid>/bitstreams is that same list cut to
+  # offset/limit (dspace-rest Item.java and ItemsResource.java, branch
+  # dspace-6_x). Should an installation ignore `expand` (the field then
+  # comes back null), the separate requests are made as before.
+  #
+  # DSpace 5 numbers items (`id`) instead of giving them a uuid -- e.g.
+  # datastorre.stir.ac.uk, verified 2026-10-13 -- so either is accepted;
+  # requiring a uuid made every DSpace 5 item "unfound".
+  item <- .psycharchives_rest(paste0("/handle/", handle, "?expand=metadata,bitstreams"),
+                              host = host)
+  item_id <- item$uuid %||% item$id
+  if (is.null(item) || is.null(item_id)) {
     warning(pa_url, " could not be found", call. = FALSE)
     obj$error <- "unfound"
     return(obj)
   }
-  uuid <- item$uuid
 
   # Item-level metadata (title, authors, DOI, rights, date).
-  meta <- .psycharchives_rest(paste0("/items/", uuid, "?expand=metadata"), host = host)
-  md <- meta$metadata %||% list()
+  md <- item$metadata
+  if (is.null(md)) {
+    meta <- .psycharchives_rest(paste0("/items/", item_id, "?expand=metadata"), host = host)
+    md <- meta$metadata
+  }
+  md <- md %||% list()
   md_val <- function(key) {
     # %empty_or% (not %||%) because m$value can come back as a length-zero
     # value rather than NULL; vapply(..., character(1)) requires exactly
@@ -341,13 +370,41 @@ psycharchives_info <- function(pa_url, id_col = 1, pb = NULL, cache = FALSE) {
   obj$PA_title    <- item$name %empty_or% md_val("dc.title")
   obj$PA_authors  <- md_val("dc.contributor.author")
   obj$PA_doi      <- md_val("dc.identifier.doi")
-  obj$PA_license  <- md_val("dc.rights")
+  # Two different things, kept apart (2026-10-13). dc.rights holds the ACCESS
+  # level on PsychArchives ("openAccess", "restrictedAccess", ...), which drives
+  # repo_check's restricted-access flag. The reuse licence is in
+  # dc.rights.license (its text, e.g. "Terms for individual files apply") and
+  # dc.rights.uri (its address); 20.500.12034/17526 has all three. Before, the
+  # access level was also reported as the licence.
+  # Other installations put the licence itself in dc.rights (DSpace 5's
+  # datastorre.stir.ac.uk: "CC-BY 4.0"), so dc.rights is the licence of last
+  # resort when it is not one of the standard access-level terms.
+  obj$PA_rights   <- md_val("dc.rights")
+  obj$PA_license  <- md_val("dc.rights.license")
+  if (is.na(obj$PA_license)) obj$PA_license <- md_val("dc.rights.uri")
+  access_terms <- "^(open|restricted|embargoed|closed|metadataOnly)Access$"
+  if (is.na(obj$PA_license) && !is.na(obj$PA_rights) &&
+      !grepl(access_terms, obj$PA_rights, ignore.case = TRUE))
+    obj$PA_license <- obj$PA_rights
   obj$PA_date     <- md_val("dc.date.available")
   obj$PA_abstract <- md_val("dc.description.abstract")
 
   # Public bitstream list. Restricted bitstreams are omitted by the API, so this
   # only ever contains publicly retrievable files.
-  bitstreams <- .psycharchives_rest(paste0("/items/", uuid, "/bitstreams?limit=1000"), host = host)
+  bitstreams <- item$bitstreams
+  if (is.null(bitstreams)) {
+    bitstreams <- .psycharchives_rest(paste0("/items/", item_id, "/bitstreams?limit=1000"),
+                                      host = host)
+  }
+  # Only the ORIGINAL bundle holds what the author deposited, as for DSpace 7
+  # (see archive-dspace7.R). The others are added by DSpace itself: LICENSE
+  # (license.txt, the deposit agreement with the repository, not the reuse
+  # licence, which is read from the metadata above), TEXT (text extracted from
+  # deposited PDFs, e.g. paper.pdf.txt) and THUMBNAIL (preview images). Listing
+  # them counted files nobody shared. A bitstream without a bundleName is kept.
+  bundle <- vapply(bitstreams, \(b) b$bundleName %empty_or% NA_character_,
+                   character(1))
+  bitstreams <- bitstreams[is.na(bundle) | bundle == "ORIGINAL"]
   file_list <- if (length(bitstreams) == 0) {
     data.frame(
       name = character(0),
@@ -361,9 +418,15 @@ psycharchives_info <- function(pa_url, id_col = 1, pb = NULL, cache = FALSE) {
     data.frame(
       name = vapply(bitstreams, \(b) b$name %empty_or% NA_character_, character(1)),
       size = vapply(bitstreams, \(b) as.numeric(b$sizeBytes %empty_or% NA_real_), numeric(1)),
+      # DSpace 6 gives the link from the server root ("/rest/bitstreams/
+      # <uuid>/retrieve"), DSpace 5 from the REST root ("/bitstreams/<id>/
+      # retrieve"), which answers 404 unless /rest is put in front
+      # (datastorre.stir.ac.uk, verified 2026-10-13).
       retrieve = vapply(bitstreams,
         \(b) if (is.null(b$retrieveLink)) NA_character_
-             else paste0("https://", host, b$retrieveLink),
+             else paste0("https://", host,
+                         if (startsWith(b$retrieveLink, "/rest/")) "" else "/rest",
+                         b$retrieveLink),
         character(1))
     )
   }
@@ -423,6 +486,8 @@ psycharchives_file_download <- function(pa_url, pb = NULL, cache = FALSE) {
     # caller can warn about restricted items without a second API round-trip.
     rights <- unlist(lapply(file_lists, \(x) attr(x, "rights")))
     attr(df, "rights") <- rights
+    license <- unlist(lapply(file_lists, \(x) attr(x, "license")))
+    attr(df, "license") <- license
     doi <- unlist(lapply(file_lists, \(x) attr(x, "doi")))
     attr(df, "doi") <- doi
 
@@ -443,10 +508,12 @@ psycharchives_file_download <- function(pa_url, pb = NULL, cache = FALSE) {
   }
   if ("error" %in% names(info)) return(NULL)
 
-  # Rights flag (e.g. "restrictedAccess") and doi carried as attributes rather
-  # than columns, so the file frame stays file-only while the caller can still
-  # read them. Reuses the metadata .psycharchives_info() already fetched.
-  rights <- stats::setNames(info$PA_license %||% NA_character_, pa_url)
+  # Rights flag (e.g. "restrictedAccess"), licence and doi carried as
+  # attributes rather than columns, so the file frame stays file-only while the
+  # caller can still read them. Reuses the metadata .psycharchives_info()
+  # already fetched.
+  rights <- stats::setNames(info$PA_rights %||% NA_character_, pa_url)
+  license <- stats::setNames(info$PA_license %||% NA_character_, pa_url)
   doi <- stats::setNames(info$PA_doi %||% NA_character_, pa_url)
 
   file_list <- info$files[[1]]
@@ -461,6 +528,7 @@ psycharchives_file_download <- function(pa_url, pb = NULL, cache = FALSE) {
       ext = character(0), type = character(0)
     )
     attr(empty, "rights") <- rights
+    attr(empty, "license") <- license
     attr(empty, "doi") <- doi
     return(empty)
   }
@@ -489,6 +557,7 @@ psycharchives_file_download <- function(pa_url, pb = NULL, cache = FALSE) {
   )
 
   attr(pa_file_info, "rights") <- rights
+  attr(pa_file_info, "license") <- license
   attr(pa_file_info, "doi") <- doi
 
   return(pa_file_info)

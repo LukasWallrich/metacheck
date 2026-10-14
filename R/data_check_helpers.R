@@ -1353,6 +1353,13 @@ data_study_roster <- function(paper) {
   txt <- tryCatch(paste(readLines(path, warn = FALSE), collapse = "\n"),
                   error = function(e) NULL)
   if (is.null(txt) || !nzchar(txt)) return(character(0))
+  # A script saved in another encoding (an older Stata .do file is often
+  # Latin-1) is not valid UTF-8, and gregexpr() below then warns "input string
+  # 1 is invalid UTF-8" -- seen 2026-10-13 in test-module-code_check.R's
+  # stata_latin1.do fixture. Invalid bytes are replaced by their "<xx>" code,
+  # as code_read() does; the file references this looks for are ASCII anyway.
+  if (!validUTF8(txt)) txt <- iconv(txt, to = "UTF-8", sub = "byte")
+  if (is.na(txt)) return(character(0))
   # <fn>( ... "<path>"  -- the first quoted string of a read/write call. Allows
   # arguments before the path (write_csv(df, "out.csv")).
   pat <- paste0("(?:", .CODE_READ_FNS, ")\\s*\\([^)\"']*[\"']([^\"']+)[\"']")

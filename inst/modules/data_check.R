@@ -658,9 +658,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     if (any(is_zip)) {
       zpb <- pb(sum(is_zip), "Peeking into zips [:bar] :current/:total")
       on.exit(zpb$terminate(), add = TRUE)
+      # A zip already on disk (e.g. inside a ResearchBox, whose file_url is the
+      # box's web page) is read from the file rather than peeked at its URL,
+      # and a size the listing already gave saves the peek a HEAD request (see
+      # .zip_local_source() and zip_peek()'s `size`).
+      zip_src <- .zip_local_source(all_files)
       for (i in which(is_zip)) {
-        d <- zip_decision(all_files$file_url[i], skip_types = skip_types %||% "materials",
-                         cache = cache, skip_on_api_limit = skip_on_api_limit)
+        src <- if (!is.na(zip_src[i])) zip_src[i] else all_files$file_url[i]
+        d <- zip_decision(src, skip_types = skip_types %||% "materials",
+                         cache = cache, skip_on_api_limit = skip_on_api_limit,
+                         size = all_files$file_size[i] %||% NULL)
         if (isFALSE(d$worth)) {
           want[i] <- FALSE
           zip_peek_reason[i] <- paste0("zip skipped: ", d$reason)

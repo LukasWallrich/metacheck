@@ -4,10 +4,18 @@
 \alias{zip_peek}
 \title{Peek at the contents of a remote ZIP file without downloading it}
 \usage{
-zip_peek(url, tail_bytes = 131072, cache = FALSE, skip_on_api_limit = FALSE)
+zip_peek(
+  url,
+  tail_bytes = 131072,
+  cache = FALSE,
+  skip_on_api_limit = FALSE,
+  size = NULL
+)
 }
 \arguments{
-\item{url}{the download URL of a ZIP file}
+\item{url}{the download URL of a ZIP file, or the path of a ZIP file
+already on disk (e.g. one inside a downloaded ResearchBox), which is then
+read directly without any request}
 
 \item{tail_bytes}{how many bytes of the tail to fetch (default 128 KB; raised
 automatically on retry when the central directory is larger)}
@@ -24,6 +32,12 @@ during a peek is treated as a failure (returns \code{NULL}) instead of waiting
 out the host's reset -- see \code{\link[=download_repo_files]{download_repo_files()}}'s parameter of the
 same name. Falls back to \code{getOption("metacheck.skip_on_api_limit")} when
 not given directly.}
+
+\item{size}{the archive's size in bytes, when the caller already knows it
+(e.g. from a repository's file listing). Skips the HEAD request otherwise
+made to learn it -- on the OSF's file server every request costs several
+seconds, however small the file. \code{NULL} or \code{NA} (the default) asks the
+host as before.}
 }
 \value{
 a data.frame with columns \code{name} (entry path inside the zip) and
@@ -31,8 +45,10 @@ a data.frame with columns \code{name} (entry path inside the zip) and
 host does not support range requests or the listing cannot be read (the
 caller should then download-and-inspect). Also returns \code{method}, \code{csize},
 \code{offset}, and \code{crc}, which describe where each member's bytes sit in the
-archive so a single member can be fetched without the rest; \code{csize} and
-\code{offset} are \code{NA} for a Zip64 archive, which cannot be fetched this way.
+archive so a single member can be fetched without the rest. Zip64 archives
+(over 4 GB or over 65,535 entries) are read in full, including the sizes
+and offsets stored only in their Zip64 extra fields; \code{csize} and \code{offset}
+are \code{NA} only for an entry whose listing is malformed.
 }
 \description{
 Uses an HTTP range request to fetch only the tail of a ZIP archive and read

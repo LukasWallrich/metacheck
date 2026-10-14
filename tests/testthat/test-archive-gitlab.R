@@ -131,3 +131,36 @@ test_that("gitlab_tree_files lists a real, small, stable public project", {
     c("repo", "clean_repo", "name", "path", "download_url", "size", "type")
   )
 })
+
+
+test_that("gitlab_tree_files asks the API directly, with no gitlab.com HEAD first", local({
+  # Regression test (2026-10-13 survey): gitlab_tree_files() first sent a
+  # HEAD request to the gitlab.com page (via gitlab_repo()) although its
+  # project metadata request answers 404 for a missing project by itself.
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- c(seen, paste(req$method %||% "GET", req$url))
+      httr2::response(status_code = 404)
+    },
+    .package = "httr2"
+  )
+
+  res <- gitlab_tree_files("https://gitlab.com/group/sub/missing-project")
+  expect_true(res$gated)
+  expect_equal(res$reason, "invalid or inaccessible GitLab repository")
+  expect_equal(seen,
+    "GET https://gitlab.com/api/v4/projects/group%2Fsub%2Fmissing-project?license=true")
+}))
+
+
+test_that(".gitlab_repo_path parses without any request", local({
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) stop("no request expected"),
+    .package = "httr2"
+  )
+  expect_equal(metacheck:::.gitlab_repo_path("https://gitlab.com/a/b.git"), "a/b")
+  expect_equal(metacheck:::.gitlab_repo_path("a/b/c/"), "a/b/c")
+  expect_null(metacheck:::.gitlab_repo_path("just-one-segment"))
+  expect_null(metacheck:::.gitlab_repo_path(NA_character_))
+}))

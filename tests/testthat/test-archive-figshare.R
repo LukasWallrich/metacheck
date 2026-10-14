@@ -224,3 +224,151 @@ test_that("figshare_info on a single article still returns exactly one row", {
   expect_equal(nrow(info), 1)
   expect_false(is.na(info$figshare_id))
 })
+
+
+test_that(".figshare_file_path joins folder and name, and cannot leave the folder", local({
+  expect_equal(.figshare_file_path("a.csv", "Experiment_1"), "Experiment_1/a.csv")
+  expect_equal(.figshare_file_path("a.csv", "Experiment_1/raw/"), "Experiment_1/raw/a.csv")
+  expect_equal(.figshare_file_path("Readme.pdf", ""), "Readme.pdf")
+  expect_equal(.figshare_file_path("Readme.pdf", NULL), "Readme.pdf")
+  expect_equal(.figshare_file_path("x.csv", "../../etc"), "etc/x.csv")
+  expect_equal(.figshare_file_path("x.csv", ".."), "x.csv")
+  expect_true(is.na(.figshare_file_path(NA_character_, "A")))
+}))
+
+
+# A mocked article response in the shape api.figshare.com returns (field
+# names as in article 28052888, read live 2026-10-13).
+.fs_article <- function(files, size, folders = NULL) {
+  rec <- list(id = 1, title = "T", doi = "10.6084/m9.figshare.1",
+              size = size, files = files)
+  if (!is.null(folders)) rec$folder_structure <- folders
+  rec
+}
+.fs_json_resp <- function(x) {
+  httr2::response(status_code = 200,
+                  headers = list(`Content-Type` = "application/json"),
+                  body = charToRaw(jsonlite::toJSON(x, auto_unbox = TRUE,
+                                                    null = "null")))
+}
+.fs_file <- function(id, name, size) {
+  list(id = id, name = name, size = size,
+       download_url = paste0("https://ndownloader.figshare.com/files/", id),
+       computed_md5 = NA)
+}
+
+test_that(".figshare_info gives each file its folder path from folder_structure", local({
+  # Regression test (2026-10-13 survey): folder_structure was ignored, so a
+  # file in Experiment_1/ looked as if it sat at the top level (article
+  # 28052888 uses Experiment_1/ and Experiment_2/).
+  urls <- character(0)
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls_in, ...) {
+      urls <<- c(urls, urls_in)
+      list(.fs_json_resp(.fs_article(
+        files = list(.fs_file(11, "a.csv", 3), .fs_file(12, "a.csv", 4),
+                     .fs_file(13, "Readme.pdf", 5)),
+        size = 12,
+        folders = list(`11` = "Experiment_1", `12` = "Experiment_2", `13` = ""))))
+    }
+  )
+
+  info <- .figshare_info("1")
+  paths <- vapply(info$files[[1]], \(f) f$path, character(1))
+  expect_equal(paths, c("Experiment_1/a.csv", "Experiment_2/a.csv", "Readme.pdf"))
+  # sizes add up to the article's size: no second request for the file list
+  expect_equal(urls, "https://api.figshare.com/v2/articles/1")
+}))
+
+test_that(".figshare_info fetches the full file list when the article's list falls short", local({
+  # Figshare's spec says the article response lists "up to 10 article files"
+  # (it returned all 103 for article 33328980 on 2026-10-13). When the listed
+  # sizes add up to less than the article's `size`, the paged
+  # /files endpoint is read instead.
+  urls <- character(0)
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls_in, ...) {
+      urls <<- c(urls, urls_in)
+      if (grepl("/files?", urls_in, fixed = TRUE)) {
+        list(.fs_json_resp(list(.fs_file(11, "a.csv", 3), .fs_file(12, "b.csv", 4),
+                                .fs_file(13, "c.csv", 5))))
+      } else {
+        list(.fs_json_resp(.fs_article(files = list(.fs_file(11, "a.csv", 3)),
+                                       size = 12)))
+      }
+    }
+  )
+
+  info <- .figshare_info("1")
+  keys <- vapply(info$files[[1]], \(f) f$name, character(1))
+  expect_equal(keys, c("a.csv", "b.csv", "c.csv"))
+  expect_equal(urls, c(
+    "https://api.figshare.com/v2/articles/1",
+    "https://api.figshare.com/v2/articles/1/files?page=1&page_size=1000"))
+}))
+
+test_that(".figshare_article_files follows pages and keeps what it has on failure", local({
+  pages <- 0
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls_in, ...) {
+      pages <<- pages + 1
+      if (pages == 1) list(.fs_json_resp(list(.fs_file(1, "a", 1), .fs_file(2, "b", 1))))
+      else if (pages == 2) list(.fs_json_resp(list(.fs_file(3, "c", 1))))
+      else stop("no third page expected")
+    }
+  )
+  out <- .figshare_article_files("1", page_size = 2)
+  expect_length(out, 3)
+  expect_equal(pages, 2)
+
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls_in, ...) list(httr2::response(status_code = 404))
+  )
+  expect_null(.figshare_article_files("1"))
+}))
+
+test_that("figshare_file_download saves files under their Figshare folders", local({
+  testthat::local_mocked_bindings(
+    .figshare_info = function(figshare_id, host = "api.figshare.com", pb = NULL) {
+      files <- list(.fs_file(11, "a.csv", 8), .fs_file(12, "a.csv", 8))
+      files[[1]]$path <- "Experiment_1/a.csv"
+      files[[2]]$path <- "Experiment_2/a.csv"
+      data.frame(figshare_id = as.character(figshare_id), files = I(list(files)))
+    }
+  )
+  testthat::local_mocked_bindings(
+    request = function(url) structure(list(url = url), class = "httr2_request"),
+    req_headers = function(req, ...) req,
+    req_timeout = function(req, seconds) req,
+    req_error = function(req, is_error) req,
+    req_perform = function(req) structure(
+      list(status = 200, body = charToRaw("x,y\n1,2\n")), class = "httr2_response"),
+    resp_status = function(resp) resp$status,
+    resp_body_raw = function(resp) resp$body,
+    .package = "httr2"
+  )
+
+  tmp <- withr::local_tempdir()
+  dl <- figshare_file_download("4242", download_to = tmp)
+
+  expect_equal(dl$path, c("Experiment_1/a.csv", "Experiment_2/a.csv"))
+  expect_true(all(dl$downloaded))
+  # two same-named files, both kept: they no longer overwrite each other
+  expect_true(file.exists(file.path(tmp, "figshare_4242", "Experiment_1", "a.csv")))
+  expect_true(file.exists(file.path(tmp, "figshare_4242", "Experiment_2", "a.csv")))
+}))
+
+test_that(".figshare_zip_members passes the listed size to zip_peek()", local({
+  # A Figshare download_url redirects to a signed S3 address that answers
+  # HEAD with 403 (verified 2026-10-13), so zip_peek() must not need one.
+  got_size <- "unset"
+  testthat::local_mocked_bindings(
+    zip_peek = function(url, ..., size = NULL) {
+      got_size <<- size
+      NULL
+    }
+  )
+  expect_null(.figshare_zip_members("https://ndownloader.figshare.com/files/1",
+                                    dest = tempdir(), size = 4096))
+  expect_equal(got_size, 4096)
+}))

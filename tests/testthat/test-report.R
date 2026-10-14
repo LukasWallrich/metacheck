@@ -274,8 +274,10 @@ test_that("report pass args", {
   find_arg <- grepl(args$`modules/no_error.R`$demo_arg, qmd_txt, fixed = TRUE)
   expect_true(any(find_arg))
 
-  # make sure exact p doesn't fail
-  exact_runs <- grepl("(#exact-p-values){.red}", qmd_txt, fixed = TRUE)
+  # make sure exact p doesn't fail: its section heading carries the red
+  # traffic light (the summary row format these lines used to match changed
+  # in commit 7208868's report redesign)
+  exact_runs <- grepl("{#exact-p-values .red}", qmd_txt, fixed = TRUE)
   expect_true(any(exact_runs))
 })
 

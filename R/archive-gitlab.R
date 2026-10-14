@@ -111,18 +111,8 @@ gitlab_repo <- function(repo) {
     return(res)
   }
 
-  # A GitLab path can itself contain slashes (subgroups, e.g.
-  # "gitlab-org/quality/triage-ops"), unlike GitHub's flat "owner/repo" --
-  # so, unlike github_repo()'s regex, this only strips a leading
-  # gitlab.com/ (if present) and a trailing .git, keeping every remaining
-  # path segment rather than matching exactly two.
-  path <- sub("^(?:https?://)?(?:www\\.)?gitlab\\.com/", "", repo,
-             ignore.case = TRUE, perl = TRUE)
-  path <- sub("\\.git/?$", "", path)
-  path <- sub("/+$", "", path)
-  path <- trimws(path)
-
-  if (!nzchar(path) || !grepl("^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$", path)) {
+  path <- .gitlab_repo_path(repo)
+  if (is.null(path)) {
     return(NULL)
   }
 
@@ -137,6 +127,34 @@ gitlab_repo <- function(repo) {
   }
 
   return(path)
+}
+
+# The "namespace/project" path of a GitLab URL or bare mention, WITHOUT
+# checking that the project exists (gitlab_repo() adds that check with a HEAD
+# request to the gitlab.com page). gitlab_tree_files() uses this instead:
+# its first API request (GET /api/v4/projects/:id) already answers 404 for a
+# project that does not exist or cannot be seen, so the HEAD only added one
+# request per project (survey 2026-10-13). The path pattern is still
+# enforced, so text that is not shaped like a project path never reaches the
+# API. Returns NULL when there is no valid path. Single value only.
+.gitlab_repo_path <- function(repo) {
+  if (length(repo) != 1 || is.na(repo)) return(NULL)
+
+  # A GitLab path can itself contain slashes (subgroups, e.g.
+  # "gitlab-org/quality/triage-ops"), unlike GitHub's flat "owner/repo" --
+  # so, unlike github_repo()'s regex, this only strips a leading
+  # gitlab.com/ (if present) and a trailing .git, keeping every remaining
+  # path segment rather than matching exactly two.
+  path <- sub("^(?:https?://)?(?:www\\.)?gitlab\\.com/", "", repo,
+             ignore.case = TRUE, perl = TRUE)
+  path <- sub("\\.git/?$", "", path)
+  path <- sub("/+$", "", path)
+  path <- trimws(path)
+
+  if (!nzchar(path) || !grepl("^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+$", path)) {
+    return(NULL)
+  }
+  path
 }
 
 # GitLab's :id path segment: the URL-encoded "namespace/project" form,
@@ -228,7 +246,9 @@ gitlab_pat <- function(pat = NULL) {
 #' @export
 #' @keywords internal
 gitlab_tree_files <- function(repo) {
-  clean_repo <- gitlab_repo(repo)
+  # Path pattern only -- the project metadata request below reports a
+  # missing/inaccessible project itself (see .gitlab_repo_path()).
+  clean_repo <- .gitlab_repo_path(repo)
   if (is.null(clean_repo))
     return(list(gated = TRUE,
                 reason = "invalid or inaccessible GitLab repository",

@@ -17,7 +17,7 @@
 
 #' Walk an OSF project's component tree
 #'
-#' Every node under `osf_id`, including the project itself, breadth-first.
+#' Every node under `osf_id`, including the project itself (the project first).
 #' Only the tree is walked -- no file listings -- because the archive endpoint
 #' needs a node ID and nothing else.
 #'
@@ -29,6 +29,36 @@
 .osf_walk_nodes <- function(osf_id, pb = NULL) {
   osf_api <- getOption("metacheck.osf.api")
 
+  # The root's own title (nothing lists it as a child) and its project id, in
+  # one request.
+  root <- tryCatch({
+    resp <- httr2::request(sprintf("%s/nodes/%s/", osf_api, osf_id)) |>
+      .osf_headers() |>
+      httr2::req_error(is_error = \(r) FALSE) |>
+      httr2::req_perform()
+    if (httr2::resp_status(resp) != 200) NULL else
+      httr2::resp_body_json(resp, simplifyVector = TRUE)$data
+  }, error = \(e) NULL)
+  root_title <- root$attributes$title %||% NA_character_
+  root_project <- root$relationships$root$data$id %||% NA_character_
+
+  # The whole tree in one listing where possible (see .osf_tree(): one
+  # request per 100 nodes instead of one per node).
+  if (!is.null(pb)) {
+    list(what = sprintf("Finding the components of %s", osf_id)) |>
+      pb$tick(0, tokens = _)
+  }
+  tree <- .osf_tree(osf_id, "nodes", root_project)
+  if (!is.null(tree)) {
+    kids <- tree$nodes
+    return(dplyr::bind_rows(
+      data.frame(osf_id = osf_id, title = root_title),
+      if (is.data.frame(kids) && nrow(kids) > 0)
+        data.frame(osf_id = kids$osf_id, title = kids$name %||% NA_character_)
+    ))
+  }
+
+  # Otherwise walk it one node at a time, as before.
   out <- data.frame(osf_id = character(0), title = character(0))
   todo <- osf_id
   level <- 0
@@ -61,17 +91,6 @@
     out <- dplyr::bind_rows(out, found)
     todo <- nxt
   }
-
-  # The root's own title needs its own request, since nothing listed it as a
-  # child.
-  root_title <- tryCatch({
-    resp <- httr2::request(sprintf("%s/nodes/%s/", osf_api, osf_id)) |>
-      .osf_headers() |>
-      httr2::req_error(is_error = \(r) FALSE) |>
-      httr2::req_perform()
-    if (httr2::resp_status(resp) != 200) NA_character_ else
-      httr2::resp_body_json(resp, simplifyVector = TRUE)$data$attributes$title
-  }, error = \(e) NA_character_)
 
   dplyr::bind_rows(
     data.frame(osf_id = osf_id, title = root_title %||% NA_character_),

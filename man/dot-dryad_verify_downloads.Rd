@@ -19,7 +19,7 @@
 \description{
 Mirrors \code{\link[=.dataverse_verify_downloads]{.dataverse_verify_downloads()}}: confirms every file the
 download planned to save is present, is the size Dryad reported, and (when
-Dryad published an MD5 digest) matches the checksum.
+Dryad published an MD5 or SHA-256 digest) matches the checksum.
 }
 \details{
 A row whose \code{extracted} count is set is exempt from both checks, for the

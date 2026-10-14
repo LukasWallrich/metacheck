@@ -55,3 +55,89 @@ test_that("dataone_links recognises the data.piscoweb.org host and its DOI prefi
   expect_equal(unname(links$dataone_host), "data.piscoweb.org")
   expect_equal(unname(links$dataone_pid), "doi:10.6085/AA/marine_ltm.20.1")
 })
+
+
+test_that(".dataone_info sizes no-<physical> files with one Solr query, HEAD only as fallback", local({
+  # Regression test (2026-10-13 survey): an EML entity with no <physical>
+  # element used to cost one HEAD request per file. One Solr query on the
+  # member node now returns every documented object's size at once; the HEAD
+  # request is kept only for a file the query did not answer for.
+  eml <- paste0(
+    '<eml:eml xmlns:eml="https://eml.ecoinformatics.org/eml-2.2.0"><dataset>',
+    '<title>T</title>',
+    '<otherEntity id="urn-uuid-aaa"><entityName>a.csv</entityName></otherEntity>',
+    '<otherEntity id="urn-uuid-bbb"><entityName>b.csv</entityName></otherEntity>',
+    '<dataTable><physical><objectName>c.csv</objectName><size>5</size>',
+    '<distribution><online><url>https://cn.dataone.org/cn/v2/resolve/urn%3Auuid%3Accc</url>',
+    '</online></distribution></physical></dataTable>',
+    '</dataset></eml:eml>')
+
+  solr_calls <- list()
+  head_calls <- character(0)
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls, ...) {
+      list(httr2::response(status_code = 200, body = charToRaw(eml)))
+    },
+    .dataone_package_sizes = function(host, api_base, pid) {
+      solr_calls[[length(solr_calls) + 1]] <<- c(host, api_base, pid)
+      # urn:uuid:bbb deliberately missing from the reply
+      c("doi:10.5063/F1TEST" = 999, "urn:uuid:aaa" = 10)
+    },
+    .dataone_object_size = function(host, api_base, pid) {
+      head_calls <<- c(head_calls, pid)
+      20
+    }
+  )
+
+  info <- metacheck:::.dataone_info("doi:10.5063/F1TEST",
+                                    host = "knb.ecoinformatics.org")
+  files <- info$files[[1]]
+  sizes <- stats::setNames(vapply(files, \(f) f$size, numeric(1)),
+                           vapply(files, \(f) f$key, character(1)))
+
+  expect_equal(sizes, c(a.csv = 10, b.csv = 20, c.csv = 5))
+  expect_equal(solr_calls, list(c("knb.ecoinformatics.org", "/knb/d1/mn/v2/",
+                                  "doi:10.5063/F1TEST")))
+  expect_equal(head_calls, "urn:uuid:bbb")
+}))
+
+
+test_that(".dataone_package_sizes builds the Solr query and reads its reply", local({
+  seen <- NULL
+  reply <- list(response = list(numFound = 3, docs = list(
+    list(id = "doi:10.5063/F11V5CFN", fileName = "meta.xml", size = 7093),
+    list(id = "urn:uuid:760a24a6-79e6-46d3-a70d-738d8f1355d7",
+         fileName = "Seed_tracking_data.csv", size = 213713),
+    list(id = "urn:uuid:d0f4d60c-70a2-44b0-91c9-9a694ba4d27b",
+         fileName = "Trapping_data.csv", size = 136236))))
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- req$url
+      httr2::response(status_code = 200,
+                      headers = list(`Content-Type` = "application/json"),
+                      body = charToRaw(jsonlite::toJSON(reply, auto_unbox = TRUE)))
+    },
+    .package = "httr2"
+  )
+
+  sizes <- metacheck:::.dataone_package_sizes(
+    "knb.ecoinformatics.org", "/knb/d1/mn/v2/", "doi:10.5063/F11V5CFN")
+  expect_equal(seen, paste0(
+    "https://knb.ecoinformatics.org/knb/d1/mn/v2/query/solr/",
+    "?q=isDocumentedBy%3A%22doi%3A10.5063%2FF11V5CFN%22",
+    "&fl=id,fileName,size&rows=1000&wt=json"))
+  expect_equal(sizes[["urn:uuid:760a24a6-79e6-46d3-a70d-738d8f1355d7"]], 213713)
+  expect_equal(sizes[["urn:uuid:d0f4d60c-70a2-44b0-91c9-9a694ba4d27b"]], 136236)
+
+  # a node without the endpoint (404) or with no connection gives numeric(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) httr2::response(status_code = 404),
+    .package = "httr2"
+  )
+  expect_equal(metacheck:::.dataone_package_sizes("h", "/x/", "doi:1"), numeric(0))
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) stop("connection refused"),
+    .package = "httr2"
+  )
+  expect_equal(metacheck:::.dataone_package_sizes("h", "/x/", "doi:1"), numeric(0))
+}))

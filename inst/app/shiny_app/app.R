@@ -9,7 +9,9 @@
 ##
 ## Deploy by copying this folder to the Shiny Server app directory. The only
 ## file that has to be named app.R is this one; everything else is sourced or
-## served from www/.
+## served from www/. Each report runs in its own R process (see
+## background_job.R), so a long report does not freeze the app for other
+## visitors; progress is shown step by step (see shiny_progress.R).
 ##
 ## See README.md for what this edition can and cannot do, and for the privacy
 ## implications of the optional Groq API-key field.
@@ -22,6 +24,7 @@ suppressPackageStartupMessages({
 })
 
 source("render_report.R")
+source("background_job.R")
 
 # Load server-provided API keys (MISTRAL_API_KEY, GROQ_API_KEY) from a
 # .Renviron in this app directory. Shiny Server does not reliably read a
@@ -171,12 +174,11 @@ explain_error <- function(msg) {
 }
 
 ## --- Concurrency control ---------------------------------------------------
-## Report generation is CPU-bound and blocks a single-threaded R process for its
-## whole duration (GROBID + modules + Quarto). To avoid overload and the
-## silent-disconnect experience under load, we cap how many reports run AT ONCE
-## across the whole server, using an on-disk slot directory as a cross-process
-## semaphore. (Open-source Shiny Server may run the app as several R processes,
-## so an in-memory counter alone would not be global -- the filesystem is.)
+## Each report runs in its own R process (see background_job.R), for its whole
+## duration (GROBID + modules + Quarto). To avoid overload we cap how many
+## reports run AT ONCE across the whole server, using an on-disk slot directory
+## as a cross-process semaphore. A running report refreshes its slot (see
+## bg_watch()), so only a slot left behind by a crashed run goes stale.
 MAX_CONCURRENT_REPORTS <- 4L                 # global cap across all sessions (= core count)
 REPORT_COOLDOWN_SECONDS <- 20                # per-session wait between reports
 SLOT_STALE_SECONDS      <- 600               # reclaim slots from crashed runs
@@ -246,6 +248,72 @@ GROBID_SERVERS <- list(
   huggingface = "https://grobidOrg-grobid.hf.space"
 )
 
+# One report, run in its own R process (see background_job.R): it starts with
+# nothing loaded, so it loads metacheck and the helper files itself. Errors are
+# raised as usual and shown to the user through explain_error(). Returns
+# list(htmlpath, crossref_skipped).
+paper_job <- function(pdf_path, tmp, grobid_url, use_crossref, modules,
+                      use_llm, llm_model, htmlpath) {
+  suppressPackageStartupMessages(library(metacheck))
+  source("render_report.R")
+  source("shiny_progress.R")
+  use_shiny_progress()
+
+  # This process's own LLM setting; the API keys come from the app's process
+  # environment, which this process inherits.
+  metacheck::llm_use(use_llm)
+  if (use_llm) metacheck::llm_model(llm_model)
+
+  progress_step(0.05, "Converting PDF...")
+  json <- metacheck::convert(pdf_path, tmp, crossref_lookup = FALSE,
+                             method = "grobid", api_url = grobid_url)
+
+  # convert() may "succeed" but return NA / no usable file for a corrupt,
+  # scanned, or empty PDF. Catch that before we try to read it.
+  if (length(json) == 0 || all(is.na(json)) ||
+      !any(file.exists(stats::na.omit(as.character(json))))) {
+    stop("Your PDF could not be converted. It may be scanned (image-only), ",
+         "password-protected, corrupted, or not a real PDF. Please upload a ",
+         "text-based PDF of the manuscript.", call. = FALSE)
+  }
+
+  progress_step(0.15, "Reading paper...")
+  paper <- metacheck::read(json)
+
+  # An empty/near-empty conversion reads OK but yields no usable text, so
+  # the report would be blank. The extracted body lives in paper$text
+  # (a data frame of text segments); warn rather than show an empty report.
+  txt <- tryCatch(paper$text, error = function(e) NULL)
+  n_text <- if (is.data.frame(txt)) nrow(txt) else length(txt)
+  if (is.null(n_text) || n_text < 1) {
+    stop("No readable text could be extracted from your PDF. It is likely ",
+         "scanned (image-only) or has no selectable text layer. Please ",
+         "upload a text-based PDF.", call. = FALSE)
+  }
+
+  crossref_skipped <- FALSE
+  if (use_crossref) {
+    progress_step(0.2, "Querying CrossRef (this can take a while)...")
+    # Reference matching is non-essential: a CrossRef hiccup must NOT kill
+    # an otherwise-good report. Degrade gracefully.
+    paper <- tryCatch(metacheck::add_bib_match(paper), error = function(e) {
+      crossref_skipped <<- TRUE
+      paper
+    })
+  }
+
+  # The modules fill the bar from 30% to 90%, with a line under it for every
+  # step metacheck reports (see shiny_progress.R), labelled by module title.
+  labels <- vapply(modules, function(m) {
+    tryCatch(metacheck::module_info(m)$title, error = function(e) m) %||% m
+  }, character(1))
+  shiny_progress_modules(stats::setNames(labels, modules), from = 0.3, to = 0.9)
+  render_report_no_quarto(paper, modules, htmlpath)
+
+  progress_step(0.95, "Securing report...")
+  list(htmlpath = htmlpath, crossref_skipped = crossref_skipped)
+}
+
 # LLM providers offered for the optional power check. Each entry defines the
 # ellmer "provider/model" string, the env var holding the API key, the place to
 # get a key, and a short region/privacy note. Mistral (France, EU) is the
@@ -311,8 +379,11 @@ report_tab <- tabItem(
     "."
   ),
   tags$p(
-    "Select a PDF file below. The report will be generated automatically ",
-    "using all validated modules. When it is ready, a ",
+    "Select a PDF file below. The report will be generated automatically. ",
+    "Three modules that can take a lot of time (reference accuracy, data ",
+    "check, and codebook check) are turned off by default. You can include ",
+    "these checks by updating the options (but be patient when running the ",
+    "checks). When it is ready, a ",
     tags$b("View Report"), " button will appear — click it to open the report ",
     "in a new browser tab."
   ),
@@ -373,12 +444,18 @@ options_tab <- tabItem(
     ),
 
     tags$div(class = "report-checks",
-      checkboxInput("query_crossref", "Query CrossRef", value = TRUE),
-      tags$span("Send full references to CrossRef API"),
+      checkboxInput("query_crossref",
+                    "Query CrossRef and run reference accuracy check",
+                    value = FALSE),
+      tags$span("Send full references to CrossRef API (can take a while)"),
       checkboxInput("query_pubpeer", "Query PubPeer", value = TRUE),
       tags$span("Send reference DOIs to PubPeer API"),
       checkboxInput("query_repos", "Query Data Repositories", value = TRUE),
-      tags$span("Use API to query repositories such as GitHub, Zenodo, and the OSF")
+      tags$span("Use API to query repositories such as GitHub, Zenodo, and the OSF"),
+      checkboxInput("query_data_codebook",
+                    "Run data check and codebook check",
+                    value = FALSE),
+      tags$span("Checks the data files and codebook in linked repositories (can take several minutes)")
     ),
 
     tags$hr(),
@@ -555,6 +632,9 @@ server <- function(input, output, session) {
   })
 
   ### Generate report on upload ---------------------------------------------
+  # Stops this session's running report, if any (set below).
+  stop_job <- NULL
+
   observeEvent(input$upload_pdf, {
     req(input$upload_pdf)
 
@@ -593,137 +673,107 @@ server <- function(input, output, session) {
     htmlpath <- tempfile(fileext = ".html")
     tmp <- tempfile(); dir.create(tmp, showWarnings = FALSE)
 
-    # Decide LLM use for this run. The provider's API key is supplied by the
-    # server (loaded from .Renviron into the process env), not by the user.
-    prov     <- llm_provider()
-    use_llm  <- isTRUE(input$use_llm)
-
-    tryCatch({
-      use_crossref <- isTRUE(input$query_crossref)
-
-      if (use_llm) {
-        if (!nzchar(Sys.getenv(prov$key_env))) {
-          stop(sprintf("The LLM power check is enabled for %s, but this server ",
-                       prov$label),
-               sprintf("has no %s configured. Choose another provider or ",
-                       prov$key_env),
-               "disable the LLM power check.", call. = FALSE)
-        }
-        metacheck::llm_use(TRUE)
-        metacheck::llm_model(prov$model)
-      } else {
-        metacheck::llm_use(FALSE)
-      }
-
-      withProgress(message = "Generating report", value = 0, {
-        incProgress(0.15, detail = "Converting PDF...")
-        grobid_args <- list(method = "grobid",
-                            api_url = GROBID_SERVERS[[input$grobid_server_choice]])
-        json <- do.call(metacheck::convert,
-                        c(list(files$datapath, tmp, crossref_lookup = FALSE),
-                          grobid_args))
-
-        # convert() may "succeed" but return NA / no usable file for a corrupt,
-        # scanned, or empty PDF. Catch that before we try to read it.
-        if (length(json) == 0 || all(is.na(json)) ||
-            !any(file.exists(stats::na.omit(as.character(json))))) {
-          stop("Your PDF could not be converted. It may be scanned (image-only), ",
-               "password-protected, corrupted, or not a real PDF. Please upload a ",
-               "text-based PDF of the manuscript.", call. = FALSE)
-        }
-
-        incProgress(0.15, detail = "Reading paper...")
-        paper <- metacheck::read(json)
-
-        # An empty/near-empty conversion reads OK but yields no usable text, so
-        # the report would be blank. The extracted body lives in paper$text
-        # (a data frame of text segments); warn rather than show an empty report.
-        txt <- tryCatch(paper$text, error = function(e) NULL)
-        n_text <- if (is.data.frame(txt)) nrow(txt) else length(txt)
-        if (is.null(n_text) || n_text < 1) {
-          stop("No readable text could be extracted from your PDF. It is likely ",
-               "scanned (image-only) or has no selectable text layer. Please ",
-               "upload a text-based PDF.", call. = FALSE)
-        }
-
-        if (use_crossref) {
-          incProgress(0.2, detail = "Querying CrossRef (this can take a while)...")
-          # Reference matching is non-essential: a CrossRef hiccup must NOT kill
-          # an otherwise-good report. Degrade gracefully.
-          paper <- tryCatch(
-            metacheck::add_bib_match(paper),
-            error = function(e) {
-              showNotification(
-                "Reference lookup (CrossRef) was skipped (slow or unavailable); the rest of the report was still generated.",
-                type = "warning", duration = 8)
-              paper
-            })
-        }
-
-        incProgress(if (use_crossref) 0.2 else 0.4, detail = "Running modules...")
-        modules <- VALIDATED_MODULES
-        if (!isTRUE(input$query_pubpeer)) modules <- setdiff(modules, "ref_pubpeer")
-        # ref_accuracy needs the CrossRef bib_match table to compare against
-        if (!use_crossref) modules <- setdiff(modules, "ref_accuracy")
-        if (!isTRUE(input$query_repos))
-          modules <- setdiff(modules, c("repo_check", "code_check",
-                                        "data_check", "codebook_check"))
-
-        incProgress(0.15, detail = "Rendering HTML (Quarto)...")
-        render_report_no_quarto(paper, modules, htmlpath)
-
-        incProgress(0.1, detail = "Securing report...")
-        # Read the self-contained HTML into memory, then delete it from disk
-        # immediately so no report file lingers and nothing is served as a
-        # static file. (Quarto must write a file to render; we don't keep it.)
-        bytes <- readBin(htmlpath, "raw", n = file.info(htmlpath)$size)
-        report_html(bytes)
-        unlink(htmlpath)
-
-        incProgress(0.05, detail = "Done!")
-
-        # Anonymous usage statistics: one finished report, and how many check
-        # modules produced it. Recorded here, after the render succeeded, so a
-        # failed attempt is not counted as a report. Nothing about the paper
-        # itself is recorded.
-        usage_record("report", 1L, length(modules))
-      })
-
-      # Register a session-scoped, in-memory endpoint that streams the bytes.
-      # The URL is unguessable and only valid for this Shiny session; nothing
-      # touches disk. We re-register on each run to get a fresh URL.
-      url <- session$registerDataObj(
-        name = "metacheck_report",
-        data = report_html(),
-        filter = function(data, req) {
-          shiny::httpResponse(
-            200, "text/html; charset=utf-8", data
-          )
-        }
-      )
-      report_url(url)
-      # Show the report automatically, the way the local desktop app does -- but
-      # WITHOUT window.open(). A new browser tab opened after an async render
-      # (not a direct click) is killed by popup blockers. Instead we switch to
-      # an in-app "Report" tab that holds an iframe pointing at the in-memory
-      # endpoint; that needs no popup and no user gesture, so it "just appears".
-      updateTabItems(session, "tabs", "report_view_tab")
-    }, error = function(e) {
-      report_error(explain_error(conditionMessage(e)))
-    }, finally = {
+    # Runs once, when the report ends in any way (done, failed, or the
+    # visitor left).
+    cleanup <- function() {
       # Release the global capacity slot and start this session's cooldown.
       report_slot_release(slot)
       last_finished(as.numeric(Sys.time()))
-      # Keys are server-provided via .Renviron (persist for the process); we
-      # only reset the LLM toggle state for metacheck here.
-      metacheck::llm_use(FALSE)
       report_running(FALSE)
       # Delete the uploaded PDF and ALL render intermediates (qmd, figures,
       # any stray html) right now -- not just at session end.
       unlink(tmp, recursive = TRUE)
       if (!is.null(files$datapath)) unlink(files$datapath)
       if (file.exists(htmlpath)) unlink(htmlpath)
-    })
+      stop_job <<- NULL
+    }
+
+    # Decide LLM use for this run. The provider's API key is supplied by the
+    # server (loaded from .Renviron into the process env), not by the user.
+    prov     <- llm_provider()
+    use_llm  <- isTRUE(input$use_llm)
+    if (use_llm && !nzchar(Sys.getenv(prov$key_env))) {
+      report_error(explain_error(paste0(
+        sprintf("The LLM power check is enabled for %s, but this server ", prov$label),
+        sprintf("has no %s configured. Choose another provider or ", prov$key_env),
+        "disable the LLM power check.")))
+      cleanup()
+      return(invisible())
+    }
+
+    use_crossref <- isTRUE(input$query_crossref)
+    modules <- VALIDATED_MODULES
+    if (!isTRUE(input$query_pubpeer)) modules <- setdiff(modules, "ref_pubpeer")
+    # ref_accuracy needs the CrossRef bib_match table to compare against
+    if (!use_crossref) modules <- setdiff(modules, "ref_accuracy")
+    if (!isTRUE(input$query_repos))
+      modules <- setdiff(modules, c("repo_check", "code_check",
+                                    "data_check", "codebook_check"))
+    # data_check/codebook_check are the slowest modules (can take several
+    # minutes), so they are opt-in even when repositories are queried.
+    if (!isTRUE(input$query_data_codebook))
+      modules <- setdiff(modules, c("data_check", "codebook_check"))
+
+    # The report itself is made in its own R process (paper_job(), via
+    # background_job.R), so this app stays responsive for other visitors.
+    job <- bg_start(paper_job, list(
+      pdf_path = files$datapath, tmp = tmp,
+      grobid_url = GROBID_SERVERS[[input$grobid_server_choice]],
+      use_crossref = use_crossref, modules = modules,
+      use_llm = use_llm, llm_model = prov$model, htmlpath = htmlpath
+    ))
+    stop_watch <- bg_watch(job, session, "Generating report",
+      heartbeat = slot, max_minutes = 30,
+      on_done = function(result) {
+        if (isTRUE(result$crossref_skipped)) {
+          showNotification(
+            "Reference lookup (CrossRef) was skipped (slow or unavailable); the rest of the report was still generated.",
+            type = "warning", duration = 8)
+        }
+        # Read the self-contained HTML into memory, then delete it from disk
+        # immediately so no report file lingers and nothing is served as a
+        # static file. (Quarto must write a file to render; we don't keep it.)
+        report_html(readBin(result$htmlpath, "raw",
+                            n = file.info(result$htmlpath)$size))
+        unlink(result$htmlpath)
+
+        # Anonymous usage statistics: one finished report, and how many check
+        # modules produced it. Recorded here, after the render succeeded, so a
+        # failed attempt is not counted as a report. Nothing about the paper
+        # itself is recorded.
+        usage_record("report", 1L, length(modules))
+
+        # Register a session-scoped, in-memory endpoint that streams the bytes.
+        # The URL is unguessable and only valid for this Shiny session; nothing
+        # touches disk. We re-register on each run to get a fresh URL.
+        url <- session$registerDataObj(
+          name = "metacheck_report",
+          data = report_html(),
+          filter = function(data, req) {
+            shiny::httpResponse(
+              200, "text/html; charset=utf-8", data
+            )
+          }
+        )
+        report_url(url)
+        # Show the report automatically, the way the local desktop app does --
+        # but WITHOUT window.open(). A new browser tab opened after an async
+        # render (not a direct click) is killed by popup blockers. Instead we
+        # switch to an in-app "Report" tab that holds an iframe pointing at the
+        # in-memory endpoint; that needs no popup and no user gesture, so it
+        # "just appears".
+        updateTabItems(session, "tabs", "report_view_tab")
+        cleanup()
+      },
+      on_error = function(msg) {
+        report_error(explain_error(msg))
+        cleanup()
+      }
+    )
+    stop_job <<- function() {
+      stop_watch()
+      cleanup()
+    }
   }, ignoreNULL = TRUE)
 
   ### Report status ----------------------------------------------------------
@@ -808,10 +858,10 @@ server <- function(input, output, session) {
   output$report_dl  <- report_download   # on Create Report tab
   output$report_dl2 <- report_download   # on Report tab
 
-  # Reset the LLM flag if the session ends mid-run. (Keys are server-provided
-  # via .Renviron and intentionally persist for the process.)
+  # A visitor who leaves mid-report frees the server: the report's process is
+  # stopped and its slot and files are released.
   session$onSessionEnded(function() {
-    metacheck::llm_use(FALSE)
+    if (!is.null(stop_job)) stop_job()
   })
 }
 

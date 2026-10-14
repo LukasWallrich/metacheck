@@ -34,7 +34,9 @@ test_that(".psycharchives_info", {
   expect_equal(info$pa_url, url)
   expect_match(info$PA_title, "International Cognitive Ability Resource")
   expect_match(info$PA_authors, "Doebler")
-  expect_match(info$PA_license, "restrictedAccess")
+  # dc.rights is the access level; the licence is dc.rights.license
+  expect_equal(info$PA_rights, "restrictedAccess")
+  expect_equal(info$PA_license, "Terms for individual files apply")
 
   files <- info$files[[1]]
   # only public bitstreams are returned by the API (readme is public; the
@@ -65,4 +67,104 @@ test_that("psycharchives_file_download", {
   rights <- attr(files, "rights")
   expect_equal(unname(rights), "restrictedAccess")
   expect_equal(names(rights), url)
+  # the licence travels separately from the access level
+  license <- attr(files, "license")
+  expect_equal(unname(license), "Terms for individual files apply")
+  expect_equal(names(license), url)
 }, "mock")
+
+
+# The test bodies below are wrapped in local(): helper.R's test_that()
+# wrapper evaluates a test's code in the test FILE's environment, so a
+# withr/testthat local_*() call made directly in it would stay in force
+# until the end of the file instead of the end of the test.
+
+test_that(".psycharchives_info reads metadata and bitstreams from one request", local({
+  # /rest/handle/<handle>?expand=metadata,bitstreams returns the item, its
+  # metadata and its bitstreams together (verified 2026-10-13; it used to
+  # take three requests). The recorded response is used here.
+  rest <- metacheck:::.psycharchives_rest
+  calls <- character(0)
+  local_mocked_bindings(.psycharchives_rest = function(path, host = "www.psycharchives.org") {
+    calls <<- c(calls, path)
+    rest(path, host)
+  })
+  info <- .psycharchives_info("https://hdl.handle.net/20.500.12034/17526")
+  expect_equal(calls, "/handle/20.500.12034/17526?expand=metadata,bitstreams")
+  expect_equal(info$files[[1]]$name, "readme.txt")
+  expect_equal(info$PA_rights, "restrictedAccess")
+}), "mock")
+
+test_that(".psycharchives_info falls back to separate requests when expand is ignored", local({
+  seen <- character(0)
+  base <- "https://www.psycharchives.org/rest"
+  httr2::local_mocked_responses(function(req) {
+    seen <<- c(seen, req$url)
+    # the shape a server that ignores `expand` sends: both fields null
+    if (startsWith(req$url, paste0(base, "/handle/")))
+      return(httr2::response(
+        headers = list(`Content-Type` = "application/json"),
+        body = charToRaw('{"uuid":"u-1","name":"An item","metadata":null,"bitstreams":null}')))
+    if (req$url == paste0(base, "/items/u-1?expand=metadata"))
+      return(httr2::response_json(body = list(metadata = list(
+        list(key = "dc.rights", value = "openAccess"),
+        list(key = "dc.rights.uri",
+             value = "https://creativecommons.org/licenses/by/4.0/")))))
+    if (req$url == paste0(base, "/items/u-1/bitstreams?limit=1000"))
+      return(httr2::response_json(body = list(list(
+        name = "data.csv", sizeBytes = 10, retrieveLink = "/rest/bitstreams/b-1/retrieve"))))
+    httr2::response(status_code = 404)
+  })
+  info <- .psycharchives_info("https://hdl.handle.net/20.500.12034/1")
+  expect_length(seen, 3)
+  expect_equal(info$PA_rights, "openAccess")
+  # no dc.rights.license, so the licence address is used
+  expect_equal(info$PA_license, "https://creativecommons.org/licenses/by/4.0/")
+  expect_equal(info$files[[1]]$retrieve, "https://www.psycharchives.org/rest/bitstreams/b-1/retrieve")
+}))
+
+test_that(".psycharchives_info accepts a DSpace 5 item, which has an id instead of a uuid", local({
+  # datastorre.stir.ac.uk runs DSpace 5 (verified 2026-10-13): items carry a
+  # numeric `id` and no `uuid`, and retrieveLink is given from the REST root
+  # ("/bitstreams/<id>/retrieve"), which only answers under /rest.
+  httr2::local_mocked_responses(function(req) {
+    httr2::response_json(body = list(
+      id = 392, name = "Model output", type = "item",
+      metadata = list(list(key = "dc.rights", value = "CC-BY 4.0")),
+      bitstreams = list(list(name = "Table S1.docx", sizeBytes = 116140,
+                             bundleName = "ORIGINAL",
+                             retrieveLink = "/bitstreams/2030/retrieve"))))
+  })
+  info <- .psycharchives_info("https://datastorre.stir.ac.uk/handle/11667/141")
+  expect_false("error" %in% names(info))
+  expect_equal(info$PA_title, "Model output")
+  # here dc.rights holds the licence itself, not an access level
+  expect_equal(info$PA_license, "CC-BY 4.0")
+  expect_equal(info$files[[1]]$retrieve,
+               "https://datastorre.stir.ac.uk/rest/bitstreams/2030/retrieve")
+}))
+
+test_that(".psycharchives_info lists only the files the author deposited", local({
+  # DSpace adds its own bundles next to ORIGINAL: LICENSE (the deposit
+  # agreement), TEXT (text extracted from PDFs) and THUMBNAIL (previews).
+  # Only ORIGINAL is what the author shared (as for DSpace 7); a bitstream
+  # without a bundleName is kept.
+  httr2::local_mocked_responses(function(req) {
+    bs <- function(name, bundle) {
+      b <- list(name = name, sizeBytes = 1,
+                retrieveLink = paste0("/rest/bitstreams/", name, "/retrieve"))
+      if (!is.na(bundle)) b$bundleName <- bundle
+      b
+    }
+    httr2::response_json(body = list(
+      uuid = "u-2", name = "An item",
+      metadata = list(list(key = "dc.rights", value = "openAccess")),
+      bitstreams = list(bs("data.csv", "ORIGINAL"), bs("license.txt", "LICENSE"),
+                        bs("paper.pdf.txt", "TEXT"), bs("paper.pdf.jpg", "THUMBNAIL"),
+                        bs("analysis.R", NA))))
+  })
+  info <- .psycharchives_info("https://hdl.handle.net/20.500.12034/2")
+  expect_equal(info$files[[1]]$name, c("data.csv", "analysis.R"))
+  # an access term in dc.rights is never reported as the licence
+  expect_true(is.na(info$PA_license))
+}))

@@ -8,7 +8,8 @@
   url,
   dest,
   keep_types = c("data", "documentation"),
-  max_file_size = 10
+  max_file_size = 10,
+  size = NULL
 )
 }
 \arguments{
@@ -22,6 +23,13 @@ documentation and skips materials, matching \code{\link[=zip_decision]{zip_decis
 
 \item{max_file_size}{largest member to extract (in MB), applied per member
 exactly as the article-level cap is applied per file}
+
+\item{size}{the zip's size in bytes as the article lists it, or \code{NULL}.
+Passed on to \code{\link[=zip_peek]{zip_peek()}}, which otherwise sends a \code{HEAD} request to learn
+it -- and a Figshare \code{download_url} redirects to a signed Amazon S3
+address that answers \code{HEAD} with 403 (verified 2026-10-13 on file
+51618395), so without the size every peek began with a request that
+could only fail.}
 }
 \value{
 a data frame with one row per extracted member (\code{name}, \code{path},

@@ -9,6 +9,10 @@
 ##
 ## Deploy by copying this folder to the Shiny Server app directory (a sibling
 ## of the PDF report app). Quarto is shared with that app (see render_report.R).
+## The report is metacheck's brief report plus a folded file tree (see
+## brief_report.R); progress is shown step by step (see shiny_progress.R).
+## Each check runs in its own R process (see background_job.R), so a long
+## check does not freeze the app for other visitors.
 
 suppressPackageStartupMessages({
   library(shiny)
@@ -18,6 +22,7 @@ suppressPackageStartupMessages({
 })
 
 source("render_report.R")
+source("background_job.R")
 
 ## --- limits -----------------------------------------------------------------
 # Sized for the shared server (~196 GB disk, 4 cores). The worst case on disk
@@ -34,6 +39,33 @@ CHECK_COOLDOWN_SECONDS <- 30
 SLOT_STALE_SECONDS     <- 1800   # repository checks can run much longer than PDFs
 
 MODULES <- c("repo_check", "code_check", "data_check")
+
+# What the progress bar says while each module runs.
+MODULE_LABELS <- c(
+  repo_check = "Listing the repository's files",
+  code_check = "Downloading and checking code files",
+  data_check = "Downloading and checking data files"
+)
+
+# One check, run in its own R process (see background_job.R): it starts with
+# nothing loaded, so it loads metacheck and the helper files itself. Returns
+# the path of the rendered report.
+repocheck_job <- function(paper, modules, labels, args, htmlpath, cache_dir) {
+  suppressPackageStartupMessages(library(metacheck))
+  source("render_report.R")
+  source("brief_report.R")
+  source("shiny_progress.R")
+  use_shiny_progress()
+  progress_step(0.05, "Starting the check...")
+  # Keep every file metacheck downloads inside this check's own folder.
+  options(metacheck.repo_cache.dir = cache_dir)
+  # The modules fill the bar from 10% to 90%, with a line under it for every
+  # step metacheck reports (see shiny_progress.R).
+  shiny_progress_modules(labels, from = 0.1, to = 0.9)
+  render_brief_report(paper, modules, htmlpath, args = args)
+  progress_step(0.95, "Preparing the report for display...")
+  htmlpath
+}
 
 options(shiny.maxRequestSize = MAX_UPLOAD_MB * 1024^2,
         scipen = 10,
@@ -217,6 +249,11 @@ check_tab <- tabItem(
     " (data files and codebooks). No manuscript is needed."
   ),
   tags$p(
+    "The report is short: it lists only the checks that found something to ",
+    "improve, and what to change. The repository's files are listed in a ",
+    "folded section you can open."
+  ),
+  tags$p(
     "See the ",
     tags$a("Metacheck Manual", href = "https://www.scienceverse.org/metacheck_book", target = "_blank"),
     " for what each check does. You can report ",
@@ -334,9 +371,18 @@ server <- function(input, output, session) {
     } else NULL
   })
 
+  # Stops this session's running check, if any (set by run_check()).
+  stop_job <- NULL
+  # A visitor who leaves mid-check frees the server: the check's process is
+  # stopped and its slot and files are released.
+  session$onSessionEnded(function() {
+    if (!is.null(stop_job)) stop_job()
+  })
+
   # Shared runner for both inputs. `prepare(workdir)` returns
   # list(paper = , args = ) and may put files in `workdir`, which is always
-  # deleted afterwards.
+  # deleted afterwards. The check itself runs in its own R process
+  # (repocheck_job(), via background_job.R), so this app stays responsive.
   run_check <- function(prepare, cleanup_paths = character(0)) {
     if (isTRUE(running())) {
       showNotification("A check is already running in this session. Please wait for it to finish.",
@@ -368,42 +414,54 @@ server <- function(input, output, session) {
     report_html(NULL); report_url(""); check_error(""); running(TRUE)
     workdir  <- tempfile("repocheck_"); dir.create(workdir)
     htmlpath <- tempfile(fileext = ".html")
-    # Keep every file metacheck downloads inside this job's folder.
-    old_opts <- options(metacheck.repo_cache.dir = file.path(workdir, "cache"))
 
-    tryCatch({
-      withProgress(message = "Checking repository", value = 0, {
-        incProgress(0.1, detail = "Preparing...")
-        job <- prepare(workdir)
-
-        incProgress(0.2, detail = "Listing, downloading and checking files (this can take a while)...")
-        render_report_no_quarto(job$paper, MODULES, htmlpath, args = job$args)
-
-        incProgress(0.6, detail = "Securing report...")
-        bytes <- readBin(htmlpath, "raw", n = file.info(htmlpath)$size)
-        report_html(bytes)
-        unlink(htmlpath)
-        incProgress(0.1, detail = "Done!")
-        usage_record("report", 1L, length(MODULES))
-      })
-
-      url <- session$registerDataObj(
-        name = "metacheck_repo_report", data = report_html(),
-        filter = function(data, req) shiny::httpResponse(200, "text/html; charset=utf-8", data)
-      )
-      report_url(url)
-      updateTabItems(session, "tabs", "report_view_tab")
-    }, error = function(e) {
-      check_error(explain_error(conditionMessage(e)))
-    }, finally = {
-      options(old_opts)
+    # Runs once, when the check ends in any way (done, failed, or the
+    # visitor left).
+    cleanup <- function() {
       slot_release(slot)
       last_finished(as.numeric(Sys.time()))
       running(FALSE)
       unlink(workdir, recursive = TRUE, force = TRUE)
       unlink(cleanup_paths)
       if (file.exists(htmlpath)) unlink(htmlpath)
-    })
+      stop_job <<- NULL
+    }
+
+    # Preparing is quick (building the paper object; for a .zip, checking and
+    # unpacking it), so it stays in this process, where its errors are shown.
+    prepared <- tryCatch(prepare(workdir), error = function(e) e)
+    if (inherits(prepared, "error")) {
+      check_error(explain_error(conditionMessage(prepared)))
+      cleanup()
+      return(invisible())
+    }
+
+    job <- bg_start(repocheck_job, list(
+      paper = prepared$paper, modules = MODULES,
+      labels = MODULE_LABELS[MODULES], args = prepared$args,
+      htmlpath = htmlpath, cache_dir = file.path(workdir, "cache")
+    ))
+    stop_watch <- bg_watch(job, session, "Checking repository",
+      heartbeat = slot, max_minutes = 60,
+      on_done = function(path) {
+        report_html(readBin(path, "raw", n = file.info(path)$size))
+        usage_record("report", 1L, length(MODULES))
+        report_url(session$registerDataObj(
+          name = "metacheck_repo_report", data = report_html(),
+          filter = function(data, req) shiny::httpResponse(200, "text/html; charset=utf-8", data)
+        ))
+        updateTabItems(session, "tabs", "report_view_tab")
+        cleanup()
+      },
+      on_error = function(msg) {
+        check_error(explain_error(msg))
+        cleanup()
+      }
+    )
+    stop_job <<- function() {
+      stop_watch()
+      cleanup()
+    }
   }
 
   observeEvent(input$run_url, {

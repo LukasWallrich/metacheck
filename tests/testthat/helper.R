@@ -78,7 +78,18 @@ cbc_run <- function(d, paper = test_paper("x"), ...) {
 }
 
 # mock function
+#
+# The test body is handed to testthat::test_that() as the UNEVALUATED
+# expression the caller wrote, evaluated in the caller's environment. Passing
+# `code` itself (as this wrapper used to) gave testthat only the symbol
+# `code`: testthat then forced that promise in the TEST FILE's environment
+# instead of a fresh per-test one, so every local_mocked_bindings() and
+# withr::defer() inside a test lasted until the end of the file rather than
+# the end of the test -- a mock from one test was seen still active in the
+# next (found 2026-10-13 while adding DataONE tests).
 test_that <- function(desc, code, mock = "none") {
+  test_env <- parent.frame()
+  test_call <- bquote(testthat::test_that(.(desc), .(substitute(code))))
   Sys.setenv("MOCK_CAPTURE" = "FALSE")
   if (mock == "mock") {
     httptest2::use_mock_api()
@@ -90,7 +101,7 @@ test_that <- function(desc, code, mock = "none") {
   }
 
   # message the test description on elapsed time > 4
-  time <- system.time( testthat::test_that(desc, code) )
+  time <- system.time(eval(test_call, envir = test_env))
   s <- round(time[['elapsed']], 1)
   if (s > 4) message(s, ": ", desc)
 }

@@ -10,10 +10,12 @@ test_that(".paper_schema", {
   schema <- .paper_schema()
   expect_contains(names(schema), c("$schema", "$defs"))
 
-  # check the same version as online
+  # check the same version as online. Since 2026-10-13 (scienceverse/schema#2)
+  # paper.json is bibr's 12.2 export schema; the 10.5 schema metacheck bundles
+  # is kept, unchanged, at paper-v10.5.json.
   skip_if_offline("scienceverse.org")
   skip_on_cran()
-  url <- "https://scienceverse.org/schema/paper.json"
+  url <- "https://scienceverse.org/schema/paper-v10.5.json"
   sv_schema <- jsonlite::read_json(url, simplifyVector = TRUE)
 
   # metacheck bundles the published schema with ONE deliberate relaxation:

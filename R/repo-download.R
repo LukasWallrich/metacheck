@@ -192,6 +192,12 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
 # underestimate the archive; the byte limit enforced during the download is
 # what actually bounds it. A zip is compressed, which pulls the other way.
 .archive_size_estimate <- function(files, repo) {
+  # A repository's own total, where its listing reports one (Dryad's
+  # storageSize, carried by repo_check as `repo_size`), is used first: it does
+  # not depend on `files` holding every row, which the sum below does.
+  total <- suppressWarnings(as.numeric(files$repo_size[files$repo_url == repo]))
+  total <- total[is.finite(total) & total > 0]
+  if (length(total) > 0) return(max(total))
   est <- sum(as.numeric(files$file_size[files$repo_url == repo]), na.rm = TRUE)
   if (est > 0) est else NA_real_
 }
@@ -1328,15 +1334,31 @@ download_repo_files <- function(files,
                                                 file.path(".archive_members", arc_key)))
         member_dest <- .safe_write_path(paste0(arc_path, ".contents"))
         dir.create(member_dest, showWarnings = FALSE, recursive = TRUE)
-        # Dryad counts every request against a strict daily quota, and a
-        # per-member fetch costs two requests per member (issue #471): for a
-        # Dryad archive within this archive's budget, download it once and
-        # extract the members locally instead (.zip_fetch_members()'s
-        # whole-archive mode). The archive is kept at `arc_path` (the
-        # ".contents" directory's own name without the suffix, mirroring
-        # .expand_zip()) so a restarted run does not request it again. Other
-        # hosts keep the per-member fetch, which transfers fewer bytes.
-        whole_bytes <- if (grepl("datadryad\\.org", arc, ignore.case = TRUE)) cap_bytes else 0
+        # An archive within this archive's budget may be downloaded once and
+        # the members extracted locally instead of fetched by byte range
+        # (.zip_fetch_members()'s whole-archive mode). The archive is kept at
+        # `arc_path` (the ".contents" directory's own name without the
+        # suffix, mirroring .expand_zip()) so a restarted run does not
+        # request it again.
+        #
+        # This used to be done for Dryad only. Every other host fetched
+        # member by member, which is far slower whenever many members are
+        # wanted from a small archive: data_check on Figshare article
+        # 33065816 made 38 range requests for 19 members (23 s), where one
+        # download of the 1.3 MB zip takes one request (~1 s); a Zenodo zip
+        # of ~2,732 entries would have cost ~194 requests (measured
+        # 2026-10-13). Every host now gets whichever is cheaper
+        # (.zip_whole_is_cheaper()). Dryad keeps taking the archive whenever
+        # it fits the budget (`request_bytes = Inf`, counting requests only),
+        # because Dryad counts every request against a strict daily quota
+        # (issue #471).
+        whole_bytes <- cap_bytes
+        request_bytes <- if (grepl("datadryad\\.org", arc, ignore.case = TRUE)) Inf else 1048576
+        # The archive's own size, carried from repo_check's listing, saves
+        # zip_peek() a HEAD request when this runs in a new session (within
+        # one run the peek is already cached).
+        arc_size <- if ("archive_size" %in% names(files))
+          suppressWarnings(as.numeric(files$archive_size[idx[1]])) else NULL
         # Record what actually went wrong instead of discarding it: a bare
         # `next` here left every member of `arc` at file_location = NA with no
         # trace of why, so a transient failure worth retrying and a host that
@@ -1345,7 +1367,8 @@ download_repo_files <- function(files,
         fetched <- tryCatch(
           .zip_fetch_members(arc, names = files$archive_member[idx], dest = member_dest,
                             cache = cache, skip_on_api_limit = skip_on_api_limit,
-                            max_whole_bytes = whole_bytes, archive_path = arc_path),
+                            max_whole_bytes = whole_bytes, archive_path = arc_path,
+                            request_bytes = request_bytes, size = arc_size),
           error = function(e) conditionMessage(e))
         if (is.character(fetched)) {
           failed <- rbind(failed, data.frame(
@@ -1588,9 +1611,18 @@ download_repo_files <- function(files,
     # requests each, one per file), which is what was driving the 429s seen at
     # corpus scale -- not a missing token (file_url downloads were already
     # authorised correctly by .auth_for_url()).
-    dryad_repos <- unique(files$repo_url[
-      remaining[grepl("datadryad\\.org|doi\\.org/10\\.5061/dryad",
-                      files$repo_url[remaining], ignore.case = TRUE)]])
+    #
+    # The same applied to the form of the DOI: matching
+    # "doi.org/10.5061/dryad" still missed a dataset cited by one of Dryad's
+    # other DOI prefixes (e.g. 10.25338/B8N33J, see .dryad_doi_prefixes()) or
+    # as a bare "10.5061/dryad.x" with no doi.org in front, and those fell
+    # back to file-by-file. Any repo_url .dryad_doi() can read a Dryad DOI from
+    # is now taken, the same test the loop below already applied.
+    cand_repos <- unique(files$repo_url[remaining])
+    dryad_repos <- cand_repos[vapply(cand_repos, function(r) {
+      doi <- tryCatch(.dryad_doi(r), error = \(e) NA_character_)
+      length(doi) == 1 && !is.na(doi) && nzchar(doi)
+    }, logical(1), USE.NAMES = FALSE)]
     for (repo in dryad_repos) {
       ridx <- intersect(remaining, which(files$repo_url == repo))
       if (length(ridx) == 0) next
@@ -1675,7 +1707,11 @@ download_repo_files <- function(files,
     for (repo in gh_repos) {
       ridx <- intersect(remaining, which(files$repo_url == repo))
       if (length(ridx) == 0) next
-      clean_repo <- tryCatch(github_repo(repo), error = \(e) NULL)
+      # The name only, without github_repo()'s HEAD request to github.com: the
+      # repository was already confirmed when it was listed, and the zipball
+      # request below answers 404 by itself (one request saved per repository,
+      # 2026-10-13).
+      clean_repo <- tryCatch(.github_repo_name(repo), error = \(e) NULL)
       if (is.null(clean_repo)) next
       # Omitting the ref makes GitHub use the default branch.
       zip_url <- sprintf("https://api.github.com/repos/%s/zipball", clean_repo)
@@ -1710,7 +1746,9 @@ download_repo_files <- function(files,
     for (repo in gl_repos) {
       ridx <- intersect(remaining, which(files$repo_url == repo))
       if (length(ridx) == 0) next
-      clean_repo <- tryCatch(gitlab_repo(repo), error = \(e) NULL)
+      # The path only, without gitlab_repo()'s HEAD request (see the GitHub
+      # loop above for why).
+      clean_repo <- tryCatch(.gitlab_repo_path(repo), error = \(e) NULL)
       if (is.null(clean_repo)) next
       proj_id <- .gitlab_project_id(clean_repo)
       # Omitting sha makes GitLab use the default branch.

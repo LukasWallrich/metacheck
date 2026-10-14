@@ -393,3 +393,35 @@ test_that("repo_check local_only = TRUE without local_path ignores multiple onli
   expect_equal(mo$traffic_light, "na")
   expect_equal(mo$summary_table$repo_n, 0)
 })
+
+# repo_check() + a zip inside a ResearchBox ----
+# A ResearchBox row carries the box's web page as file_url and the copy
+# unpacked from the box's zip as file_location. A zip inside the box used to be
+# peeked at the web page (which answers a Range request with 406, verified
+# 2026-10-13); it is now listed from the local copy, with no request.
+.real_rbox_file_download <- get("rbox_file_download", envir = asNamespace("metacheck"),
+                                inherits = FALSE)
+test_that("a zip inside a ResearchBox is listed from its local copy", {
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "Data"))
+  writeLines("id,x\n1,2", file.path(d, "Data", "study1.csv"))
+  writeLines("x <- 1", file.path(d, "analysis.R"))
+  withr::with_dir(d, utils::zip("inner.zip", c("Data/study1.csv", "analysis.R"),
+                                flags = "-q"))
+  skip_if_not(file.exists(file.path(d, "inner.zip")), "zip utility unavailable")
+  box <- "https://researchbox.org/99999"
+  local_mocked_bindings(rbox_file_download = function(rb_url, pb = NULL) {
+    data.frame(rb_url = box, name = "ResearchBox 99999/inner.zip",
+               file_location = file.path(d, "inner.zip"),
+               size = file.size(file.path(d, "inner.zip")), type = "archive",
+               isdir = FALSE, stringsAsFactors = FALSE)
+  })
+  httr2::local_mocked_responses(function(req) stop("no request expected: ", req$url))
+
+  paper <- test_paper(url = box)
+  mo <- module_run(paper, "repo_check")
+  expect_setequal(mo$table$file_name, c("study1.csv", "analysis.R"))
+  expect_true(all(mo$table$archive_url == file.path(d, "inner.zip")))
+  expect_true(all(is.na(mo$table$file_location)))
+})
+assignInNamespace("rbox_file_download", .real_rbox_file_download, ns = "metacheck")
