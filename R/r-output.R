@@ -393,41 +393,7 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
   NA_character_
 }
 
-# Split an already-extracted argument-list string into its top-level (paren/
-# bracket/quote-depth-0) comma-delimited arguments. Ported as-is from
-# R/reproducibility_check.R on the reproducibility_check/data_check branches
-# (not yet merged into this branch), since the scan above is the only caller
-# here. Returns a list of list(text, start, end) -- start/end are 1-based
-# character positions WITHIN args_text (inclusive), so a caller can splice a
-# replacement into the original string without re-matching. Empty list if
-# args_text is empty.
-.repro_split_args <- function(args_text) {
-  if (!nzchar(args_text)) return(list())
-  # Characters split once, not substr(args_text, i, i) per step (#481).
-  chars <- strsplit(args_text, "", fixed = TRUE)[[1]]
-  depth <- 0L; in_str <- NA_character_; n <- length(chars)
-  arg_start <- 1L
-  args <- list()
-  i <- 1L
-  while (i <= n) {
-    ch <- chars[i]
-    if (!is.na(in_str)) {
-      if (ch == "\\") { i <- i + 2L; next }   # skip an escaped char inside the string
-      if (ch == in_str) in_str <- NA_character_
-    } else if (ch %in% c("'", '"')) in_str <- ch
-    else if (ch %in% c("(", "[", "{")) depth <- depth + 1L
-    else if (ch %in% c(")", "]", "}")) depth <- depth - 1L
-    else if (ch == "," && depth == 0L) {
-      args[[length(args) + 1L]] <- list(text = substr(args_text, arg_start, i - 1L),
-                                        start = arg_start, end = i - 1L)
-      arg_start <- i + 1L
-    }
-    i <- i + 1L
-  }
-  args[[length(args) + 1L]] <- list(text = substr(args_text, arg_start, n),
-                                    start = arg_start, end = n)
-  args
-}
+# .repro_split_args() is defined in R/reproducibility_check.R (one copy only, #482).
 
 # Trace "r2_vid" back to "m_vid" through a script's own assignments, e.g.
 # `r2_vid <- r.squaredGLMM(m_vid)[1,2]` records r2_vid -> m_vid; a later

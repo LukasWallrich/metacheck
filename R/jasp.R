@@ -263,26 +263,4 @@ export_jasp_html <- function(path, out = NULL) {
   invisible(out)
 }
 
-# Inline every <img src="..."> the HTML references as a resources-relative
-# path -- a URL-encoded path (jamovi's own resources folders can contain
-# spaces, e.g. "12 gamljGlmMixed/resources/...") is decoded before it is
-# treated as a filesystem path. Non-image src values (there are none in
-# practice, but a defensive check costs nothing) and missing files are left
-# untouched. Shared verbatim between export_jasp_html() and export_omv_html()
-# (R/omv.R) rather than factored out, since each format's reader is meant to
-# stay a self-contained file.
-.html_inline_images <- function(html, root) {
-  srcs <- regmatches(html, gregexpr('src="([^"]+\\.(png|jpe?g|gif))"', html,
-                                    ignore.case = TRUE))[[1]]
-  for (src in unique(srcs)) {
-    rel <- sub('^src="(.*)"$', "\\1", src, ignore.case = TRUE)
-    if (grepl("^(https?:)?//|^data:", rel, ignore.case = TRUE)) next
-    img_path <- file.path(root, utils::URLdecode(rel))
-    if (!file.exists(img_path)) next
-    ext <- tolower(tools::file_ext(img_path))
-    mime <- if (ext == "png") "image/png" else if (ext == "gif") "image/gif" else "image/jpeg"
-    data_uri <- paste0("data:", mime, ";base64,", base64enc::base64encode(img_path))
-    html <- sub(src, paste0('src="', data_uri, '"'), html, fixed = TRUE)
-  }
-  html
-}
+# .html_inline_images() is defined in R/omv.R (one copy only, #482).
