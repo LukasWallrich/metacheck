@@ -228,14 +228,20 @@ repro_dependencies <- function(code_text, lang = "R") {
   if (length(starts) == 1 && starts == -1) return(empty)
   lens <- attr(starts, "match.length")
 
+  # Split into characters once for the scans below: substr(joined, i, i)
+  # counts from the start of a string with non-ASCII characters on every
+  # call, so a character walk was quadratic in the text's length (hours on a
+  # 1-MB script; #481).
+  chars <- strsplit(joined, "", fixed = TRUE)[[1]]
+  n <- length(chars)
   rows <- lapply(seq_along(starts), function(k) {
     open_paren <- starts[k] + lens[k] - 1L   # index of the "(" itself
     # Balanced scan from the "(" to its matching ")", respecting quotes so a
     # ")" inside a quoted string is not mistaken for the call's own close.
-    depth <- 0L; i <- open_paren; n <- nchar(joined); in_str <- NA_character_
+    depth <- 0L; i <- open_paren; in_str <- NA_character_
     end <- NA_integer_
     while (i <= n) {
-      ch <- substr(joined, i, i)
+      ch <- chars[i]
       if (!is.na(in_str)) {
         if (ch == "\\") i <- i + 1L   # skip an escaped char inside the string
         else if (ch == in_str) in_str <- NA_character_
@@ -453,12 +459,15 @@ repro_dependencies <- function(code_text, lang = "R") {
     if (!is.na(ext)) { path_like_vars[[a[[2]]]] <- TRUE; var_ext[[a[[2]]]] <- ext }
   }
 
+  # Characters split once (see .repro_format_call_refs(); #481).
+  chars <- strsplit(joined, "", fixed = TRUE)[[1]]
+  n <- length(chars)
   rows <- lapply(seq_along(starts), function(k) {
     open_paren <- starts[k] + lens[k] - 1L
-    depth <- 0L; i <- open_paren; n <- nchar(joined); in_str <- NA_character_
+    depth <- 0L; i <- open_paren; in_str <- NA_character_
     end <- NA_integer_
     while (i <= n) {
-      ch <- substr(joined, i, i)
+      ch <- chars[i]
       if (!is.na(in_str)) {
         if (ch == "\\") i <- i + 1L
         else if (ch == in_str) in_str <- NA_character_
@@ -563,12 +572,14 @@ repro_dependencies <- function(code_text, lang = "R") {
 # original string without re-matching. Empty list if args_text is empty.
 .repro_split_args <- function(args_text) {
   if (!nzchar(args_text)) return(list())
-  depth <- 0L; in_str <- NA_character_; n <- nchar(args_text)
+  # Characters split once, not substr(args_text, i, i) per step (#481).
+  chars <- strsplit(args_text, "", fixed = TRUE)[[1]]
+  depth <- 0L; in_str <- NA_character_; n <- length(chars)
   arg_start <- 1L
   args <- list()
   i <- 1L
   while (i <= n) {
-    ch <- substr(args_text, i, i)
+    ch <- chars[i]
     if (!is.na(in_str)) {
       if (ch == "\\") { i <- i + 2L; next }   # skip an escaped char inside the string
       if (ch == in_str) in_str <- NA_character_
@@ -1554,10 +1565,13 @@ repro_missing_inputs <- function(refs, plan, structure_df, skipped = NULL) {
   first_ch <- substr(txt, 1, 1)
   if (first_ch %in% c("{", "[")) {
     close_ch <- if (first_ch == "{") "}" else "]"
-    n <- nchar(txt)
+    # Characters split once: this walks a WHOLE file, and substr(txt, i, i)
+    # made it quadratic in the file's length (#481).
+    chars <- strsplit(txt, "", fixed = TRUE)[[1]]
+    n <- length(chars)
     depth <- 0L; i <- 1L; in_str <- NA_character_; end <- NA_integer_
     while (i <= n) {
-      ch <- substr(txt, i, i)
+      ch <- chars[i]
       if (!is.na(in_str)) {
         if (ch == "\\") i <- i + 1L
         else if (ch == in_str) in_str <- NA_character_
@@ -1848,6 +1862,9 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     fn  <- fnames[[i]]
     txt <- code_text_list[[i]]
     rw  <- rewrite_list[[fn]]
+    # One line per script, like the run step's own: without it a slow rewrite
+    # of a very large script could not be told apart from a hang (#481).
+    message("[repro]   rewriting '", fn, "' (", sum(nchar(txt, type = "bytes")), " bytes) ...")
     fn_lang <- lang_for[[i]] %||% "R"
     setwd_line <- setwd_line_for[[fn_lang]] %||% setwd_line_for[["R"]]
     setwd_arg  <- setwd_arg_for[[fn_lang]] %||% setwd_arg_for[["R"]]

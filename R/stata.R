@@ -91,9 +91,11 @@
   # column count reflects the ALREADY-rendered text before it, matching how
   # Stata itself lays a line out).
   result <- character(0)
-  i <- 1L; n <- nchar(out)
+  # Characters split once, not substr(out, i, i) per step (#481).
+  chars <- strsplit(out, "", fixed = TRUE)[[1]]
+  i <- 1L; n <- length(chars)
   while (i <= n) {
-    ch <- substr(out, i, i)
+    ch <- chars[i]
     if (ch != "{") { result <- c(result, ch); pos <- pos + 1L; i <- i + 1L; next }
 
     close <- regexpr("\\}", substr(out, i, n))

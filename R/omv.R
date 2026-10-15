@@ -203,14 +203,16 @@ import_omv <- function(path) {
   colons <- m[[1]]
   # Package name: the run of [A-Za-z0-9.] immediately left of "::". The framing
   # byte before it is not in that class, so it is naturally excluded.
+  # Characters split once, not substr(txt, k, k) per step (#481).
+  chars <- strsplit(txt, "", fixed = TRUE)[[1]]
   left <- colons - 1L
-  while (left >= 1L && grepl("[A-Za-z0-9.]", substr(txt, left, left))) left <- left - 1L
+  while (left >= 1L && grepl("[A-Za-z0-9.]", chars[left])) left <- left - 1L
   start <- left + 1L
   # Right: from the first "(" after "::", match to its balancing ")".
   open <- colons + attr(m, "match.length") - 1L    # position of "("
   depth <- 0L; end <- open
-  for (k in open:nchar(txt)) {
-    ch <- substr(txt, k, k)
+  for (k in open:length(chars)) {
+    ch <- chars[k]
     if (ch == "(") depth <- depth + 1L
     else if (ch == ")") { depth <- depth - 1L; if (depth == 0L) { end <- k; break } }
   }

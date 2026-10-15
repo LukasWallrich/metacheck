@@ -639,6 +639,25 @@ test_that("repro_write_scripts keeps a block valid when setwd()/os.chdir() is it
   expect_equal(res$status, 0L)
 })
 
+test_that("the write-call scan stays fast on a large script with a non-ASCII character (#481)", {
+  # substr(x, i, i) counts from the start of a string with non-ASCII
+  # characters on every call, so the character walk was quadratic: a walk
+  # from an unclosed call near the top to the end of a 200,000-character
+  # script took 201 s (and hours at 1 MB); now about 3 s. The accented letter sits in a
+  # string, not a comment, since comments are removed before the scan.
+  big <- c('x <- "café"', "write.csv(df, 'out.csv'",
+           rep('y <- "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"', 3200))
+  expect_gt(sum(nchar(big)), 200000)
+  t <- system.time(res <- .repro_redirect_writes(big, "R"))[["elapsed"]]
+  expect_lt(t, 20)
+  expect_equal(nrow(res), 0)   # the unclosed call is left alone, as before
+  t2 <- system.time(.repro_format_call_refs(big))[["elapsed"]]
+  expect_lt(t2, 20)
+  # a closed call later in the same text is still found
+  res2 <- .repro_redirect_writes(c(big[1], "write.csv(df, 'out.csv')", big[-(1:2)]), "R")
+  expect_equal(nrow(res2), 1)
+})
+
 test_that("repro_write_scripts redirects a literal write target into output/", {
   code_list <- list("analysis.R" = 'write.csv(x, "results/out.csv")')
   rewrite_list <- list("analysis.R" = data.frame(

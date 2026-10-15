@@ -365,10 +365,12 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
   # call whose own arguments contain further parens is not truncated at the
   # first INNER ")" -- the same "must remain balanced" reasoning
   # reproducibility_check.R's own call scanners already use.
-  depth <- 0L; i <- open_paren; n <- nchar(ct); in_str <- NA_character_
+  # Characters split once, not substr(ct, i, i) per step (#481).
+  chars <- strsplit(ct, "", fixed = TRUE)[[1]]
+  depth <- 0L; i <- open_paren; n <- length(chars); in_str <- NA_character_
   end <- NA_integer_
   while (i <= n) {
-    chr <- substr(ct, i, i)
+    chr <- chars[i]
     if (!is.na(in_str)) {
       if (chr == "\\") i <- i + 1L
       else if (chr == in_str) in_str <- NA_character_
@@ -401,12 +403,14 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
 # args_text is empty.
 .repro_split_args <- function(args_text) {
   if (!nzchar(args_text)) return(list())
-  depth <- 0L; in_str <- NA_character_; n <- nchar(args_text)
+  # Characters split once, not substr(args_text, i, i) per step (#481).
+  chars <- strsplit(args_text, "", fixed = TRUE)[[1]]
+  depth <- 0L; in_str <- NA_character_; n <- length(chars)
   arg_start <- 1L
   args <- list()
   i <- 1L
   while (i <= n) {
-    ch <- substr(args_text, i, i)
+    ch <- chars[i]
     if (!is.na(in_str)) {
       if (ch == "\\") { i <- i + 2L; next }   # skip an escaped char inside the string
       if (ch == in_str) in_str <- NA_character_
