@@ -779,11 +779,12 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         # are part of the mirrored data/documentation payload.
         want <- c(want, rep(TRUE, nrow(added)))
       }
-      # Files the operating system adds (__MACOSX/, "._" files, .DS_Store,
-      # ...; see .is_system_file()) are left out, as repo_check does for the
-      # zips it opens: a "._" copy of a .csv would otherwise be read as data.
-      sys <- .is_system_file(dplyr::coalesce(all_files$file_path %||% all_files$file_name,
-                                             all_files$file_name))
+      # Files that do not belong in a repository (__MACOSX/, "._" files,
+      # .DS_Store, .Rproj.user/, ...; see .useless_file_kind()) are left out,
+      # as repo_check does for the zips it opens: a "._" copy of a .csv would
+      # otherwise be read as data.
+      sys <- .is_useless_file(dplyr::coalesce(all_files$file_path %||% all_files$file_name,
+                                              all_files$file_name))
       if (any(sys)) {
         all_files <- all_files[!sys, , drop = FALSE]
         want <- want[!sys]

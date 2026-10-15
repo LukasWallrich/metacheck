@@ -1700,35 +1700,53 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     }
   }
 
-  ## files the operating system adds ----
-  # __MACOSX/, "._" files, .DS_Store, Thumbs.db, desktop.ini (see
-  # .is_system_file()): left out here, after zips are opened, so they are
-  # never counted, classified or flagged for naming. Listed in the report so
-  # the authors can remove them.
-  system_files <- if (nrow(all_files) > 0) {
-    is_sys <- .is_system_file(dplyr::coalesce(all_files$file_path, all_files$file_name))
-    sys <- all_files[is_sys, c("repo_url", "file_path"), drop = FALSE]
-    all_files <- all_files[!is_sys, , drop = FALSE]
-    sys
-  } else data.frame(repo_url = character(0), file_path = character(0))
-  n_system <- nrow(system_files)
-  summary_system <- if (n_system > 0) sprintf(
-    "We left out %d file%s that the operating system adds (such as __MACOSX folders, ._ files and .DS_Store); remove %s from the repository.",
-    n_system, plural(n_system), plural(n_system, "it", "them")) else NULL
-  report_system <- if (n_system > 0) c(
-    "#### Files the operating system adds",
+  ## files that do not belong in a repository ----
+  # Files software creates by itself, never the authors, which hold nothing a
+  # reader can use (see .useless_file_kind(): operating-system files such as
+  # __MACOSX/ and .DS_Store, RStudio's .Rproj.user/, Jupyter checkpoints,
+  # compiled Python files, open-document lock files). Left out here, after
+  # zips are opened, so they are never counted, classified or flagged for
+  # naming; listed in the report so the authors can remove them.
+  useless_files <- if (nrow(all_files) > 0) {
+    kind <- .useless_file_kind(dplyr::coalesce(all_files$file_path, all_files$file_name))
+    useless <- all_files[!is.na(kind), c("repo_url", "file_path"), drop = FALSE]
+    useless$kind <- kind[!is.na(kind)]
+    all_files <- all_files[is.na(kind), , drop = FALSE]
+    useless
+  } else data.frame(repo_url = character(0), file_path = character(0), kind = character(0))
+  n_useless <- nrow(useless_files)
+  useless_kinds <- if (n_useless > 0) {
+    k <- table(useless_files$kind)
+    paste(sprintf("%s (%d)", names(k), as.integer(k)), collapse = ", ")
+  } else NULL
+  summary_useless <- if (n_useless > 0) sprintf(
+    "We left out %d file%s that do%s not belong in a repository: %s. Remove %s from the repository.",
+    n_useless, plural(n_useless), if (n_useless == 1) "es" else "",
+    useless_kinds, plural(n_useless, "it", "them")) else NULL
+  report_useless <- if (n_useless > 0) c(
+    "#### Files that do not belong in the repository",
     sprintf(paste(
-      "We left out %d file%s that the operating system creates by itself, not",
-      "the authors: macOS adds a `__MACOSX` folder and a `._` copy of every",
-      "file it puts in a zip, and `.DS_Store` files to folders; Windows adds",
-      "`Thumbs.db` and `desktop.ini`. They hold no data or code, but readers",
-      "see them as clutter, and software can mistake a `._` copy of a `.csv`",
-      "for data. Remove them from the repository (on a Mac, create zips from",
-      "the command line with `zip -r -X`, or remove them afterwards with",
-      "`zip -d archive.zip \"__MACOSX/*\" \"*.DS_Store\"`)."),
-      n_system, plural(n_system)),
-    scroll_table(data.frame(Repository = system_files$repo_url,
-                            File = system_files$file_path), maxrows = 10)) else NULL
+      "We left out %d file%s that software creates by itself, not the",
+      "authors: %s. They hold nothing a reader can use, but they clutter the",
+      "repository, and software can mistake them for real files (for example",
+      "a `._` copy of a `.csv` for data). Remove them from the repository."),
+      n_useless, plural(n_useless), useless_kinds),
+    paste(
+      "*Operating system:* macOS adds a `__MACOSX` folder and a `._` copy of",
+      "every file it puts in a zip, and `.DS_Store` files to folders; Windows",
+      "adds `Thumbs.db` and `desktop.ini`. On a Mac, create zips from the",
+      "command line with `zip -r -X`, or remove them afterwards with",
+      "`zip -d archive.zip \"__MACOSX/*\" \"*.DS_Store\"`.",
+      "*RStudio session files* (`.Rproj.user/`) hold open tabs and unsaved",
+      "edits; *Jupyter checkpoints* (`.ipynb_checkpoints/`) are automatic",
+      "copies of notebooks; *compiled Python files* (`__pycache__/`, `.pyc`)",
+      "are recreated when the code runs; *open-document lock files*",
+      "(`~$...docx`, `.~lock...#`) are left while a document is open.",
+      "A `.gitignore` based on GitHub's templates",
+      "(https://github.com/github/gitignore) keeps them out of a repository."),
+    scroll_table(data.frame(Repository = useless_files$repo_url,
+                            File = useless_files$file_path,
+                            Kind = useless_files$kind), maxrows = 10)) else NULL
 
   ## preliminary classification + study grouping ----
   # A PRELIMINARY, name/path-only pass: repo_check does not download files, so
@@ -2214,7 +2232,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     report_unknown,
     report_roster,
     report_naming,
-    report_system,
+    report_useless,
     report_classification
   )
 
@@ -2259,7 +2277,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     summary_unknown,
     summary_roster,
     summary_naming,
-    summary_system
+    summary_useless
   ) |>
     paste("\n- ", x = _, collapse = "")
 

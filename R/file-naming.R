@@ -32,23 +32,56 @@
 # lexicographic sort order — see repro_run_order()'s numeric, not string,
 # tie-break) — real, worth following, but not load-bearing, so they never
 # affect the traffic light on their own.
-# Files the operating system creates by itself, never the authors: macOS's
-# __MACOSX/ folder and "._" companion files (resource forks a Mac adds to
-# every file it zips), Finder's .DS_Store, and Windows's Thumbs.db and
-# desktop.ini. They hold no data or code, so repo_check and data_check leave
-# them out of the file list (and repo_check asks the authors to remove them).
-# Kept, they were counted as files, flagged for naming, and the "._" copies
-# of .csv files were read as (unreadable) data: in one LDbase zip they were
-# about half of 1,826 listed files.
-.is_system_file <- function(path) {
-  if (!length(path)) return(logical(0))
+# Files that do not belong in a repository because software creates them by
+# itself, never the authors, and they hold nothing a reader can use. repo_check
+# and data_check leave them out of the file list, and repo_check lists them so
+# the authors can remove them. Kept, they were counted as files, flagged for
+# naming, and the "._" copies of .csv files were read as (unreadable) data: in
+# one LDbase zip they were 993 of 1,826 listed files.
+#
+# Only files that are useless whatever the study: patterns from GitHub's
+# ignore-file templates (github.com/github/gitignore: Global/macOS, Windows,
+# Linux, MicrosoftOffice, LibreOffice, Python, R, Jupyter), each also seen in
+# real repositories (metacheck's corpus cache, 2026-10-15). Files that may
+# matter to someone (.RData, .Rhistory, backups, *.tmp, knitr caches) are
+# deliberately not included.
+#
+# Returns, per path, the kind of useless file, or NA for any other file.
+.useless_file_kind <- function(path) {
+  if (!length(path)) return(character(0))
   p <- gsub("\\\\", "/", as.character(path))
-  base <- basename(p)
-  out <- grepl("(^|/)__MACOSX(/|$)", p) | startsWith(base, "._") |
-    tolower(base) %in% c(".ds_store", "thumbs.db", "desktop.ini")
-  out[is.na(out)] <- FALSE
-  out
+  # Not basename(): it expands a leading "~" to the home folder first, so
+  # "~$report.docx" became "Documents$report.docx".
+  base <- sub("^.*/", "", p)
+  in_dir <- function(dir) grepl(paste0("(^|/)", dir, "(/|$)"), p, perl = TRUE)
+  kind <- rep(NA_character_, length(p))
+  # Files the operating system adds: macOS's __MACOSX/ folder and "._" copies
+  # (resource forks a Mac adds to every file it zips), Finder's .DS_Store and
+  # other volume files, Windows's thumbnail caches, folder settings and
+  # recycle bin, and the Linux desktop's equivalents.
+  os <- in_dir("__MACOSX") | startsWith(base, "._") |
+    tolower(base) %in% c(".ds_store", ".localized", "icon\r", "thumbs.db",
+                         "ehthumbs.db", "ehthumbs_vista.db", "desktop.ini",
+                         ".directory") |
+    in_dir("\\.AppleDouble") | in_dir("\\.Spotlight-V100") | in_dir("\\.Trashes") |
+    in_dir("\\.fseventsd") | in_dir("\\$RECYCLE\\.BIN") | in_dir("\\.Trash-[0-9]+")
+  kind[os] <- "operating system"
+  # RStudio's per-user session state (open tabs, unsaved edits).
+  kind[is.na(kind) & in_dir("\\.Rproj\\.user")] <- "RStudio session files"
+  # Jupyter's automatic duplicate copies of notebooks.
+  kind[is.na(kind) & in_dir("\\.ipynb_checkpoints")] <- "Jupyter checkpoints"
+  # Compiled Python files, recreated whenever the code runs.
+  kind[is.na(kind) & (in_dir("__pycache__") | grepl("\\.py[co]$", base))] <-
+    "compiled Python files"
+  # Lock files Word, Excel, PowerPoint and LibreOffice leave while a document
+  # is open.
+  kind[is.na(kind) & (grepl("^~\\$.*\\.(doc|dot|xls|ppt)", base, ignore.case = TRUE) |
+                        grepl("^\\.~lock\\..*#$", base))] <- "open-document lock files"
+  kind[is.na(p)] <- NA_character_
+  kind
 }
+
+.is_useless_file <- function(path) !is.na(.useless_file_kind(path))
 
 .file_naming_severity <- c(
   "spaces"               = "bad",

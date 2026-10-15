@@ -349,27 +349,113 @@ test_that("a paper's own config.yml still counts as content next to a root-level
   expect_true("config.yml" %in% mo$table$file_name)
 })
 
-test_that(".is_system_file recognises files the operating system adds", {
-  paths <- c("LAMP.zip/__MACOSX/LAMP/._data.csv", "__MACOSX", "study/._analysis.R",
-             "study/.DS_Store", "img/Thumbs.db", "Desktop.ini",
-             "data.csv", "study/a_.csv", "MACOSX_notes.txt", NA)
-  expect_equal(.is_system_file(paths),
-               c(TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE))
-  expect_equal(.is_system_file(character(0)), logical(0))
+# files that do not belong in a repository ----
+
+test_that(".useless_file_kind recognises every kind of useless file", {
+  os <- "operating system"
+  expected <- c(
+    # macOS: __MACOSX/ folder (also as the folder itself), "._" copies,
+    # .DS_Store, .localized, Icon\r, volume folders
+    "LAMP.zip/__MACOSX/LAMP/._data.csv"     = os,
+    "__MACOSX"                              = os,
+    "study/._analysis.R"                    = os,
+    "study/.DS_Store"                       = os,
+    "study/.localized"                      = os,
+    "study/Icon\r"                          = os,
+    ".AppleDouble/data.csv"                 = os,
+    ".Spotlight-V100/store.db"              = os,
+    ".Trashes/501/x"                        = os,
+    ".fseventsd/0001"                       = os,
+    # Windows (backslashes, any case) and Linux desktops
+    "img\\Thumbs.db"                        = os,
+    "img/ehthumbs.db"                       = os,
+    "Desktop.ini"                           = os,
+    "$RECYCLE.BIN/S-1-5/x.csv"              = os,
+    ".Trash-1000/files/x.csv"               = os,
+    "study/.directory"                      = os,
+    # RStudio, Jupyter, Python, open documents
+    "LAMP/.Rproj.user/shared/notebooks/x"   = "RStudio session files",
+    "nb/.ipynb_checkpoints/a-checkpoint.ipynb" = "Jupyter checkpoints",
+    "code/__pycache__/utils.cpython-311.pyc" = "compiled Python files",
+    "code/utils.pyc"                        = "compiled Python files",
+    "docs/~$report.docx"                    = "open-document lock files",
+    # at the top level: basename() would expand the leading "~"
+    "~$report.docx"                         = "open-document lock files",
+    "data/~$scores.xlsx"                    = "open-document lock files",
+    "slides/~$talk.pptx"                    = "open-document lock files",
+    "docs/.~lock.report.docx#"              = "open-document lock files"
+  )
+  expect_equal(.useless_file_kind(names(expected)), unname(expected))
+  expect_true(all(.is_useless_file(names(expected))))
 })
 
-test_that("repo_check leaves out and reports files the operating system adds", {
+test_that(".useless_file_kind keeps every file that may matter", {
+  keep <- c("data.csv", "study/a_.csv", "MACOSX_notes.txt", "analysis.R",
+            # may matter to someone, deliberately not treated as useless
+            ".RData", ".Rhistory", "analysis.R.bak", "notes.tmp", "analysis~",
+            "report_cache/html/chunk.rdb", "renv.lock", ".gitignore",
+            # names that only look like useless files
+            "my.Rproj", ".Rproj.user.txt", "pycache_notes.txt", "utils.py",
+            "~$notes.txt", "Thumbs.db.csv", "lock.docx")
+  expect_true(all(is.na(.useless_file_kind(keep))))
+  expect_false(any(.is_useless_file(keep)))
+  expect_true(is.na(.useless_file_kind(NA_character_)))
+  expect_equal(.useless_file_kind(character(0)), character(0))
+  expect_equal(.is_useless_file(character(0)), logical(0))
+})
+
+test_that("repo_check leaves out and reports files that do not belong in a repository", {
   d <- withr::local_tempdir()
   dir.create(file.path(d, "__MACOSX"))
+  dir.create(file.path(d, "__pycache__"))
   writeLines("a,b\n1,2", file.path(d, "data.csv"))
+  writeLines("x <- 1", file.path(d, "analysis.R"))
   writeLines("junk", file.path(d, "__MACOSX", "data.csv"))
   writeLines("junk", file.path(d, "Thumbs.db"))
+  writeLines("junk", file.path(d, "__pycache__", "utils.cpython-311.pyc"))
+  writeLines("junk", file.path(d, "~$report.docx"))
 
   mo <- module_run(test_paper(), "repo_check", local_path = d)
 
-  expect_equal(mo$table$file_name, "data.csv")
-  expect_match(mo$summary_text, "left out 2 files that the operating system adds", fixed = TRUE)
-  expect_match(paste(mo$report, collapse = "\n"), "Files the operating system adds", fixed = TRUE)
+  # only the real files are listed and counted
+  expect_setequal(mo$table$file_name, c("data.csv", "analysis.R"))
+  expect_equal(mo$summary_table$files_n, 2)
+  # the useless files are reported, by kind
+  expect_match(mo$summary_text, "left out 4 files that do not belong in a repository", fixed = TRUE)
+  expect_match(mo$summary_text, "operating system (2)", fixed = TRUE)
+  expect_match(mo$summary_text, "compiled Python files (1)", fixed = TRUE)
+  expect_match(mo$summary_text, "open-document lock files (1)", fixed = TRUE)
+  report <- paste(mo$report, collapse = "\n")
+  expect_match(report, "Files that do not belong in the repository", fixed = TRUE)
+  expect_match(report, "Thumbs.db", fixed = TRUE)
+  # and they are not flagged for naming
+  expect_false(any(grepl("Thumbs|pycache|~\\$", mo$naming_issues$file_name %||% character(0))))
+})
+
+test_that("repo_check reports nothing when there are no useless files", {
+  d <- withr::local_tempdir()
+  writeLines("a,b\n1,2", file.path(d, "data.csv"))
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+  expect_no_match(mo$summary_text, "do not belong", fixed = TRUE)
+  expect_no_match(paste(mo$report, collapse = "\n"), "do not belong", fixed = TRUE)
+})
+
+test_that("data_check leaves useless files out of a zip it unpacks", {
+  skip_if_not_installed("zip")
+  llm_use(FALSE)
+  src <- withr::local_tempdir()
+  dir.create(file.path(src, "__MACOSX"))
+  write.csv(data.frame(id = 1:5, score = c(2.5, 3.1, 4.0, 3.3, 2.9)),
+            file.path(src, "scores.csv"), row.names = FALSE)
+  writeLines("junk", file.path(src, "__MACOSX", "._scores.csv"))
+  d <- withr::local_tempdir()
+  zip::zip(file.path(d, "study.zip"), c("scores.csv", "__MACOSX/._scores.csv"), root = src)
+
+  mo <- module_run(test_paper(), "data_check", local_path = d, local_only = TRUE)
+
+  expect_true("scores.csv" %in% mo$structure$file_name)
+  expect_false(any(.is_useless_file(mo$structure$file_path %||% mo$structure$file_name)))
+  expect_false("._scores.csv" %in% mo$structure$file_name)
 })
 
 test_that("repo_check excludes a nested vendored package but keeps real sibling content", {
