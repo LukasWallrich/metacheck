@@ -504,7 +504,9 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
   # "The codebook says this variable takes 1-5, but the column contains a 6."
   # Only a DOCUMENTED range is used: no inference, no fallback. A value outside
   # a range the authors themselves declared is a concrete, checkable
-  # discrepancy; a value outside a range metacheck guessed is not.
+  # discrepancy; a value outside a range metacheck guessed is not. When the
+  # documented codes explain less than half of a column's values, they are
+  # probably attached to the wrong column, and the column is skipped.
   #
   # This ran in data_check until it moved here, where the codebook is actually
   # available. There it fetched the codebook via
@@ -538,7 +540,12 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
       declared <- suppressWarnings(as.numeric(names(miss) %||% miss))
       declared <- declared[!is.na(declared)]
 
-      sv <- data_check_scale_values(x, declared = declared, valid_values = valid)
+      # infer = FALSE: when the documented codes explain less than half of
+      # the values (probably codes attached to the wrong column), the column
+      # is skipped rather than checked against a range guessed from the data
+      # (#480).
+      sv <- data_check_scale_values(x, declared = declared, valid_values = valid,
+                                    infer = FALSE)
       if (!isTRUE(sv$problem)) next
       scale_violations[[length(scale_violations) + 1L]] <- data.frame(
         source_file = f, column = cn,

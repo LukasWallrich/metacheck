@@ -40,8 +40,9 @@ for a file whose \code{lang} is \code{"Python"}.}
 string applied to every file (default \code{"R"}), or a named character
 vector keyed by file_name for a mixed-language set (same shape as
 \code{\link[=repro_file_io]{repro_file_io()}}'s own \code{lang}). Selects the write-redirect function
-names (\code{\link[=.repro_redirect_writes]{.repro_redirect_writes()}}) and the "comment out the working-
-directory override" line (\code{setwd()} for R, \code{os.chdir()} for Python).
+names (\code{\link[=.repro_redirect_writes]{.repro_redirect_writes()}}) and the working-directory override
+that is replaced with a statement that does nothing (\code{setwd()} becomes
+\code{invisible(NULL)} in R, \code{os.chdir()} becomes \code{pass} in Python).
 Python's font-substitution analogue is deliberately NOT built: an
 unavailable font is a matplotlib WARNING with a silent DejaVu Sans
 fallback, not the hard "invalid font type" failure
@@ -53,7 +54,8 @@ mode Python's own ecosystem does not have here.}
 \value{
 a data frame with \code{file_name}, \code{script_path} (absolute path written),
 \code{run_dir} (the working directory a run should use — always \code{root}),
-\code{setwd_removed} (count of \code{setwd()} lines commented out),
+\code{setwd_removed} (count of \code{setwd()}/\code{os.chdir()} calls replaced with a
+statement that does nothing),
 \code{setwd_paths} (comma-joined paths those calls named, for the warning),
 \code{family_replaced} (count of \verb{family =}/\verb{base_family =} named-font
 arguments replaced with \code{"sans"}, so a plot call does not fail with

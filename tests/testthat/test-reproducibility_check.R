@@ -592,7 +592,7 @@ test_that("repro_write_scripts applies a resolved literal path rewrite", {
               "study-ex1/data/study-demographics_data.csv", fixed = TRUE)
 })
 
-test_that("repro_write_scripts comments out setwd() and records it", {
+test_that("repro_write_scripts replaces setwd() with a no-op and records it", {
   code_list <- list("analysis.R" = c('setwd("/Users/author/project")', 'x <- 1'))
   rewrite_list <- list("analysis.R" = data.frame(
     ref = character(0), basename = character(0), matched = logical(0),
@@ -605,7 +605,38 @@ test_that("repro_write_scripts comments out setwd() and records it", {
   expect_equal(out$setwd_removed, 1)
   expect_match(out$setwd_paths, "/Users/author/project", fixed = TRUE)
   written <- readLines(out$script_path[1])
-  expect_true(any(grepl("^# \\[reproducibility_check removed setwd\\]", written)))
+  expect_true(any(grepl("^invisible\\(NULL\\)  # \\[reproducibility_check removed setwd\\] setwd",
+                        written)))
+})
+
+test_that("repro_write_scripts keeps a block valid when setwd()/os.chdir() is its only statement (#480)", {
+  empty_rw <- function(fn) stats::setNames(list(data.frame(
+    ref = character(0), basename = character(0), matched = logical(0),
+    target = character(0), ambiguous = logical(0), n_candidates = integer(0),
+    is_call = logical(0))), fn)
+  root <- withr::local_tempdir()
+
+  # R: commenting the call out would make `if` take `x <- 2` as its body
+  r_code <- list("a.R" = c("x <- 1", "if (FALSE)", '  setwd("/Users/author")', "x <- 2"))
+  out_r <- repro_write_scripts(r_code, empty_rw("a.R"),
+                               data.frame(file_name = "a.R", target_path = "a.R"), root)
+  env <- new.env()
+  sys.source(out_r$script_path, envir = env)
+  expect_equal(env$x, 2)
+
+  # Python: a comment would leave the try: block empty (IndentationError)
+  py_code <- list("b.py" = c("try:", '    os.chdir("/Users/author")', "except OSError:", "    pass"))
+  out_py <- repro_write_scripts(py_code, empty_rw("b.py"),
+                                data.frame(file_name = "b.py", target_path = "b.py"),
+                                root, lang = "Python")
+  written <- readLines(out_py$script_path)
+  expect_equal(written[2], '    pass  # [reproducibility_check removed os.chdir] os.chdir("/Users/author")')
+  expect_equal(out_py$setwd_removed, 1)
+  py <- .repro_find_python()
+  skip_if_not(nzchar(py), "no Python interpreter")
+  res <- processx::run(py, c("-c", "import ast,sys; ast.parse(open(sys.argv[1]).read())",
+                             out_py$script_path), error_on_status = FALSE)
+  expect_equal(res$status, 0L)
 })
 
 test_that("repro_write_scripts redirects a literal write target into output/", {

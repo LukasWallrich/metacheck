@@ -913,9 +913,35 @@ test_that("code_lang detects Python and notebook kernels", {
   expect_equal(code_lang(py_nb) |> unname(), "Python")
   expect_equal(code_lang(r_nb) |> unname(), "R")
 
-  # Unreadable / not-yet-downloaded notebook falls back to Python (the more
-  # common kernel), rather than erroring.
+  # A not-yet-downloaded notebook is provisionally Python (the more common
+  # kernel), so code_check still downloads it, rather than erroring.
   expect_equal(code_lang("no_such_notebook.ipynb") |> unname(), "Python")
+})
+
+test_that("a notebook or Quarto document in another language is not labelled Python or R (#480)", {
+  d <- withr::local_tempdir()
+  nb <- function(file, metadata) {
+    p <- file.path(d, file)
+    jsonlite::write_json(list(cells = list(), metadata = metadata,
+                              nbformat = 4, nbformat_minor = 5), p, auto_unbox = TRUE)
+    p
+  }
+  expect_equal(unname(code_lang(nb("julia.ipynb", list(kernelspec = list(language = "julia", name = "julia-1.9"))))), "Julia")
+  expect_equal(unname(code_lang(nb("scala.ipynb", list(language_info = list(name = "scala"))))), "Scala")
+  expect_equal(unname(code_lang(nb("ir.ipynb", list(kernelspec = list(name = "ir"))))), "R")
+  expect_equal(unname(code_lang(nb("py3.ipynb", list(kernelspec = list(name = "python3"))))), "Python")
+  # a downloaded notebook that declares no language gets none
+  expect_true(is.na(code_lang(nb("none.ipynb", list()))))
+
+  qmd <- function(file, lines) { p <- file.path(d, file); writeLines(lines, p); p }
+  expect_equal(unname(code_lang(qmd("j1.qmd", c("---", "jupyter: julia-1.9", "---", "x")))), "Julia")
+  expect_equal(unname(code_lang(qmd("j2.qmd", c("---", "title: a", "---", "```{julia}", "x = 1", "```")))), "Julia")
+  expect_equal(unname(code_lang(qmd("p.qmd", c("---", "jupyter: python3", "---")))), "Python")
+  expect_equal(unname(code_lang(qmd("r.qmd", c("---", "title: a", "---", "```{r}", "x <- 1", "```")))), "R")
+
+  expect_equal(.kernel_language("IPython"), "Python")
+  expect_equal(.kernel_language("octave"), "MATLAB")
+  expect_true(is.na(.kernel_language("")))
 })
 
 

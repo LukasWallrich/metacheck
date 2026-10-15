@@ -11,7 +11,8 @@ data_check_scale_values(
   valid_values = NULL,
   valid_range = NULL,
   n_max = 10,
-  min_ground_truth_coverage = 0.5
+  min_ground_truth_coverage = 0.5,
+  infer = TRUE
 )
 }
 \arguments{
@@ -30,6 +31,11 @@ data_check_scale_values(
 \item{min_ground_truth_coverage}{minimum fraction of non-missing values that
 must already fall inside a declared \code{valid_values}/\code{valid_range} for it to
 be trusted; below this, ground truth is discarded in favour of inference}
+
+\item{infer}{if \code{TRUE} (default), infer a rating-scale range from the data
+when no ground truth is supplied or it was discarded; if \code{FALSE}, flag
+nothing in that case. \code{codebook_check} uses \code{FALSE}: it reports only
+values outside a range the authors documented, never a guessed one.}
 }
 \value{
 list(problem, message, values, lower, upper, classes) where \code{classes}
@@ -63,7 +69,8 @@ happens the declared range explains almost none of the data, and trusting it
 anyway turns nearly every real value into a false "out of range" flag. When
 coverage is too low, ground truth is DISCARDED for this column (not merely
 widened) and the range falls back to \code{.detect_likert_scale} inference, same
-as if no ground truth had been supplied at all.
+as if no ground truth had been supplied at all -- or, with \code{infer = FALSE},
+nothing is flagged for the column.
 
 This unifies the former \code{data_check_out_of_range} and
 \code{data_check_miscoded_missing}: one detector run, one finding per column.

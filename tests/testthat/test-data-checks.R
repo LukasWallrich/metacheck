@@ -90,6 +90,17 @@ test_that("data_check_scale_values flags out-of-scale values and classifies them
   expect_false(data_check_scale_values(sample(18:65, 200, TRUE))$problem)   # age
   expect_false(data_check_scale_values(rpois(200, 3))$problem)              # count
 
+  # A documented range that explains almost none of the values (codes on the
+  # wrong column) is discarded: by default the range is then inferred, with
+  # infer = FALSE (codebook_check, #480) nothing is flagged.
+  set.seed(1)
+  x <- c(sample(1:7, 200, TRUE), 9)
+  expect_true(data_check_scale_values(x, valid_values = 20:25)$problem)
+  expect_false(data_check_scale_values(x, valid_values = 20:25, infer = FALSE)$problem)
+  # a documented range that does fit is used either way
+  expect_true(data_check_scale_values(c(sample(1:5, 200, TRUE), 55),
+                                      valid_values = 1:5, infer = FALSE)$problem)
+
   # Ground truth overrides inference.
   expect_true(data_check_scale_values(c(sample(1:5, 200, TRUE), 6),
                                       valid_values = 1:5)$problem)   # 6 flagged
@@ -837,6 +848,79 @@ test_that("data_check does not screen scale blocks below the item minimum", {
   mo <- module_run(test_paper("x"), "data_check",
                    local_path = d, local_only = TRUE)
   expect_equal(nrow(mo$careless), 0)
+})
+
+test_that("data_check reports the same respondent id in two files as two respondents (#480)", {
+  skip_if_not_installed("careless")
+  llm_use(FALSE)
+  # Respondent 51 straightlines in both studies, but these are two different
+  # people: ids are only unique within their own file.
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "data"))
+  utils::write.csv(make_careless_survey(seed = 1), file.path(d, "data", "study2.csv"),
+                   row.names = FALSE)
+  utils::write.csv(make_careless_survey(seed = 2), file.path(d, "data", "study4.csv"),
+                   row.names = FALSE)
+
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  hit <- mo$careless[mo$careless$respondent == "51", ]
+  expect_equal(nrow(hit), 2L)
+  expect_setequal(hit$source_file, c("study2.csv", "study4.csv"))
+  expect_true(all(hit$n_blocks_flagged == 1L))
+})
+
+test_that("a file whose scale blocks are all below the item minimum is not counted as screened (#480)", {
+  skip_if_not_installed("careless")
+  llm_use(FALSE)
+  # Six columns (enough for the old per-FILE check) but the only scale block
+  # has 3 items, which can never flag anyone.
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "data"))
+  set.seed(3)
+  df <- data.frame(participant_id = 1:40,
+                   q_1 = sample(1:5, 40, TRUE), q_2 = sample(1:5, 40, TRUE),
+                   q_3 = sample(1:5, 40, TRUE),
+                   age = sample(18:60, 40, TRUE), rt = round(rnorm(40, 600, 80)))
+  utils::write.csv(df, file.path(d, "data", "survey.csv"), row.names = FALSE)
+
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  expect_equal(nrow(mo$careless), 0)
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_false(grepl("in the 1 file that could be screened", report, fixed = TRUE))
+})
+
+# Space-separated .csv files (#479, #480) ----
+
+test_that(".csv_is_space_separated recognises a space-separated table only", {
+  d <- withr::local_tempdir()
+  w <- function(name, lines) { p <- file.path(d, name); writeLines(lines, p); p }
+  set.seed(1)
+  sp <- c("subject congruent incongruent",
+          sprintf("%d %.2f %.2f", 1:10, rnorm(10, 600, 50), rnorm(10, 680, 50)))
+  expect_true(.csv_is_space_separated(w("space.csv", sp)))
+  # comma-separated, a one-column file of phrases, text-only columns,
+  # uneven rows, a single line: never flagged
+  expect_false(.csv_is_space_separated(w("comma.csv", gsub(" ", ",", sp))))
+  expect_false(.csv_is_space_separated(w("words.csv", c("word", "red house", "blue car", "green tree"))))
+  expect_false(.csv_is_space_separated(w("text.csv", c("a b c", "x y z", "p q r"))))
+  expect_false(.csv_is_space_separated(w("uneven.csv", c("a b c", "1 2 3", "4 5"))))
+  expect_false(.csv_is_space_separated(w("one.csv", "a b c")))
+  expect_false(.csv_is_space_separated(file.path(d, "missing.csv")))
+})
+
+test_that("data_check warns about a space-separated .csv and turns the light yellow", {
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "data"))
+  set.seed(1)
+  writeLines(c("subject congruent incongruent",
+               sprintf("%d %.2f %.2f", 1:20, rnorm(20, 600, 50), rnorm(20, 680, 50))),
+             file.path(d, "data", "stroop.csv"))
+
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  expect_equal(mo$traffic_light, "yellow")
+  expect_true("Space-separated .csv" %in% mo$findings$check)
+  expect_match(mo$summary_text, "separated by spaces instead of commas", fixed = TRUE)
 })
 
 test_that("data_check reports careless coverage limits when nothing is flagged", {

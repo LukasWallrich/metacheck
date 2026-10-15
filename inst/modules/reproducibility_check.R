@@ -110,7 +110,7 @@
 #' @param docker_use_declared_version if TRUE (and `sandbox = "docker"`), use
 #'   the R version `code_check`'s version-pinning detection found declared in
 #'   the repository (an `renv.lock`/`sessionInfo()` record) instead of the
-#'   pre-built `metacheck_r` image — `rocker/r-ver:<declared version>`, a
+#'   pre-built `metacheck_r_large` image — `rocker/r-ver:<declared version>`, a
 #'   bare image with no packages pre-installed. Slower (every dependency is
 #'   installed from scratch, from source, in that run — see
 #'   [repro_install_deps_docker()]) but matches the R version the paper's
@@ -1429,7 +1429,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     lib_dir <- file.path(sandbox_root, "_lib")
     .dbg("sandbox root: ", sandbox_root)
 
-    # Docker base image: by default the pre-built metacheck_r image (fast --
+    # Docker base image: by default the pre-built metacheck_r_large image (fast --
     # most dependencies already installed), regardless of what R version the
     # paper declared. docker_use_declared_version = TRUE opts into matching
     # the paper's own declared R version instead (rocker/r-ver:<version>, a
@@ -1443,7 +1443,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
         warning(
           "reproducibility_check(sandbox = \"docker\"): this paper declared R ",
           "version ", declared_v[[1]], ", but docker_use_declared_version = FALSE ",
-          "(the default), so the run uses the pre-built metacheck_r image's own ",
+          "(the default), so the run uses the pre-built metacheck_r_large image's own ",
           "R version instead, for speed. Set docker_use_declared_version = TRUE ",
           "to match the paper's declared version exactly -- slower, since every ",
           "dependency then installs from scratch rather than using the ",
@@ -1909,7 +1909,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     n_nodep   <- sum(oc == "dependency_unavailable")
     n_by_src  <- sum(oc == "run_by_source")
     report_exec <- sprintf(
-      paste0("**The code was run.** Each script ran in an isolated subprocess ",
+      paste0("**The code was run.** Each script ran in an isolated %s ",
              "against a throwaway copy of the Psych-DS layout, in the run order ",
              "above, with a %d-second per-script timeout. Of %d script%s: %d ran ",
              "without error, %d errored, %d timed out, %d %s skipped (inputs ",
@@ -1917,6 +1917,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
              "dependencies is unavailable, %d did not parse%s. Running ",
              "against current package versions: a break can reflect version ",
              "drift, which argues for pinning versions."),
+      if (sandbox == "docker") "Docker container" else "subprocess",
       timeout, nrow(run_results), plural(nrow(run_results)),
       n_ran_ok, n_errored, n_timeout, n_skipped,
       plural(n_skipped, "was", "were"), n_nodep, n_noparse,
@@ -1999,7 +2000,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
         paste0("**%d script%s call%s `setwd()`.** This is bad practice: it ",
                "hardcodes where the code must run (often an absolute path on the ",
                "author's own machine) and breaks the moment the code is run ",
-               "anywhere else. To run the code we commented these calls out. Any ",
+               "anywhere else. To run the code we replaced these calls with a statement that does nothing. Any ",
                "such script that then ran is **reproducible only after ignoring a ",
                "`setwd()` that should not have been in the code and needs to be ",
                "fixed**."),
@@ -2196,8 +2197,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   n_run_own <- if (!is.null(run_results)) nrow(run_results) - n_by_src_sum else 0L
   summary_text <- c(
     if (isTRUE(execute)) sprintf(
-      "We assessed AND ran %d R code file%s for reproducibility (each in an isolated subprocess).",
-      n_code, plural(n_code)) else sprintf(
+      "We assessed AND ran %d R code file%s for reproducibility (each in an isolated %s).",
+      n_code, plural(n_code), if (sandbox == "docker") "Docker container" else "subprocess") else sprintf(
       "We assessed %d R code file%s for reproducibility (static analysis; no code was run).",
       n_code, plural(n_code)),
     sprintf("%d file%s appear%s runnable so far (parses, inputs resolve, placeable in the run order).",
@@ -2584,7 +2585,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # with an error, the Python files are recorded as not run and the R
     # results are still returned, instead of the whole module stopping.
     if (sandbox != "docker" && !nzchar(py_parse_bin))
-      py_exec_error <- "No Python interpreter (`python` or `python3`) was found on this computer."
+      py_exec_error <- paste0(.repro_python_missing_reason(), ".")
 
     py_failed_deps <- character(0)
     if (is.null(py_exec_error) && isTRUE(install_missing) && n_py_deps > 0) {
@@ -2815,7 +2816,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # when the check could not be done, so a reader does not take a missing
     # section to mean every file parsed.
     if (!nzchar(py_parse_bin)) c("#### Parsing",
-      "The Python files were not checked for syntax errors, because no Python interpreter (`python` or `python3`) was found on this computer; a syntax error will only show if the code is run.")
+      sprintf("The Python files were not checked for syntax errors, because %s; a syntax error will only show if the code is run.",
+              .repro_python_missing_reason()))
     else if (n_py_noparse_static > 0) c("#### Parsing", sprintf(
       "%d Python file%s did not parse and cannot be run (Python's own parser found a syntax error; code written for Python 2 also fails this check): %s.",
       n_py_noparse_static, plural(n_py_noparse_static),
@@ -2855,8 +2857,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
         paste0("**%d script%s call%s `os.chdir()`.** This is bad practice: it ",
                "hardcodes where the code must run (often an absolute path on ",
                "the author's own machine) and breaks the moment the code is ",
-               "run anywhere else. To run the code we commented these calls ",
-               "out. Any such script that then ran is **reproducible only ",
+               "run anywhere else. To run the code we replaced these calls ",
+               "with `pass`. Any such script that then ran is **reproducible only ",
                "after ignoring an `os.chdir()` that should not have been in ",
                "the code and needs to be fixed**."),
         nrow(py_setwd_rows), plural(nrow(py_setwd_rows)),

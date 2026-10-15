@@ -1584,7 +1584,12 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
           .dv_space_csv_summary_text(space_csv_findings_df)))
     # Same "worst of the two halves" rule as the main return's light.
     rank <- c(na = 0L, green = 1L, yellow = 2L, red = 3L)
-    both <- c(tl, if (nrow(file_findings_df) > 0) "yellow" else "na")
+    # Yellow also when tabular data files were found but none could be read:
+    # not one column was checked, so green (the light for having found and
+    # fetched the files) would read as "the data passed" (#480). With no data
+    # files at all there is nothing to check, and the light stays as it is.
+    dv_tl <- if (nrow(file_findings_df) > 0 || n_tabular_all > 0) "yellow" else "na"
+    both <- c(tl, dv_tl)
     both <- both[both %in% names(rank)]
     empty_tl <- if (!length(both)) "na" else
       names(rank)[which(rank == max(rank[both]))[1]]
@@ -1683,17 +1688,17 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         # distinct values, 37 beyond the fence), which are not measurements at
         # all; and MCMC posterior draws, where the tails are the result.
         #
-        # data_check_outliers() is correct Tukey and is KEPT, both as an
-        # exported function and in .dv_careless_block(), where it is applied to
-        # the IRV index — a bounded within-person statistic, not a raw
-        # measurement. What does not work is applying it blind to any numeric
-        # column. Restore only with a gate on `role`/`concept` (never for
-        # role == "identifier"; log-transform or skip concept ==
+        # data_check_outliers() is correct Tukey and is KEPT as an exported
+        # function; nothing in data_check calls it any more (the careless-
+        # responding screen flags only exact straightlining, see
+        # .dv_careless_block()). What does not work is applying it blind to any
+        # numeric column. Restore only with a gate on `role`/`concept` (never
+        # for role == "identifier"; log-transform or skip concept ==
         # "reaction_time").
         #
-        # Nothing is lost from the report: out-of-range values come from
-        # data_check_scale_values() below, which only applies to columns with a
-        # DETECTED BOUNDED SCALE — where a stray value really is an error.
+        # Out-of-range values on a bounded rating scale are checked by
+        # codebook_check, against the range the codebook documents
+        # (data_check_scale_values()); data_check no longer checks them.
         # o <- data_check_outliers(x_num, k = outlier_k)
         v <- x_num[!is.na(x_num) & !is.nan(x_num)]
         if (length(v) >= 4 && length(unique(v)) > 1) {
@@ -1883,7 +1888,12 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         nrow(df) < .dv_careless_min_rows) {
       careless_skipped <- careless_skipped + 1L; next
     }
-    blocks <- .detect_scale_blocks(df)
+    # Only blocks of at least .dv_careless_min_items items can flag anyone
+    # (the straightlining floor is that many items -- see .dv_careless_block()),
+    # so the minimum applies to each BLOCK; a file whose blocks are all
+    # shorter is not counted as screened (#480).
+    blocks <- Filter(function(cols) length(cols) >= .dv_careless_min_items,
+                     .detect_scale_blocks(df))
     if (length(blocks) == 0) { careless_skipped <- careless_skipped + 1L; next }
 
     # An identifier column: prefer data_check's `identifier` role for this
@@ -2071,7 +2081,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
             paste(parts, collapse = "; "))
   }
   if (nrow(careless_df) > 0) {
-    n_car   <- nrow(careless_df)                 # distinct respondents
+    n_car   <- nrow(careless_df)                 # distinct respondents (per file)
     n_short <- sum(careless_df$short_scale_only %in% TRUE)
     dv_summary_text <- paste0(dv_summary_text,
       sprintf(" %d survey respondent%s %s flagged for possible careless responding%s.",
@@ -2108,7 +2118,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
                              .dv_space_csv_summary_text(space_csv_findings_df))
 
   dv_report <- c(
-    "This module runs automated data-quality checks (outliers, miscoded missing values, empty and constant columns, SPSS filter variables, category casing, problematic column names, mixed text encodings, spreadsheet formatting) on the extracted data files.",
+    "This module runs automated data-quality checks (empty columns, SPSS filter variables, category casing, stray whitespace, numbers stored as text, problematic and colliding column names, mixed text encodings, personal information, spreadsheet formatting, and careless responding) on the extracted data files.",
     sprintf("We examined %d column%s across %d data file%s.",
             n_columns, plural(n_columns),
             length(previews), plural(length(previews)))
@@ -2177,7 +2187,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
 
 
   # Distributions: a single faceted figure with one small histogram per numeric
-  # column (outlier fences drawn as dashed lines), instead of a separate plot
+  # column (no outlier fences any more, see the DISABLED note where plot_specs
+  # is built), instead of a separate plot
   # per column. One render call keeps wide files fast; the facet count is capped
   # so the figure stays legible.
   if (length(plot_specs) > 0 && requireNamespace("ggplot2", quietly = TRUE) && plot_distributions == TRUE) {
@@ -2429,7 +2440,10 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
 .dv_short_scale_max <- 7L
 
 # Collapse the per-(respondent x block) careless table to one row per
-# respondent. Columns: paper-level respondent id, source_file(s), how many
+# respondent PER FILE. A respondent id is only unique within its own file:
+# respondent 58 of Study 2 and respondent 58 of Study 4 are different people,
+# and grouping by id alone reported them as one (#480, OSF sgv3m). Columns:
+# respondent id, source_file, how many
 # blocks flagged them and on which scales, the distinct reasons, worst
 # longstring / most extreme IRV, and `short_scale_only` — TRUE when every flag
 # is short-scale straightlining (likely-benign consistent answering, not clear
@@ -2449,12 +2463,13 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     !grepl("IRV", block_df$reason) &
     !is.na(block_df$.n_items) & block_df$.n_items <= .dv_short_scale_max
 
-  parts <- lapply(split(block_df, block_df$respondent), function(g) {
+  parts <- lapply(split(block_df, list(block_df$source_file, block_df$respondent),
+                        drop = TRUE), function(g) {
     # Strongest single piece of evidence: the block with the longest run.
     i <- which.max(g$longstring)[1]
     data.frame(
       respondent       = g$respondent[1],
-      source_file      = paste(sort(unique(g$source_file)), collapse = "; "),
+      source_file      = g$source_file[1],
       n_blocks_flagged = nrow(g),
       scales           = paste(sort(unique(g$scale)), collapse = "; "),
       reasons          = paste(sort(unique(g$reason)), collapse = "; "),
@@ -2714,8 +2729,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
 # `.dv_max_facets` and note how many were omitted.
 .dv_max_facets <- 40L
 
-# Build ONE faceted figure (a small histogram per numeric column, with the
-# Tukey outlier fences as dashed lines) and return it as a self-contained
+# Build ONE faceted figure (a small histogram per numeric column; dashed lines
+# only for a spec that carries lower/upper fences, which data_check no longer
+# sets -- see the DISABLED outlier note) and return it as a self-contained
 # base64 <img>. A single ggsave replaces the previous one-render-per-column
 # tabset, which rendered hundreds of PNGs on wide files. The image is embedded
 # as an inline data URI so a moved report keeps its figure (Quarto's own figure
@@ -2925,16 +2941,18 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
         findings[[length(findings) + 1L]] <- data.frame(
           source_file = fname, column = NA_character_, label = s$name,
           check = "Colour coding",
-          detail = sprintf("%d cell%s use fill colour to encode information; colour is lost on CSV export.",
-                           s$color_cells, plural(s$color_cells)))
+          detail = sprintf("%d cell%s %s fill colour to encode information; colour is lost on CSV export.",
+                           s$color_cells, plural(s$color_cells),
+                           plural(s$color_cells, "uses", "use")))
       }
       if (length(s$merges) > 0) {
         findings[[length(findings) + 1L]] <- data.frame(
           source_file = fname, column = NA_character_, label = s$name,
           check = "Merged cells",
-          detail = sprintf("%d merged range%s (%s) break the rectangular grid.",
+          detail = sprintf("%d merged range%s (%s) %s the rectangular grid.",
                            length(s$merges), plural(length(s$merges)),
-                           paste(utils::head(s$merges, 5), collapse = ", ")))
+                           paste(utils::head(s$merges, 5), collapse = ", "),
+                           plural(length(s$merges), "breaks", "break")))
       }
       if (s$empty_rows > 0) {
         findings[[length(findings) + 1L]] <- data.frame(
@@ -2947,9 +2965,10 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
         findings[[length(findings) + 1L]] <- data.frame(
           source_file = fname, column = NA_character_, label = s$name,
           check = "Empty or unnamed columns",
-          detail = sprintf("%d column%s %s empty or have a blank header.",
+          detail = sprintf("%d column%s %s empty or %s a blank header.",
                            s$empty_cols, plural(s$empty_cols),
-                           if (s$empty_cols == 1) "is" else "are"))
+                           plural(s$empty_cols, "is", "are"),
+                           plural(s$empty_cols, "has", "have")))
       }
     }
   }

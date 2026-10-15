@@ -133,6 +133,10 @@ repro_dependencies_py <- function(code_text, manifest_text = NULL) {
 # placeholder that only opens the Microsoft Store. Returns "" when neither
 # works.
 .repro_find_python <- function(python_bin = "python") {
+  # Running a candidate needs processx (in Suggests); without it every
+  # candidate would fail and look like a missing interpreter -- callers say
+  # which of the two it is (see .repro_python_missing_reason()).
+  if (!requireNamespace("processx", quietly = TRUE)) return("")
   for (cand in unique(c(python_bin, "python3"))) {
     bin <- Sys.which(cand)
     if (!nzchar(bin)) next
@@ -143,6 +147,14 @@ repro_dependencies_py <- function(code_text, manifest_text = NULL) {
     if (ok) return(unname(bin))
   }
   ""
+}
+
+# Why no Python interpreter can be used, for the report: the processx package
+# is missing (it runs Python), or neither `python` nor `python3` works.
+.repro_python_missing_reason <- function() {
+  if (!requireNamespace("processx", quietly = TRUE))
+    "the 'processx' package, which metacheck needs to run Python, is not installed"
+  else "no Python interpreter (`python` or `python3`) was found on this computer"
 }
 
 # Check whether Python files parse: the Python sibling of code_check's R parse

@@ -59,33 +59,52 @@ code_read <- function(file_path) {
 # MB once outputs are stored, and reading a 2.4MB JSON just to learn one word
 # is wasteful when code_lang() is called on every file in a repository.
 #
-# Returns "Python" when the file cannot be read (a URL not yet downloaded, an
-# unreadable path) or declares a language metacheck has no checks for --
-# Python is both the most common kernel and the safe default, since a notebook
-# that reached this function is at minimum a notebook.
+# Returns "Python" PROVISIONALLY when the file is not on disk (code_check
+# first calls code_lang() on bare file names, before downloading): a notebook
+# must still count as code to be downloaded at all. code_check reads the
+# language again from the downloaded file. A notebook that is on disk gets the
+# language it declares: "R", "Python", or another kernel's own language
+# ("Julia", ...; see .kernel_language()), never "Python" by default -- since
+# Python notebooks are now run, a Julia notebook labelled Python would be
+# syntax-checked and run as Python (#480). NA when it declares no language or
+# cannot be read.
 #
 # @param file_name path to a .ipynb file
-# @returns "R" or "Python"
+# @returns "R", "Python", another language name, or NA
 .ipynb_lang <- function(file_name) {
   if (length(file_name) != 1 || is.na(file_name) ||
       !file.exists(file_name)) return("Python")
 
   txt <- tryCatch(code_read(file_name), error = function(e) NULL)
-  if (is.null(txt) || !length(txt)) return("Python")
+  if (is.null(txt) || !length(txt)) return(NA_character_)
 
   nb <- tryCatch(jsonlite::fromJSON(paste(txt, collapse = "\n"),
                                     simplifyVector = FALSE),
                  error = function(e) NULL)
-  if (is.null(nb)) return("Python")
+  if (is.null(nb)) return(NA_character_)
 
   lang <- nb$metadata$kernelspec$language %||%
-          nb$metadata$language_info$name %||% ""
-  lang <- tolower(as.character(lang)[[1]] %||% "")
+          nb$metadata$language_info$name %||%
+          nb$metadata$kernelspec$name %||% ""
+  .kernel_language(as.character(lang)[[1]] %||% "")
+}
 
-  # "ir" is the IRkernel's NAME rather than its language, seen in the wild on
-  # older notebooks whose kernelspec$language is absent.
+# metacheck's label for a Jupyter kernel's (or Quarto engine's) declared
+# language: "R" ("r", or "ir", the IRkernel's NAME, seen on older notebooks
+# whose kernelspec$language is absent), "Python" (any "python"/"python3"/
+# "ipython"), "MATLAB", "SAS", "Stata" (labels code_check already uses), and
+# otherwise the language's own name in title case ("julia" -> "Julia"). NA
+# for an empty value.
+.kernel_language <- function(lang) {
+  lang <- tolower(trimws(lang %||% ""))
+  if (is.na(lang) || !nzchar(lang)) return(NA_character_)
   if (lang %in% c("r", "ir")) return("R")
-  "Python"
+  if (grepl("^(i?python|py)", lang)) return("Python")
+  if (grepl("^julia", lang)) return("Julia")
+  if (lang %in% c("matlab", "octave")) return("MATLAB")
+  if (lang == "sas") return("SAS")
+  if (grepl("^stata", lang)) return("Stata")
+  tools::toTitleCase(lang)
 }
 
 # The language a Quarto document's code chunks are written in.
@@ -127,7 +146,7 @@ code_read <- function(file_path) {
 # collapsing every non-R kernel to "Python".
 #
 # @param file_name path to a .qmd file
-# @returns "R" or "Python"
+# @returns "R", "Python", another language name, or NA (see .ipynb_lang())
 .qmd_lang <- function(file_name) {
   if (length(file_name) != 1 || is.na(file_name) ||
       !file.exists(file_name)) return("R")
@@ -158,10 +177,13 @@ code_read <- function(file_path) {
     }
   }
   if (!is.na(yaml_lang)) {
-    # Bare Jupyter kernel names ("python3", "ir") as well as language names
-    # ("python", "r") are both seen in the wild -- normalise both forms.
-    if (grepl("^py", yaml_lang)) return("Python")
-    if (yaml_lang %in% c("r", "ir")) return("R")
+    # Bare Jupyter kernel names ("python3", "ir", "julia-1.9") as well as
+    # language names ("python", "r") are both seen in the wild --
+    # .kernel_language() normalises both forms. A declared engine other than
+    # R or Python (e.g. Julia) is returned as itself rather than as R, so it
+    # is never purled or run as R (#480).
+    declared <- .kernel_language(yaml_lang)
+    if (!is.na(declared)) return(declared)
   }
 
   # No (or unrecognised) YAML engine: fall back to the first executable
@@ -172,6 +194,7 @@ code_read <- function(file_path) {
     chunk_lang <- regmatches(chunk, regexpr("(?<=\\{)[a-zA-Z]+", chunk, perl = TRUE))
     chunk_lang <- tolower(chunk_lang)
     if (length(chunk_lang) && grepl("^py", chunk_lang)) return("Python")
+    if (length(chunk_lang) && chunk_lang == "julia") return("Julia")
   }
 
   "R"

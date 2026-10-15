@@ -1789,8 +1789,9 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'   string applied to every file (default `"R"`), or a named character
 #'   vector keyed by file_name for a mixed-language set (same shape as
 #'   [repro_file_io()]'s own `lang`). Selects the write-redirect function
-#'   names ([.repro_redirect_writes()]) and the "comment out the working-
-#'   directory override" line (`setwd()` for R, `os.chdir()` for Python).
+#'   names ([.repro_redirect_writes()]) and the working-directory override
+#'   that is replaced with a statement that does nothing (`setwd()` becomes
+#'   `invisible(NULL)` in R, `os.chdir()` becomes `pass` in Python).
 #'   Python's font-substitution analogue is deliberately NOT built: an
 #'   unavailable font is a matplotlib WARNING with a silent DejaVu Sans
 #'   fallback, not the hard "invalid font type" failure
@@ -1801,7 +1802,8 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'
 #' @returns a data frame with `file_name`, `script_path` (absolute path written),
 #'   `run_dir` (the working directory a run should use — always `root`),
-#'   `setwd_removed` (count of `setwd()` lines commented out),
+#'   `setwd_removed` (count of `setwd()`/`os.chdir()` calls replaced with a
+#'   statement that does nothing),
 #'   `setwd_paths` (comma-joined paths those calls named, for the warning),
 #'   `family_replaced` (count of `family =`/`base_family =` named-font
 #'   arguments replaced with `"sans"`, so a plot call does not fail with
@@ -1898,10 +1900,16 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
       m <- regmatches(hit_lines, regexpr(setwd_arg, hit_lines, perl = TRUE))
       setwd_paths <- sub(paste0(".*", setwd_arg, ".*"), "\\1",
                          m[nzchar(m)], perl = TRUE)
-      # Comment the offending lines (keep them visible, but inert), tagging why.
-      txt[is_setwd] <- sub(setwd_line,
-        "\\1# [reproducibility_check removed setwd] \\2", txt[is_setwd],
-        perl = TRUE)
+      # Replace each call with a statement that does nothing, keeping the
+      # original visible in a comment that says why. Not a bare comment: when
+      # the call is the only statement of a block, a comment leaves the block
+      # empty -- Python stops with "IndentationError: expected an indented
+      # block" (a try:/if:/with: body), and in R `if (x)` followed by setwd()
+      # on the next line would take the NEXT statement as its body (#480).
+      no_op <- if (identical(fn_lang, "Python"))
+        "\\1pass  # [reproducibility_check removed os.chdir] \\2" else
+        "\\1invisible(NULL)  # [reproducibility_check removed setwd] \\2"
+      txt[is_setwd] <- sub(setwd_line, no_op, txt[is_setwd], perl = TRUE)
     }
 
     # Replace a named font family (family = "Times New Roman", base_family =

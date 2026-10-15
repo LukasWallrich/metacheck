@@ -4716,7 +4716,8 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
 #' anyway turns nearly every real value into a false "out of range" flag. When
 #' coverage is too low, ground truth is DISCARDED for this column (not merely
 #' widened) and the range falls back to `.detect_likert_scale` inference, same
-#' as if no ground truth had been supplied at all.
+#' as if no ground truth had been supplied at all -- or, with `infer = FALSE`,
+#' nothing is flagged for the column.
 #'
 #' This unifies the former `data_check_out_of_range` and
 #' `data_check_miscoded_missing`: one detector run, one finding per column.
@@ -4730,6 +4731,10 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
 #' @param min_ground_truth_coverage minimum fraction of non-missing values that
 #'   must already fall inside a declared `valid_values`/`valid_range` for it to
 #'   be trusted; below this, ground truth is discarded in favour of inference
+#' @param infer if `TRUE` (default), infer a rating-scale range from the data
+#'   when no ground truth is supplied or it was discarded; if `FALSE`, flag
+#'   nothing in that case. `codebook_check` uses `FALSE`: it reports only
+#'   values outside a range the authors documented, never a guessed one.
 #' @returns list(problem, message, values, lower, upper, classes) where `classes`
 #'   labels each flagged value "missing", "typo:<intended>", or "unexplained"
 #' @export
@@ -4737,7 +4742,8 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
 data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
                                     declared = NULL, valid_values = NULL,
                                     valid_range = NULL, n_max = 10,
-                                    min_ground_truth_coverage = 0.5) {
+                                    min_ground_truth_coverage = 0.5,
+                                    infer = TRUE) {
   none <- list(problem = FALSE, message = "", values = NULL,
                lower = NA_real_, upper = NA_real_, classes = character(0))
   if (!is.numeric(x)) return(none)
@@ -4796,6 +4802,7 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
   if (!is.null(valid_set) && mean(xv %in% valid_set) < min_ground_truth_coverage)
     lo <- hi <- valid_set <- NULL
 
+  if (is.null(valid_set) && !isTRUE(infer)) return(none)
   if (is.null(valid_set)) {
     sc <- .detect_likert_scale(xv)
     if (is.null(sc)) return(none)          # not a scale -> no range to violate

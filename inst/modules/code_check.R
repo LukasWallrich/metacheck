@@ -170,6 +170,17 @@ code_check <- function(paper, local_path = NULL,
     all_files$language <- code_lang(all_files$file_name)
   }
 
+  # A notebook (.ipynb) or Quarto document (.qmd) declares its language INSIDE
+  # the file, which code_lang() above could not read from the bare file name:
+  # every notebook came out "Python" and every Quarto document "R", R
+  # notebooks and Python/Julia documents included. Read it again from the
+  # downloaded copy, so an R notebook is checked as R and a Julia notebook is
+  # not checked (or run by reproducibility_check) as Python (#480).
+  loc <- all_files$file_location %||% rep(NA_character_, nrow(all_files))
+  redo <- grepl("\\.(ipynb|qmd)$", all_files$file_name, ignore.case = TRUE) &
+    !is.na(loc) & nzchar(loc) & file.exists(loc)
+  if (any(redo)) all_files$language[redo] <- unname(code_lang(loc[redo]))
+
   ## find relevant code files ----
   # JASP files are counted and listed, but not analysed: a .jasp is a binary
   # (zip) archive, so the text-based checks below (comments, absolute paths,
