@@ -17,11 +17,14 @@ functions, and classes together, since a missing name can be any of the
 three).
 }
 \description{
-The Python sibling of \code{\link[=repro_defined_vars]{repro_defined_vars()}}, for the module's own Python
-corrective re-run (a \code{NameError} -- \code{error_type == "undefined_variable"},
-see \code{\link[=repro_run_scripts_py]{repro_run_scripts_py()}}'s classification -- usually means the script
-expects a name another script in the same repository defines, rather than
-being a standalone program). Scans each file for \strong{top-level} variable
+The Python sibling of \code{\link[=repro_defined_vars]{repro_defined_vars()}}, used by the module's report
+to name the file that defines a missing name (a \code{NameError} --
+\code{error_type == "undefined_variable"}, see \code{\link[=repro_run_scripts_py]{repro_run_scripts_py()}}'s
+classification -- usually means the script expects a name another script
+in the same repository defines, rather than being a standalone program).
+Unlike R, there is no re-run in a corrected order: every Python script runs
+in its own \code{python} process, so a name another script defines is never
+available to it, whatever the order. Scans each file for \strong{top-level} variable
 assignments (\code{x = ...}, not \code{==}) and top-level \code{def}/\code{class} statements, so
 a missing name can be matched to the file that would supply it. Only a
 statement at the start of a (comment-free) line is taken, which
@@ -31,3 +34,4 @@ if it only imports or runs this one, and taking it would create false
 ordering edges. Unlike \code{\link[=repro_defined_vars]{repro_defined_vars()}}, there is no \code{assign("x", ...)}-style function-call form to also match -- Python has no equivalent
 builtin that creates a module-level name by string.
 }
+\keyword{internal}

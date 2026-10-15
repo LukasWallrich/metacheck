@@ -101,6 +101,26 @@
   NULL   # more than two comma-separated parts: not a recognised df shape
 }
 
+# Statistic family for an output value's STATO type label (stat_results_long()'s
+# `stato_label`), used only when .stat_family() does not recognise the value's
+# own name. An exact list of unambiguous types, not .stat_family() run on the
+# label: the label's wording misleads its patterns ("standard error of
+# estimate" reads as an estimate, "Bayesian information criterion" as a Bayes
+# factor, "regression coefficient" as a confidence interval).
+.stato_label_family <- c(
+  "t-statistic"                       = "t",
+  "p-value"                           = "p",
+  "number of degrees of freedom"      = "df",
+  "numerator degrees of freedom"      = "df1",
+  "denominator degrees of freedom"    = "df2",
+  "F-statistic"                       = "F",
+  "Chi-Squared statistic"             = "chisq",
+  "Z-statistic"                       = "z",
+  "Pearson's correlation coefficient" = "r",
+  "Spearman's rank correlation coefficient" = "rho",
+  "Cohen's d"                         = "d"
+)
+
 # Coarse statistic family for a name, both sides. NA when unrecognised -- used to
 # (a) drop junk reported rows whose "name" is prose/a variable, and (b) prefer a
 # type-consistent output cell when matching.
@@ -755,6 +775,15 @@ match_reported_output <- function(paper, output, include_tables = FALSE,
   an <- out_long$analysis    %||% rep("(all)", nrow(out_long))
   ovals <- vapply(out_long$value, function(x) .norm_value(x)$num, numeric(1))
   ofam  <- .stat_family(out_long$statistic)
+  # An output name the family rules do not know can still carry a type the
+  # output side resolved from the call that produced it: a printed scipy
+  # result names its values "statistic" and "pvalue", and stato_type_column()
+  # types TtestResult's "statistic" as a t-statistic. Without this, the
+  # reported t and p could never match a Python result.
+  if (!is.null(out_long$stato_label)) {
+    miss <- is.na(ofam)
+    ofam[miss] <- unname(.stato_label_family[out_long$stato_label[miss]])
+  }
   # row_label is carried into every site cell for .regroup_by_evidence()'s
   # cross-site plausibility check: when a sentence's components end up
   # confirmed at TWO DIFFERENT sites, row_label is the one signal available

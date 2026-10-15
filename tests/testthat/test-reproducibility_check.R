@@ -680,6 +680,81 @@ test_that("repro_write_scripts injects nothing for a file not named in inject_li
   expect_false(any(grepl("^library\\(", written)))
 })
 
+test_that("repro_write_scripts injects several library() calls in order", {
+  code_list <- list("uses_pipe.R" = "x <- 1:3 %>% sum()")
+  rewrite_list <- list("uses_pipe.R" = data.frame(
+    ref = character(0), basename = character(0), matched = logical(0),
+    target = character(0), ambiguous = logical(0), n_candidates = integer(0),
+    is_call = logical(0)))
+  plan <- data.frame(file_name = "uses_pipe.R", target_path = "uses_pipe.R")
+  root <- withr::local_tempdir()
+  out <- repro_write_scripts(code_list, rewrite_list, plan, root,
+                             inject_libs = list(uses_pipe.R = c("dplyr", "ggplot2")))
+  expect_equal(out$library_injected, "dplyr, ggplot2")
+  written <- readLines(out$script_path[1])
+  expect_match(written[1], "^library\\(dplyr\\)")
+  expect_match(written[2], "^library\\(ggplot2\\)")
+  expect_equal(written[3], "x <- 1:3 %>% sum()")
+})
+
+# .repro_run_by_source() ----
+
+test_that("repro_run_order records every source() edge", {
+  files <- data.frame(file_name = c("main.R", "a.R", "b.R"))
+  files$sources <- list(c("a.r", "b.r"), character(0), character(0))
+  out <- repro_run_order(files)
+  edges <- attr(out, "source_edges")
+  expect_setequal(edges$from, c("a.R", "b.R"))
+  expect_true(all(edges$to == "main.R"))
+})
+
+test_that(".repro_run_by_source finds scripts run only through source(), following chains", {
+  ot <- data.frame(file_name = c("main.R", "a.R", "b.R", "solo.R"))
+  attr(ot, "source_edges") <- data.frame(from = c("a.R", "b.R"), to = c("main.R", "a.R"))
+  out <- .repro_run_by_source(ot, c(main.R = TRUE, a.R = TRUE, b.R = TRUE, solo.R = TRUE))
+  expect_setequal(names(out), c("a.R", "b.R"))
+  expect_equal(out[["a.R"]], "main.R")
+  expect_equal(out[["b.R"]], "a.R")
+})
+
+test_that(".repro_run_by_source runs a script on its own when its sourcer cannot run", {
+  ot <- data.frame(file_name = c("main.R", "a.R"))
+  attr(ot, "source_edges") <- data.frame(from = "a.R", to = "main.R")
+  # main.R does not parse / lacks inputs: a.R still runs on its own.
+  expect_length(.repro_run_by_source(ot, c(main.R = FALSE, a.R = TRUE)), 0)
+  # a.R itself cannot run: it keeps its own outcome rather than being hidden.
+  expect_length(.repro_run_by_source(ot, c(main.R = TRUE, a.R = FALSE)), 0)
+})
+
+test_that(".repro_run_by_source leaves two scripts that source each other on their own", {
+  ot <- data.frame(file_name = c("a.R", "b.R"))
+  attr(ot, "source_edges") <- data.frame(from = c("a.R", "b.R"), to = c("b.R", "a.R"))
+  expect_length(.repro_run_by_source(ot, c(a.R = TRUE, b.R = TRUE)), 0)
+})
+
+# .repro_missing_fn_pkgs() ----
+
+test_that(".repro_missing_fn_pkgs adds every package the other scripts attach", {
+  code_list <- list(
+    "1_prep.R" = c("library(tidyverse)", "library(lme4)"),
+    "2_analysis.R" = c("d %>% filter(x > 1)"))
+  expect_equal(.repro_missing_fn_pkgs("%>%", "2_analysis.R", code_list, character(0)),
+               c("tidyverse", "lme4"))
+})
+
+test_that(".repro_missing_fn_pkgs falls back to magrittr for %>% when nothing provides it", {
+  code_list <- list("only.R" = "x <- 1:3 %>% sum()",
+                    "other.R" = "library(lme4)")
+  expect_equal(.repro_missing_fn_pkgs("%>%", "only.R", code_list, character(0)),
+               "magrittr")
+})
+
+test_that(".repro_missing_fn_pkgs returns nothing for an unknown function", {
+  code_list <- list("only.R" = "x <- not_a_real_function_xyz()")
+  expect_length(.repro_missing_fn_pkgs("not_a_real_function_xyz", "only.R",
+                                       code_list, character(0)), 0)
+})
+
 
 # repro_run_scripts() (execute phase; runs real subprocesses) ----
 
@@ -919,11 +994,19 @@ test_that("repro_install_deps_py returns an empty frame for no dependencies", {
 })
 
 test_that("repro_install_deps_py errors with a clear message when python is not found", {
+  # Neither the given name nor the `python3` fallback works.
+  local_mocked_bindings(.repro_find_python = function(python_bin = "python") "")
   install_deps <- data.frame(package = "numpy", source = "pypi", ref = NA_character_)
   expect_error(
     repro_install_deps_py(install_deps, lib_dir = withr::local_tempdir(),
                           python_bin = "definitely_not_a_real_python_binary_xyz"),
     "was not found on PATH")
+})
+
+test_that(".repro_find_python falls back to python3 when the given name is not found", {
+  py3 <- .repro_find_python("python3")
+  skip_if_not(nzchar(py3), "no working python3 interpreter")
+  expect_equal(.repro_find_python("definitely_not_a_real_python_binary_xyz"), py3)
 })
 
 

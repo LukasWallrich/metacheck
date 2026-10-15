@@ -23,11 +23,11 @@ repro_write_scripts(
 \item{root}{the materialised layout root}
 
 \item{inject_libs}{optional named character vector/list (names are
-\code{file_name}s already present in \code{code_text_list}) — a package name to
-inject as a \verb{library(<pkg>)} call at the very top of that script's text
-before it is written. Used by the module's corrective re-run for a
-\verb{could not find function "X"} error resolved to exactly one package that
-exports \code{X} (see the module's own missing-\code{library()} corrective step) —
+\code{file_name}s already present in \code{code_text_list}) — one or more package
+names to inject as \verb{library(<pkg>)} calls at the very top of that
+script's text before it is written. Used by the module's corrective
+re-run for a \verb{could not find function "X"} error (see
+\code{\link[=.repro_missing_fn_pkgs]{.repro_missing_fn_pkgs()}} for which packages) —
 reusing this function's existing text-rewrite plumbing rather than a
 separate rewrite path. \code{NULL} (default) injects nothing, unchanged from
 before this parameter existed. R only: there is no Python corrective
@@ -59,8 +59,8 @@ a data frame with \code{file_name}, \code{script_path} (absolute path written),
 arguments replaced with \code{"sans"}, so a plot call does not fail with
 "invalid font type" for a font not registered on the machine running the
 sandbox), \code{family_detail} (semicolon-joined \verb{<old> -> "sans"} text for
-each replacement), and \code{library_injected} (the package name injected via
-\code{inject_libs} for that file, or \code{NA} when none was).
+each replacement), and \code{library_injected} (the package name(s) injected
+via \code{inject_libs} for that file, comma-joined, or \code{NA} when none was).
 }
 \description{
 Each script's referenced data paths are rewritten to their Psych-DS target

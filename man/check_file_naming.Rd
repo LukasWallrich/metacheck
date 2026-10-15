@@ -24,8 +24,8 @@ a data.frame with one row per naming violation: \code{file_name},
 }
 \description{
 Checks every file's name against the naming conventions from the metacheck
-"machine readable FAIR data and code" guide: no spaces or special
-characters, lowercase only, no CamelCase, an actually-classifiable name
+"machine readable FAIR data and code" guide: no spaces, special characters
+or diacritics, an actually-classifiable name
 (not \code{data_type == "unknown"}), zero-padded numbering across sibling files,
 and four path-length budgets (255/228/100/50 characters).
 }
@@ -33,15 +33,14 @@ and four path-length budgets (255/228/100/50 characters).
 Rules split into two severities. \code{"bad"}: spaces, special characters,
 diacritics, \code{data_type == "unknown"} (the file could not be classified at
 all), and exceeding the hard 255-character path limit — these break
-something real. \code{"suggestion"}: uppercase letters,
-CamelCase, unpadded sibling numbering, and the softer 228/100/50
-path-length budgets — real conventions worth following, but nothing in
+something real. \code{"suggestion"}: unpadded sibling numbering and the softer
+228/100/50 path-length budgets — real conventions worth following, but nothing in
 metacheck's own classification or ordering logic actually depends on them
 (classification matches a keyword anywhere in the name with any/no
 separator — see \code{data_classify_files()}; nothing sorts files
 lexicographically for correctness — see \code{repro_run_order()}'s numeric, not
-string, tie-break). Underscore-vs-dash separator consistency is
-deliberately NOT checked at all, for the same reason: metacheck's
-classifiers never depend on it.
+string, tie-break). Letter case (uppercase, CamelCase) and
+underscore-vs-dash separator consistency are deliberately NOT checked at
+all, for the same reason: metacheck's classifiers never depend on them.
 }
 \keyword{internal}

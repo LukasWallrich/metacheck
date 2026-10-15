@@ -86,15 +86,109 @@ repro_dependencies_py <- function(code_text, manifest_text = NULL) {
 
   pins <- .repro_py_manifest_pins(manifest_text)
   base_pkgs <- .repro_py_stdlib_modules()
+  is_base <- pkgs %in% base_pkgs
+  # The import name is not always the name pip installs (`import sklearn`
+  # comes from `scikit-learn`), so the pip name is what is reported, installed
+  # and matched against the manifest's pins.
+  pkgs[!is_base] <- .repro_py_pip_name(pkgs[!is_base])
 
   src <- rep("pypi", length(pkgs))
   ref <- rep(NA_character_, length(pkgs))
-  src[pkgs %in% base_pkgs] <- "base"
-  m <- match(pkgs, pins$package)
-  has_pin <- !is.na(m) & !pkgs %in% base_pkgs
+  src[is_base] <- "base"
+  m <- match(tolower(pkgs), pins$package)
+  has_pin <- !is.na(m) & !is_base
   ref[has_pin] <- pins$requirement[m[has_pin]]
 
-  data.frame(package = pkgs, source = src, ref = ref, base = pkgs %in% base_pkgs)
+  out <- data.frame(package = pkgs, source = src, ref = ref, base = is_base)
+  out[!duplicated(out$package), , drop = FALSE]
+}
+
+# Import names whose pip package has a different name. Python imports are
+# case-sensitive, so the keys are matched exactly. A name not listed here is
+# installed under its import name, as before.
+.repro_py_pip_names <- function() {
+  c(
+    sklearn = "scikit-learn", skimage = "scikit-image",
+    cv2 = "opencv-python", PIL = "Pillow", yaml = "PyYAML",
+    bs4 = "beautifulsoup4", dateutil = "python-dateutil", Bio = "biopython",
+    docx = "python-docx", pptx = "python-pptx", umap = "umap-learn",
+    mpl_toolkits = "matplotlib", fitz = "PyMuPDF", Crypto = "pycryptodome",
+    serial = "pyserial", dotenv = "python-dotenv", community = "python-louvain",
+    wx = "wxPython", zmq = "pyzmq", attr = "attrs", jwt = "PyJWT",
+    OpenSSL = "pyOpenSSL"
+  )
+}
+
+# The pip name for each import name (only the top-level module counts, so
+# "sklearn.linear_model" gives "scikit-learn").
+.repro_py_pip_name <- function(module) {
+  top <- sub("\\..*$", "", module)
+  map <- .repro_py_pip_names()
+  ifelse(top %in% names(map), unname(map[top]), top)
+}
+
+# The Python interpreter to run: `python_bin` when it is on the path and
+# works, else `python3` (the only name on many macOS and Linux machines).
+# "Works" is checked by running it, because on Windows `python3` can be a
+# placeholder that only opens the Microsoft Store. Returns "" when neither
+# works.
+.repro_find_python <- function(python_bin = "python") {
+  for (cand in unique(c(python_bin, "python3"))) {
+    bin <- Sys.which(cand)
+    if (!nzchar(bin)) next
+    ok <- tryCatch(
+      identical(processx::run(bin, c("-c", "import sys"),
+                              error_on_status = FALSE, timeout = 30)$status, 0L),
+      error = function(e) FALSE)
+    if (ok) return(unname(bin))
+  }
+  ""
+}
+
+# Check whether Python files parse: the Python sibling of code_check's R parse
+# check. Each file's text is parsed with Python's own ast.parse(), which reads
+# the code without running it and writes no files (`python -m py_compile`
+# would write a __pycache__ folder). Returns a named logical vector (by file),
+# FALSE for a file with a syntax error; every file is TRUE when no working
+# Python interpreter was found, since nothing could be checked.
+.repro_py_parses <- function(code_text_list, python_bin = "python") {
+  out <- stats::setNames(rep(TRUE, length(code_text_list)), names(code_text_list))
+  if (!length(code_text_list) || !requireNamespace("processx", quietly = TRUE))
+    return(out)
+  bin <- .repro_find_python(python_bin)
+  if (!nzchar(bin)) return(out)
+
+  # One Python process for all files (starting Python once per file is slow
+  # for a repository with many scripts): it prints one line per file, "1"
+  # when it parses and "0" when it does not.
+  tfs <- vapply(seq_along(code_text_list), function(k) {
+    tf <- tempfile(fileext = ".py")
+    writeLines(enc2utf8(code_text_list[[k]]), tf, useBytes = TRUE)
+    tf
+  }, character(1))
+  # The paths go in a list file, not on the command line, which has a length
+  # limit on Windows.
+  list_file <- tempfile(fileext = ".txt")
+  writeLines(enc2utf8(tfs), list_file, useBytes = TRUE)
+  on.exit(unlink(c(tfs, list_file)), add = TRUE)
+  script <- paste(
+    "import ast, sys",
+    "for f in open(sys.argv[1], encoding='utf-8').read().splitlines():",
+    "    try:",
+    "        ast.parse(open(f, encoding='utf-8', errors='replace').read())",
+    "        print(1)",
+    "    except Exception:",
+    "        print(0)",
+    sep = "\n")
+  res <- tryCatch(
+    processx::run(bin, c("-c", script, list_file), error_on_status = FALSE,
+                  timeout = 60 + 2 * length(tfs)),
+    error = function(e) NULL)
+  ok <- if (!is.null(res)) trimws(strsplit(res$stdout, "\n", fixed = TRUE)[[1]])
+  # Anything unexpected (a timeout, a crash, missing lines) leaves every file
+  # counted as parsing, the same as having no interpreter.
+  if (length(ok) == length(tfs) && all(ok %in% c("0", "1"))) out[] <- ok == "1"
+  out
 }
 
 #' Parse a requirements.txt / pyproject.toml dependency block into per-package pins
@@ -246,9 +340,10 @@ repro_install_deps_py <- function(install_deps, lib_dir, python_bin = "python",
     stop("the 'processx' package is required to install Python dependencies.",
          call. = FALSE)
 
-  bin <- Sys.which(python_bin)
+  bin <- .repro_find_python(python_bin)
   if (!nzchar(bin))
-    stop("Python executable '", python_bin, "' was not found on PATH.", call. = FALSE)
+    stop("Python executable '", python_bin, "' (or 'python3') was not found on PATH.",
+         call. = FALSE)
   dir.create(lib_dir, recursive = TRUE, showWarnings = FALSE)
 
   rows <- lapply(seq_len(nrow(install_deps)), function(i) {
@@ -321,9 +416,10 @@ repro_run_scripts_py <- function(run_tbl, order, lib_dir = NULL,
     stop("the 'processx' package is required to execute code (execute = TRUE).",
          call. = FALSE)
 
-  bin <- Sys.which(python_bin)
+  bin <- .repro_find_python(python_bin)
   if (!nzchar(bin))
-    stop("Python executable '", python_bin, "' was not found on PATH.", call. = FALSE)
+    stop("Python executable '", python_bin, "' (or 'python3') was not found on PATH.",
+         call. = FALSE)
 
   ordered_names <- c(order[order %in% run_tbl$file_name],
                      setdiff(run_tbl$file_name, order))
@@ -412,7 +508,7 @@ repro_run_scripts_py <- function(run_tbl, order, lib_dir = NULL,
       nomod_var <- if (!is.na(nomod_src))
         sub(paste0(".*", nomod_pat, ".*"), "\\1",
             regmatches(nomod_src, regexpr(nomod_pat, nomod_src))) else NA_character_
-      dep_unavailable <- !is.na(nomod_var) && nomod_var %in% failed_deps
+      dep_unavailable <- !is.na(nomod_var) && .repro_py_pip_name(nomod_var) %in% failed_deps
 
       error_type <- if (dep_unavailable) "dependency_unavailable"
                     else if (!is.na(undefined_var)) "undefined_variable"
@@ -434,11 +530,14 @@ repro_run_scripts_py <- function(run_tbl, order, lib_dir = NULL,
 
 #' Find the names each Python script defines at top level
 #'
-#' The Python sibling of [repro_defined_vars()], for the module's own Python
-#' corrective re-run (a `NameError` -- `error_type == "undefined_variable"`,
-#' see [repro_run_scripts_py()]'s classification -- usually means the script
-#' expects a name another script in the same repository defines, rather than
-#' being a standalone program). Scans each file for **top-level** variable
+#' The Python sibling of [repro_defined_vars()], used by the module's report
+#' to name the file that defines a missing name (a `NameError` --
+#' `error_type == "undefined_variable"`, see [repro_run_scripts_py()]'s
+#' classification -- usually means the script expects a name another script
+#' in the same repository defines, rather than being a standalone program).
+#' Unlike R, there is no re-run in a corrected order: every Python script runs
+#' in its own `python` process, so a name another script defines is never
+#' available to it, whatever the order. Scans each file for **top-level** variable
 #' assignments (`x = ...`, not `==`) and top-level `def`/`class` statements, so
 #' a missing name can be matched to the file that would supply it. Only a
 #' statement at the start of a (comment-free) line is taken, which
@@ -456,7 +555,7 @@ repro_run_scripts_py <- function(run_tbl, order, lib_dir = NULL,
 #'   (character vector of names each file defines at top level -- variables,
 #'   functions, and classes together, since a missing name can be any of the
 #'   three).
-#' @export
+#' @keywords internal
 .repro_py_defined_vars <- function(code_text_list) {
   if (is.null(code_text_list) || length(code_text_list) == 0)
     return(data.frame(file_name = character(0)))

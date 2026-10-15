@@ -612,6 +612,16 @@ data_classify_files <- function(file_name, file_path = NULL) {
   type
 }
 
+# Configuration files of an R package's build, test and website services
+# (see .is_r_package_file() below for why they are left out of its check).
+.is_r_package_service_file <- function(path) {
+  base <- tolower(basename(path))
+  base %in% c(".travis.yml", "codecov.yml", ".codecov.yml", "appveyor.yml",
+              ".appveyor.yml", ".gitlab-ci.yml", "_pkgdown.yml", ".covrignore",
+              ".rbuildignore", ".lintr") |
+    grepl("(^|/)\\.(github|circleci)/", path, ignore.case = TRUE)
+}
+
 #' Identify files that belong to an R package's own source tree
 #'
 #' An R package repository (or a package kept in a subfolder of a larger
@@ -719,6 +729,15 @@ data_classify_files <- function(file_name, file_path = NULL) {
     # config, not a real analysis script -- exclude it here rather than loosen
     # the general-purpose classifier just for this one packaging artifact.
     outside_idx <- outside_idx[!grepl("\\.rproj$", basename(path[outside_idx]), ignore.case = TRUE)]
+    # The same holds for the configuration files of a package's build, test
+    # and website services (Travis, AppVeyor, GitHub Actions, codecov,
+    # pkgdown, ...): .yml files classify as "code" by extension, so a
+    # .travis.yml or codecov.yml next to a root-level package made the
+    # package look vendored and discarded all of its real files (#469).
+    # Matched by exact name or folder, not every .yml: a paper's own
+    # config.yml can be real analysis settings. These files are only left
+    # out of this decision; they stay in the file list.
+    outside_idx <- outside_idx[!.is_r_package_service_file(path[outside_idx])]
     outside_types <- data_classify_files(basename(path[outside_idx]), path[outside_idx])
     has_real_content <- any(outside_types %in% c("data", "code"))
     if (!has_real_content) {
@@ -1919,6 +1938,27 @@ txt_classify_content <- function(path) {
   counts <- vapply(candidates, function(d)
     nchar(line) - nchar(gsub(d, "", line, fixed = TRUE)), integer(1))
   if (max(counts) == 0) "," else candidates[which.max(counts)]
+}
+
+# Does a .csv look separated by spaces rather than commas? .sniff_delimiter()
+# never considers a space, so such a file is read as one column of text and
+# none of its columns are checked. This only decides whether to WARN the
+# author; the file is not re-read with spaces as the separator, which could
+# misread a one-column file of phrases ("red house"). It is therefore strict:
+# the first lines (up to 6, comments and blank lines skipped) hold none of the
+# delimiters .sniff_delimiter() knows, each splits on spaces into the same
+# number (>= 3) of fields, and at least one value below the first line is a
+# number.
+.csv_is_space_separated <- function(path) {
+  lines <- tryCatch(.utf8_lines(readLines(path, n = 20, warn = FALSE)),
+                    error = function(e) character(0))
+  lines <- trimws(lines)
+  lines <- utils::head(lines[nzchar(lines) & !startsWith(lines, "#")], 6)
+  if (length(lines) < 2 || any(grepl("[,;\t|]", lines))) return(FALSE)
+  fields <- strsplit(lines, " +")
+  n <- lengths(fields)
+  if (n[1] < 3 || any(n != n[1])) return(FALSE)
+  any(!is.na(suppressWarnings(as.numeric(unlist(fields[-1])))))
 }
 
 # Decide whether a delimited text file has a header row. A file is treated as
@@ -6697,13 +6737,24 @@ data_promote_header_row <- function(df, raw_rows = NULL, max_scan = 4L) {
   # guessed at.
   .bh_sniff_exts <- c("csv", "tsv", "dat", "iqdat", "txt")
   if (!ext %in% .bh_sniff_exts) return(FALSE)
-  # A one-row header read is enough for the data-frame detectors.
-  hdr <- tryCatch(
-    utils::read.csv(path, check.names = FALSE, nrows = 1L,
-                    fileEncoding = "UTF-8-BOM",
-                    sep = if (ext == "iqdat") "\t" else ","),
-    error = function(e) NULL)
-  if (is.null(hdr) || ncol(hdr) == 0) return(FALSE)
+  # The detectors only read the column NAMES, so only the header line is read
+  # and split. read.csv(nrows = 1) took time quadratic in the number of
+  # columns when the names are long: about 1.5 hours for one 12,110-column
+  # table whose column names are 250-character DNA sequences (#477); reading
+  # the line takes under a second.
+  # Warnings (e.g. a byte that is not valid UTF-8) are suppressed, not treated
+  # as failure, as read.csv() did before.
+  fields <- tryCatch(suppressWarnings({
+    con <- file(path, encoding = "UTF-8-BOM")
+    on.exit(close(con), add = TRUE)
+    line <- readLines(con, n = 1L, warn = FALSE)
+    if (!length(line)) character(0) else
+      scan(text = line, what = "", sep = if (ext == "iqdat") "\t" else ",",
+           quote = "\"", quiet = TRUE, na.strings = character(0))
+  }), error = function(e) character(0))
+  if (!length(fields)) return(FALSE)
+  hdr <- as.data.frame(matrix(NA, nrow = 1L, ncol = length(fields),
+                              dimnames = list(NULL, fields)), optional = TRUE)
   data_check_is_behaverse(hdr) || data_check_is_inquisit(hdr) ||
     data_check_is_jspsych(hdr)
 }

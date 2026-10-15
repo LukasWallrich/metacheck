@@ -22,7 +22,10 @@ signal placed a multi-file set (they share \code{order = NA}, basis \code{none})
 Attribute \code{"fuzzy_sources"} is a data frame (\code{from}, \code{to}) of \code{source()}
 edges that only resolved after normalising both basenames (a renumbered/
 reworded script reference — see \code{\link[=.repro_normalize_basename]{.repro_normalize_basename()}}), empty
-when every \code{source()} reference matched an exact basename.
+when every \code{source()} reference matched an exact basename. Attribute
+\code{"source_edges"} is a data frame (\code{from}, \code{to}) of every resolved
+\code{source()} edge, exact or fuzzy: \code{from} is the sourced file, \code{to} the
+file that sources it.
 }
 \description{
 Scripts in a repository usually depend on each other: a preparation script

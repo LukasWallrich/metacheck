@@ -1219,3 +1219,30 @@ test_that("data_group_llm makes no model request and reports nothing unanswered 
   expect_length(attr(grp, "unresolved"), 0)
   expect_false(anyNA(grp$group))
 })
+
+test_that(".bh_is_trial_level_file reads only the header line (#477)", {
+  d <- withr::local_tempdir()
+  js <- file.path(d, "task.csv")
+  writeLines(c('"rt","trial_type","trial_index","stimulus, text"',
+               '512,"html-keyboard-response",0,"a, b"'), js)
+  iq <- file.path(d, "task.iqdat")
+  writeLines(c(paste("date", "time", "subject", "blockcode", "trialcode", "latency", sep = "\t"),
+               paste(1, 2, 3, "b", "t", 400, sep = "\t")), iq)
+  plain <- file.path(d, "plain.csv")
+  writeLines(c("a,b,c", "1,2,3"), plain)
+  empty <- file.path(d, "empty.csv")
+  file.create(empty)
+  expect_true(.bh_is_trial_level_file(js))
+  expect_true(.bh_is_trial_level_file(iq))
+  expect_false(.bh_is_trial_level_file(plain))
+  expect_false(.bh_is_trial_level_file(empty))
+
+  # A wide table with long column names: read.csv(nrows = 1) took minutes
+  # here (time quadratic in the number of columns); one line takes a moment.
+  wide <- file.path(d, "asv.csv")
+  nm <- vapply(seq_len(1600), function(i) strrep("ACGT", 62), "")
+  nm <- paste0(nm, seq_along(nm))
+  writeLines(c(paste(c("sample", nm), collapse = ","),
+               paste(c("S1", rep(0, 1600)), collapse = ",")), wide)
+  expect_lt(system.time(.bh_is_trial_level_file(wide))[["elapsed"]], 10)
+})

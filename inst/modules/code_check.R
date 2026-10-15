@@ -181,8 +181,8 @@ code_check <- function(paper, local_path = NULL,
   # Python (.py and .ipynb) is checked on the same terms as MATLAB: it is text
   # (a .ipynb is JSON, whose code cells are recovered as text by
   # code_extract_py() below, exactly as .Rmd/.qmd are purled by
-  # code_extract_r()), so every text-based check applies. RUNNING it stays out
-  # of scope in reproducibility_check, which is R-only.
+  # code_extract_r()), so every text-based check applies. RUNNING it is done
+  # by reproducibility_check, which runs R and Python code.
   listed_langs <- c("R", "Python", "SAS", "SPSS", "Stata", "Mplus", "MATLAB", "JASP")
   checked_langs <- setdiff(listed_langs, "JASP")
 

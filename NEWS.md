@@ -1,5 +1,24 @@
 # metacheck 0.3.3
 
+* `reproducibility_check()` assesses and runs Python code as well as R code (#479). Python files, and notebooks and Quarto documents whose code is Python, go through the same static phase (dependencies, path rewrites, run order, missing inputs) and, with `execute = TRUE`, are run with `python`, in their own "Python code" section of the report
+* `reproducibility_check()` compares the reported statistics with the analysis output once, after the R and the Python code, so it includes what the Python scripts print. It used to run inside the R part only, before any Python output existed
+* In `reproducibility_check()`, a paper with Python but no R code no longer loses the SPSS/Stata, self-reproducible-output and other-language sections, the comparison of self-reproducible output with the paper, and the red light for SPSS or Stata data without syntax
+* `reproducibility_check()` extracts the code in Python notebooks (`.ipynb`) and Python Quarto documents (`.qmd`) before running it; the notebook's JSON or the document's Markdown was run as Python before. R-kernel notebooks are extracted the same way on the R side
+* `reproducibility_check()` checks Python files for syntax errors with Python's own parser when a Python interpreter is available, so `not_parsed` now occurs for Python too (code written for Python 2 fails this check)
+* `reproducibility_check()` uses `python3` when `python` is not on the path, and when neither is found the Python files are reported as not run while the R results are still returned; the whole module used to stop
+* `reproducibility_check()` installs Python packages whose import name differs from their pip name (`sklearn`, `cv2`, `PIL`, `yaml`, `bs4` and others) under the pip name (`scikit-learn`, `opencv-python`, ...) and matched to their version in `requirements.txt`
+* `reproducibility_check()` only requires `callr` when the paper has R code
+* `reproducibility_check()` no longer re-runs a Python script that fails on an undefined name in a corrected order: each Python script runs in its own process, so a name another script defines is never available to it. The report names the script that defines the name instead
+* `reproducibility_check()` returns its summary as one text for a paper with both R and Python code. It returned two, which made the report stop with an error under R 4.3 and later
+* `.repro_py_defined_vars()` is no longer exported
+* `reproducibility_check()` no longer fails R scripts on `%>%` (or another function) because the packages are loaded in a different script of the same project. Every script runs in its own R process, and 15 scripts in 11 papers failed this way. A script that another script runs with `source()` is now run only inside that script (outcome `run_by_source`), instead of also on its own, where it lacks the packages and objects the sourcing script sets up first. For another script that fails with `could not find function`, the re-run adds the `library()` calls the project's other scripts make (all of them, since such a script usually needs more than the one function that failed first), or else the one package that exports the function, or else magrittr for `%>%`. As for a removed `setwd()`, each added call is recorded in `modifications`, and a script that then runs is reported as reproducible only after the repair. `repro_run_order()` returns every `source()` edge in a `"source_edges"` attribute, and `repro_write_scripts()`'s `inject_libs` accepts several packages per script
+* `data_check()` warns when a `.csv` file is separated by spaces instead of commas ("Space-separated .csv"), recommending to save it as a comma-separated `.csv` or a tab-separated `.tsv`. Such a file reads as one column of text, so none of its columns were checked, and the light could stay green
+* `data_check()` keeps its summary, report and traffic light for a repository with no readable tabular data (only code, documents or images, or data files that are not usable tables). These were lost: the module returned only the spreadsheet-formatting findings, and returned them as `table`, where `codebook_check` and `psychds_check` expect the column table. `table` is now the (empty) column table and the findings are in `findings`, as for every other repository
+* The comparison of reported statistics with analysis output (`match_reported_output()`) also uses the type the output side resolved from the producing call when a value's own name is not recognised. A printed scipy result names its values `statistic` and `pvalue`, so a reported t-test could never match a `TtestResult` before. `F_onewayResult` (F), `PearsonRResult` (r) and `Chi2ContingencyResult` (chi-squared, with its `dof`) are now typed as well; `spearmanr()` and `kendalltau()` share one result class, so their coefficient stays untyped
+* `reproducibility_check(workers > 1)` copies every `metacheck.*` option into each paper's background R process (#474). Only the Docker resource limits were passed before, so `metacheck.cache.dir` was lost and every cache was written into the working directory (4.5 GB in one run), downloading repositories again that were already in the configured cache
+* `data_check()` no longer takes hours on wide tables with long column names (#477). The check for trial-level files (Behaverse, Inquisit, jsPsych) reads only the header line instead of calling `read.csv(nrows = 1)`, whose time grew with the square of the number of columns: for a 1,600-column table with 250-character names, 0.06 s instead of 20 s, and about 1.5 hours per file on a real 12,110-column table
+* `repo_check()` (and so every module that uses its file list) keeps the files of a root-level R package that is the paper's deposit when the package has configuration files for build, test or website services (`.travis.yml`, `codecov.yml`, `appveyor.yml`, `.gitlab-ci.yml`, `_pkgdown.yml`, `.github/`, ...) (#469). These classify as code by their `.yml` extension, so the package looked like a copy of someone else's package and all its real files were discarded (229 of 238 files for one paper). They are now left out of that decision only, by exact name, so a paper's own `config.yml` still counts
+* `check_file_naming()`'s help no longer lists letter-case rules (lowercase only, no CamelCase), which it does not check
 * `data_group_llm()` (the study-group step of `data_check()`, `repo_check()` and `psychds_check()`) sends nothing to a model when `llm_use()` is off and groups the files by its rules alone. `llm()`'s refusal used to be counted as a failed request, so with LLM use off (as on the hosted apps) every report said "The study-group step did not get an answer for N files (the model request failed)"
 * `data_check()`'s summary in a brief report (`report_type()` "brief" or "simple_brief") no longer says how the files were grouped into studies, whether the study-group step got an answer, or which demographic columns were found: a brief report is about what to improve. The full report is unchanged
 * Listing an OSF repository takes far fewer requests. `osf_info(recursive = TRUE)` (used by `repo_check()` and `osf_file_download()`) lists a project's whole component tree, with every component's storage providers, in one request per 100 components (`/nodes/?filter[root]=<project>&embed=files`) instead of two requests per component; `osf_file_download(mode = "all")` finds its components the same way. A GitHub repository linked to an OSF project is listed through GitHub itself (2 requests for the whole repository, with file sizes) instead of one slow OSF-proxied request per folder, and its files are downloaded from GitHub. On a paper linking three OSF projects, a ResearchBox and a Zenodo record, `repo_check()` went from 61 requests and 246 seconds to 38 requests and 81 seconds, finding the same 2,809 files. Each shortcut falls back to the previous one-request-per-item listing whenever it cannot be used (e.g. a private GitHub repository the OSF shows through its owner's account). One difference: a private component that the OSF token's owner can see without being a contributor to it is no longer listed, since it is not part of what a paper shares with its readers
@@ -91,11 +110,11 @@
 
 * Four new modules: `data_check`, `codebook_check`, `reg_check` and `ethics_check`
 * Large updates to existing modules:
-  * `repo_check` now lists what is inside zip archives instead of just counting them, and checks file naming
-  * `code_check` reads code out of output files, supports Python and notebooks, and detects environment pins
-  * `ref_accuracy` was rewritten to check DOI-backed reference coherence
-  * `stat_effect_size` finds tests via `extract_eq()` and reports implied sample sizes
-  * `power` uses structured LLM extraction, with a prompt-based fallback
+* `reproducibility_check()`, Python: `repo_check` now lists what is inside zip archives instead of just counting them, and checks file naming
+* `reproducibility_check()`, Python: `code_check` reads code out of output files, supports Python and notebooks, and detects environment pins
+* `reproducibility_check()`, Python: `ref_accuracy` was rewritten to check DOI-backed reference coherence
+* `reproducibility_check()`, Python: `stat_effect_size` finds tests via `extract_eq()` and reports implied sample sizes
+* `reproducibility_check()`, Python: `power` uses structured LLM extraction, with a prompt-based fallback
 * Data files in repositories are now downloaded and checked, not just listed, with a shared on-disk cache (`download_repo_files()`, `repo_cache_dir()`)
 * New archive sources: PsychArchives, Zenodo deposit and upload, and OSF project listing; GitHub repositories are now listed via the Git Trees API
 * Statistical output files can be read and compared against the manuscript: JASP, jamovi, SPSS, Stata, Mplus and R (`read_stat_tables()`, `match_reported_output()`)
@@ -347,13 +366,13 @@ Our beta release! We've made so many changes, and we're sure there are still man
 
 * Updated `read()` to parse more stupid date formats that turn up in the submission string (and added the unparsed submission string back just in case)
 * Completely overhauled how paper objects handle references.
-  * the `paper$reference` table is now `paper$bib`
-  * the `paper$citations` table is now `paper$xrefs` and also contains  information for internal cross-references to figures, tables, footnotes, and formulae
-  * the `ref_id` and `bib_id` in both tables is now `xref_id`
-  * the `xrefs` table also contains location information (section, div, p, s) for the sentence containing the cross-ref, so you can use `expand_text()`
-  * The `read()` function now returns paper objects with these new tables, so you will need to re-read any XML files (if you have stored the papercheck list as Rdata)
-  * The `psychsci` object has been updated for this new format
-  * Modules and vignettes have been updated as well
+* `reproducibility_check()`, Python: the `paper$reference` table is now `paper$bib`
+* `reproducibility_check()`, Python: the `paper$citations` table is now `paper$xrefs` and also contains  information for internal cross-references to figures, tables, footnotes, and formulae
+* `reproducibility_check()`, Python: the `ref_id` and `bib_id` in both tables is now `xref_id`
+* `reproducibility_check()`, Python: the `xrefs` table also contains location information (section, div, p, s) for the sentence containing the cross-ref, so you can use `expand_text()`
+* `reproducibility_check()`, Python: The `read()` function now returns paper objects with these new tables, so you will need to re-read any XML files (if you have stored the papercheck list as Rdata)
+* `reproducibility_check()`, Python: The `psychsci` object has been updated for this new format
+* `reproducibility_check()`, Python: Modules and vignettes have been updated as well
 
 # papercheck 0.0.0.9052
 

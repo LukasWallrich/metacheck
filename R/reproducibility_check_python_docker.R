@@ -43,12 +43,12 @@
 #' tensorflow (deliberately excluded from the small image despite being
 #' common in the scan — measured at ~700MB and ~450MB respectively, on top
 #' of several hundred MB more of their own transitive dependencies) plus ~70
-#' more less-common packages; a caller whose paper needs one of those passes
-#' `docker_image = "ghcr.io/scienceverse/metacheck_py_large:latest"`
-#' explicitly, or simply lets a paper needing an uncommon package install it
-#' at run time against the small image instead (slower, needs network, same
-#' tradeoff the R side's install phase already makes for an uncommon CRAN
-#' package).
+#' more less-common packages. `reproducibility_check()` always uses the small
+#' image, and a paper needing an uncommon package installs it at run time
+#' (slower, needs network, same tradeoff the R side's install phase already
+#' makes for an uncommon CRAN package). The large image can only be used by
+#' calling [repro_install_deps_py_docker()] and [repro_run_scripts_py_docker()]
+#' directly, with `image = "ghcr.io/scienceverse/metacheck_py_large:latest"`.
 #'
 #' psychopy was deliberately EXCLUDED from both images despite appearing in
 #' 18 of 486 scanned files (tied with statsmodels for the most common
@@ -359,7 +359,7 @@ repro_run_scripts_py_docker <- function(run_tbl, order, sandbox_root, lib_dir = 
       nomod_var <- if (!is.na(nomod_src))
         sub(paste0(".*", nomod_pat, ".*"), "\\1",
             regmatches(nomod_src, regexpr(nomod_pat, nomod_src))) else NA_character_
-      dep_unavailable <- !is.na(nomod_var) && nomod_var %in% failed_deps
+      dep_unavailable <- !is.na(nomod_var) && .repro_py_pip_name(nomod_var) %in% failed_deps
 
       etype <- if (dep_unavailable) "dependency_unavailable"
                else if (!is.na(undefined_var)) "undefined_variable"

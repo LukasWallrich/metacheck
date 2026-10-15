@@ -1503,47 +1503,98 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   spreadsheet_result <- .dv_spreadsheet_findings(structure_df)
   spreadsheet_findings_df <- spreadsheet_result$findings
   n_spreadsheet_files <- spreadsheet_result$n_files
+  # ── 1c. Space-separated .csv files ─────────────────────────────────────────
+  # File-level, like the spreadsheet findings above, and run on the raw file
+  # for the same reason: such a file reads as one column of text, so it never
+  # yields a usable preview to check (see .dv_space_csv_findings() below).
+  space_csv_findings_df <- .dv_space_csv_findings(structure_df)
 
+  # Per-paper spreadsheet counts, for both the early return (empty(), below)
+  # and the main return's dv_summary_table.
+  spreadsheet_file_to_paper <- if (!is.null(structure_df) && nrow(structure_df) > 0) {
+    stats::setNames(structure_df$paper_id, structure_df$file_name)
+  } else {
+    character(0)
+  }
+
+  # spreadsheet_result$n_files counts XLSX/XLS/ODS/FODS files examined (whether
+  # or not any of them triggered a finding); recompute that same per-file count
+  # grouped by paper_id from structure_df directly, rather than from
+  # spreadsheet_findings_df (which only has rows for files that actually raised
+  # a finding, and would undercount clean spreadsheets).
+  n_spreadsheet_files_by_paper <- {
+    xl_rows <- if (!is.null(structure_df) && nrow(structure_df) > 0) {
+      structure_df[
+        tolower(tools::file_ext(structure_df$file_name)) %in% .dv_spreadsheet_exts &
+          !is.na(structure_df$file_location) &
+          nzchar(structure_df$file_location) &
+          file.exists(structure_df$file_location %||% ""),
+        , drop = FALSE]
+    } else {
+      structure_df[0, , drop = FALSE]
+    }
+    if (!is.null(xl_rows) && nrow(xl_rows) > 0) {
+      xl_rows |> dplyr::summarise(spreadsheet_file_n = dplyr::n(), .by = paper_id)
+    } else {
+      data.frame(paper_id = character(0), spreadsheet_file_n = integer(0))
+    }
+  }
+  n_flagged_files_spreadsheet_by_paper <- if (nrow(spreadsheet_findings_df) > 0) {
+    data.frame(
+      paper_id = unname(spreadsheet_file_to_paper[spreadsheet_findings_df$source_file]),
+      source_file = spreadsheet_findings_df$source_file
+    ) |>
+      dplyr::summarise(spreadsheet_flagged_file_n = length(unique(source_file)),
+                       .by = paper_id)
+  } else {
+    data.frame(paper_id = character(0), spreadsheet_flagged_file_n = integer(0))
+  }
+
+  # The early return for a repository with no readable tabular data (all
+  # code/PDFs/images, or every data file unreadable or not a usable table).
+  # It skips the data-quality checks, but returns the same shape as the main
+  # return below: the file classification's own summary sentences, report and
+  # traffic light (computed above, whether or not any file could be read),
+  # combined with the file-level findings (spreadsheet formatting,
+  # space-separated .csv). It once returned only the findings -- as `table`,
+  # where codebook_check and psychds_check expect the column table -- so such
+  # a paper's whole data_check summary and report were lost.
   empty <- function(text) {
-    n_flagged_files_spreadsheet <- length(unique(spreadsheet_findings_df$source_file))
+    file_findings_df <- dplyr::bind_rows(spreadsheet_findings_df, space_csv_findings_df)
+    if (nrow(spreadsheet_findings_df) > 0)
+      text <- paste(text, .dv_spreadsheet_summary_text(spreadsheet_findings_df,
+                                                       n_spreadsheet_files))
+    if (nrow(space_csv_findings_df) > 0)
+      text <- paste(text, .dv_space_csv_summary_text(space_csv_findings_df))
+    dv_report <- c(
+      if (nrow(spreadsheet_findings_df) > 0)
+        .dv_spreadsheet_report(spreadsheet_findings_df, n_spreadsheet_files),
+      if (nrow(space_csv_findings_df) > 0)
+        c("#### Space-separated .csv files",
+          .dv_space_csv_summary_text(space_csv_findings_df)))
+    # Same "worst of the two halves" rule as the main return's light.
+    rank <- c(na = 0L, green = 1L, yellow = 2L, red = 3L)
+    both <- c(tl, if (nrow(file_findings_df) > 0) "yellow" else "na")
+    both <- both[both %in% names(rank)]
+    empty_tl <- if (!length(both)) "na" else
+      names(rank)[which(rank == max(rank[both]))[1]]
+    dv_summary_table <- summary_table["paper_id"] |>
+      dplyr::left_join(n_spreadsheet_files_by_paper, by = "paper_id") |>
+      dplyr::left_join(n_flagged_files_spreadsheet_by_paper, by = "paper_id")
+    dv_summary_table$flagged_n <- 0L
+    for (col in c("spreadsheet_file_n", "spreadsheet_flagged_file_n"))
+      dv_summary_table[[col]][is.na(dv_summary_table[[col]])] <- 0L
     list(
-      table = spreadsheet_findings_df,
-      summary_table = data.frame(
-        # .pid() takes a single argument (files = NULL) -- this call
-        # passed a second, unmatched argument (structure_df), which made
-        # every call crash with "unused argument (structure_df)"
-        # whenever this branch was reached (any paper where data_check
-        # found zero readable tabular files: previews empty, whether from
-        # messy/non-rectangular spreadsheets or no tabular data at all).
-        # Introduced in 21a6c28 (2026-08-11); the correct one-argument
-        # form, .pid(columns_df), was already used seven lines below in
-        # that same commit.
-        paper_id = .pid(columns_df), column_n = 0, flagged_n = 0,
-        spreadsheet_file_n = n_spreadsheet_files,
-        spreadsheet_flagged_file_n = n_flagged_files_spreadsheet),
-      na_replace = c(column_n = 0, flagged_n = 0,
-                     spreadsheet_file_n = 0, spreadsheet_flagged_file_n = 0),
-      traffic_light = if (nrow(spreadsheet_findings_df) > 0) "yellow" else "na",
-      dv_summary_text = if (nrow(spreadsheet_findings_df) > 0)
-        paste(text, .dv_spreadsheet_summary_text(spreadsheet_findings_df, n_spreadsheet_files))
-      else text,
-      dv_report = if (nrow(spreadsheet_findings_df) > 0)
-        .dv_spreadsheet_report(spreadsheet_findings_df, n_spreadsheet_files)
-      else NULL,
-      # This early return skips the module's main return (below, ~line 2147)
-      # entirely -- a paper with files but NONE readable as tabular data
-      # (all code/PDFs/images, or every spreadsheet unreadable) hit this
-      # path with structure/previews/gated_repos/manifest_path silently
-      # absent from the result, rather than merely empty. structure in
-      # particular is the per-file classification codebook_check AND
-      # code_check (get_prev_outputs("data_check", "structure"), see
-      # code_check.R) read from data_check's output -- both already
-      # tolerate a NULL/missing structure via a fallback, so this was not
-      # a crash, just a silently weaker result than a paper with the same
-      # files but at least one readable table would get. All four of
-      # these were already computed earlier in the function regardless of
-      # whether any file's content was readable, so they are correct here
-      # too, not placeholders.
+      table = columns_df %||% data.frame(),
+      findings = file_findings_df,
+      summary_table = merge(summary_table, dv_summary_table, by = "paper_id",
+                            all = TRUE, sort = FALSE),
+      na_replace = c(data_file_n = 0, column_n = 0, empty_col_n = 0,
+                     flagged_n = 0, spreadsheet_file_n = 0,
+                     spreadsheet_flagged_file_n = 0),
+      traffic_light = empty_tl,
+      report = c(report, dv_report),
+      summary_text = paste(summary_text, text),
       structure = all_files,
       previews = file_previews,
       gated_repos = listing_gated,
@@ -1906,7 +1957,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # column = NA (the issue is not about one column), so they show up in the
   # "Potential Issues" table but are excluded from n_flagged/check_counts
   # below, which are column-level tallies.
-  findings_df <- dplyr::bind_rows(findings_df, spreadsheet_findings_df)
+  findings_df <- dplyr::bind_rows(findings_df, spreadsheet_findings_df,
+                                  space_csv_findings_df)
 
 
 
@@ -1931,12 +1983,6 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   } else {
     character(0)
   }
-  spreadsheet_file_to_paper <- if (!is.null(structure_df) && nrow(structure_df) > 0) {
-    stats::setNames(structure_df$paper_id, structure_df$file_name)
-  } else {
-    character(0)
-  }
-
   column_n_dv_by_paper <- if (n_columns > 0 && !is.null(columns_df)) {
     columns_df |> dplyr::summarise(column_n = dplyr::n(), .by = paper_id)
   } else {
@@ -1951,39 +1997,6 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   } else {
     data.frame(paper_id = character(0), flagged_n = integer(0))
   }
-  # spreadsheet_result$n_files counts XLSX/XLS/ODS/FODS files examined (whether
-  # or not any of them triggered a finding); recompute that same per-file count
-  # grouped by paper_id from structure_df directly, rather than from
-  # spreadsheet_findings_df (which only has rows for files that actually raised
-  # a finding, and would undercount clean spreadsheets).
-  n_spreadsheet_files_by_paper <- {
-    xl_rows <- if (!is.null(structure_df) && nrow(structure_df) > 0) {
-      structure_df[
-        tolower(tools::file_ext(structure_df$file_name)) %in% .dv_spreadsheet_exts &
-          !is.na(structure_df$file_location) &
-          nzchar(structure_df$file_location) &
-          file.exists(structure_df$file_location %||% ""),
-        , drop = FALSE]
-    } else {
-      structure_df[0, , drop = FALSE]
-    }
-    if (!is.null(xl_rows) && nrow(xl_rows) > 0) {
-      xl_rows |> dplyr::summarise(spreadsheet_file_n = dplyr::n(), .by = paper_id)
-    } else {
-      data.frame(paper_id = character(0), spreadsheet_file_n = integer(0))
-    }
-  }
-  n_flagged_files_spreadsheet_by_paper <- if (nrow(spreadsheet_findings_df) > 0) {
-    data.frame(
-      paper_id = unname(spreadsheet_file_to_paper[spreadsheet_findings_df$source_file]),
-      source_file = spreadsheet_findings_df$source_file
-    ) |>
-      dplyr::summarise(spreadsheet_flagged_file_n = length(unique(source_file)),
-                       .by = paper_id)
-  } else {
-    data.frame(paper_id = character(0), spreadsheet_flagged_file_n = integer(0))
-  }
-
   # Per-check tally: how many distinct columns each check flagged (a column can
   # be flagged by several checks, so these overlap and need not sum to n_flagged).
   check_counts <- if (nrow(column_findings_df) > 0) {
@@ -2025,6 +2038,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # tally either); if any were found, the result is at least yellow (matches
   # the former spreadsheet_check module, which never went red on its own).
   if (nrow(spreadsheet_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
+  # Same for a .csv separated by spaces, whose columns could not be checked.
+  if (nrow(space_csv_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
 
   # ── 4. Report ────────────────────────────────────────────────────────────────
   dv_summary_text <- if (n_flagged == 0) {
@@ -2078,6 +2093,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     dv_summary_text <- paste(dv_summary_text,
       .dv_spreadsheet_summary_text(spreadsheet_findings_df, n_spreadsheet_files))
   }
+  if (nrow(space_csv_findings_df) > 0)
+    dv_summary_text <- paste(dv_summary_text,
+                             .dv_space_csv_summary_text(space_csv_findings_df))
 
   dv_report <- c(
     "This module runs automated data-quality checks (outliers, miscoded missing values, empty and constant columns, SPSS filter variables, category casing, problematic column names, mixed text encodings, spreadsheet formatting) on the extracted data files.",
@@ -2094,11 +2112,14 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # single displayed "Personally Identifying Information" label here, since the
   # distinction is not one readers need — see .dv_issue_cell().
   # Spreadsheet-formatting findings (column = NA) join the same table: their
-  # "column" cell shows the sheet name instead.
-  all_issue_findings <- dplyr::bind_rows(column_findings_df, spreadsheet_findings_df)
+  # "column" cell shows the sheet name instead. A space-separated .csv has
+  # neither a column nor a sheet, so its cell reads "(whole file)".
+  all_issue_findings <- dplyr::bind_rows(column_findings_df, spreadsheet_findings_df,
+                                         space_csv_findings_df)
   if (nrow(all_issue_findings) > 0) {
     issues_tbl <- all_issue_findings |>
-      dplyr::mutate(.col_display = ifelse(is.na(.data$column), .data$label, .data$column)) |>
+      dplyr::mutate(.col_display = dplyr::coalesce(.data$column, .data$label,
+                                                   "(whole file)")) |>
       dplyr::arrange(.data$source_file, .data$.col_display) |>
       dplyr::summarise(
         Issues = .dv_issue_cell(.data$check, .data$detail),
@@ -2764,6 +2785,45 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
 # `findings_df` / "Potential Issues" reporting path as every other check here.
 
 .dv_spreadsheet_exts <- c("xlsx", "xls", "ods", "fods")
+
+# Flag every .csv in structure_df whose readable local copy is separated by
+# spaces instead of commas (see .csv_is_space_separated()). Such a file reads
+# as one column of text, so none of its columns are checked; without this
+# finding the module said nothing specific and its light could stay green.
+# Returns findings in the shared (source_file, column, label, check, detail)
+# shape, 0 rows when there are none.
+.dv_space_csv_findings <- function(structure_df) {
+  empty_findings <- data.frame(source_file = character(0), column = character(0),
+                               label = character(0), check = character(0),
+                               detail = character(0))
+  if (is.null(structure_df) || nrow(structure_df) == 0 ||
+      !all(c("file_name", "file_location") %in% names(structure_df)))
+    return(empty_findings)
+  loc <- structure_df$file_location
+  is_csv <- tolower(tools::file_ext(structure_df$file_name)) == "csv" &
+    !is.na(loc) & nzchar(loc %||% "") & file.exists(loc %||% "")
+  hit <- which(is_csv)[vapply(loc[is_csv], .csv_is_space_separated, logical(1))]
+  if (!length(hit)) return(empty_findings)
+  data.frame(
+    source_file = structure_df$file_name[hit], column = NA_character_,
+    label = NA_character_, check = "Space-separated .csv",
+    detail = paste(
+      # No "." before the first full stop: .dv_issue_cell() shows the text up
+      # to the first "." as the short description.
+      "This file is separated by spaces, not commas, so it reads as a",
+      "single column and its columns could not be checked. Separating values",
+      "with spaces is not good practice: a value that itself contains a space",
+      "cannot be told apart from the separator. Save the file as a",
+      "comma-separated .csv (or a tab-separated .tsv)."))
+}
+
+.dv_space_csv_summary_text <- function(findings_df) {
+  n <- length(unique(findings_df$source_file))
+  sprintf("%d .csv file%s %s separated by spaces instead of commas, so %s columns could not be checked; save %s as comma-separated .csv (or tab-separated .tsv): %s.",
+          n, plural(n), if (n == 1) "is" else "are", if (n == 1) "its" else "their",
+          if (n == 1) "it" else "them",
+          paste(unique(findings_df$source_file), collapse = ", "))
+}
 
 # Run the spreadsheet-formatting checks over every spreadsheet file in
 # structure_df (data_check's file-classification table) that has a readable

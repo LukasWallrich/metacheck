@@ -915,7 +915,10 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
 #'   Attribute `"fuzzy_sources"` is a data frame (`from`, `to`) of `source()`
 #'   edges that only resolved after normalising both basenames (a renumbered/
 #'   reworded script reference — see [.repro_normalize_basename()]), empty
-#'   when every `source()` reference matched an exact basename.
+#'   when every `source()` reference matched an exact basename. Attribute
+#'   `"source_edges"` is a data frame (`from`, `to`) of every resolved
+#'   `source()` edge, exact or fuzzy: `from` is the sourced file, `to` the
+#'   file that sources it.
 #' @export
 #'
 #' @examples
@@ -968,6 +971,7 @@ repro_run_order <- function(files, extra_edges = NULL) {
   # exact hit — the same "never silently guess" posture
   # repro_rewrite_paths()'s own `ambiguous` column already follows.
   fuzzy_sources <- list()
+  source_edges <- list()   # every resolved source() edge, exact or fuzzy
   norm_base <- .repro_normalize_basename(base_name)
   for (i in seq_len(n)) for (s in tolower(sources[[i]])) {
     j <- setdiff(which(base_name == s), i)
@@ -980,7 +984,10 @@ repro_run_order <- function(files, extra_edges = NULL) {
         j <- integer(0)   # ambiguous after normalising too: do not guess
       }
     }
-    if (length(j)) before[[i]] <- union(before[[i]], j)
+    if (length(j)) {
+      before[[i]] <- union(before[[i]], j)
+      for (jj in j) source_edges[[length(source_edges) + 1L]] <- c(fname[jj], fname[i])
+    }
   }
 
   # extra_edges: soft ordering edges inferred from execution (e.g. an
@@ -1068,7 +1075,123 @@ repro_run_order <- function(files, extra_edges = NULL) {
               to   = vapply(fuzzy_sources, `[[`, character(1), 2),
               stringsAsFactors = FALSE) else
     data.frame(from = character(0), to = character(0))
+  # Every source() edge, exact and fuzzy: `from` is the sourced file, `to` the
+  # file that sources it. The module uses it to run a sourced script only
+  # inside the script that sources it (see .repro_run_by_source()).
+  attr(out, "source_edges") <- if (length(source_edges))
+    data.frame(from = vapply(source_edges, `[[`, character(1), 1),
+               to   = vapply(source_edges, `[[`, character(1), 2)) else
+    data.frame(from = character(0), to = character(0))
   out
+}
+
+#' Which scripts run inside another script, through `source()`
+#'
+#' When `main.R` loads its packages and then runs `a.R` with `source()`, `a.R`
+#' only works inside `main.R`: run on its own, in a fresh R process, it lacks
+#' the packages and objects `main.R` set up first (the most common symptom is
+#' `could not find function "%>%"`). Such a script is therefore not run on its
+#' own; it runs as part of the script that sources it.
+#'
+#' A script counts as run through `source()` only when a chain of `source()`
+#' calls leads to it from a script that IS run on its own (it parses, its
+#' inputs are available, and nothing sources it). So two scripts that source
+#' each other, or a script sourced only by a script that cannot run, are still
+#' run on their own, as before.
+#'
+#' @param order_tbl [repro_run_order()] output (its `"source_edges"` attribute)
+#' @param can_run named logical (by file_name): whether each script parses and
+#'   has its inputs, i.e. would be run at all
+#'
+#' @returns a named list: for each script run through `source()`, the
+#'   script(s) that source it. Empty when there are none.
+#' @keywords internal
+.repro_run_by_source <- function(order_tbl, can_run) {
+  edges <- attr(order_tbl, "source_edges")
+  if (is.null(edges) || !nrow(edges)) return(list())
+  edges <- edges[edges$from != edges$to, , drop = FALSE]
+  sourced <- unique(edges$from)
+  # Start from the scripts that run on their own and follow source() calls
+  # down: everything reached runs inside one of them.
+  reached <- character(0)
+  frontier <- setdiff(names(can_run)[can_run], sourced)
+  while (length(frontier)) {
+    nxt <- setdiff(edges$from[edges$to %in% frontier], reached)
+    # A sourced script that does not parse, or lacks its inputs, keeps that
+    # outcome of its own rather than being hidden inside the sourcing script.
+    nxt <- nxt[nxt %in% names(can_run)[can_run]]
+    reached <- c(reached, nxt)
+    frontier <- nxt
+  }
+  out <- lapply(reached, function(f)
+    unique(edges$to[edges$from == f & (edges$to %in% c(reached, names(can_run)[can_run]))]))
+  stats::setNames(out, reached)
+}
+
+# Packages a script attaches itself (library(), require(), pacman::p_load()),
+# in the order it attaches them -- not packages it only uses with `pkg::`.
+.repro_attached_pkgs <- function(code_text) {
+  libs <- tryCatch(code_library_names(code_text, "R"), error = function(e) NULL)
+  if (is.null(libs) || !nrow(libs)) return(character(0))
+  unique(libs$package[libs$source != "namespace"])
+}
+
+# Packages that export `%>%`, for when the package cannot be checked because
+# it is not installed on this computer (a Docker run installs packages in the
+# container only). "tidyverse" itself does not export it, but attaches dplyr,
+# which does.
+.repro_pipe_pkgs <- c("magrittr", "dplyr", "tidyr", "purrr", "stringr",
+                      "tibble", "tidyverse")
+
+#' Which `library()` calls to add for a missing function
+#'
+#' The module's corrective re-run calls this for a script that failed with
+#' `could not find function "X"` when no script of the paper defines `X`. In
+#' order:
+#'
+#' 1. When the paper's OTHER scripts attach a package that provides `X`, all
+#'    the packages those scripts attach are returned, in the order they attach
+#'    them. Such a script was written to run after them, in the same session
+#'    (typically with `library(tidyverse)` in a script that runs first), and
+#'    usually needs more than the one function that failed first: loading
+#'    only magrittr for `%>%` would make the script fail one line later, on
+#'    the first dplyr function.
+#' 2. Otherwise, the one package among `candidates` that exports `X`
+#'    ([.repro_find_export_pkg()]), as before.
+#' 3. Otherwise, for `%>%` when no script of the paper attaches a package that
+#'    provides it, `"magrittr"`.
+#'
+#' A package provides `X` when it is installed here and exports `X`, or, for
+#' `%>%`, when it is one of `.repro_pipe_pkgs`, or it is `"tidyverse"`.
+#'
+#' @param name the missing function name (e.g. `"%>%"`)
+#' @param user the file_name of the script that failed
+#' @param code_text_list named list of every R script's code text
+#' @param candidates candidate packages for step 2 (see the module)
+#'
+#' @returns a character vector of package names to attach (empty when none)
+#' @keywords internal
+.repro_missing_fn_pkgs <- function(name, user, code_text_list, candidates) {
+  provides <- function(pkg) {
+    if (identical(pkg, "tidyverse") ||
+        (identical(name, "%>%") && pkg %in% .repro_pipe_pkgs)) return(TRUE)
+    if (!requireNamespace(pkg, quietly = TRUE)) return(FALSE)
+    name %in% tryCatch(getNamespaceExports(asNamespace(pkg)),
+                       error = function(e) character(0))
+  }
+  own <- .repro_attached_pkgs(code_text_list[[user]] %||% character(0))
+  others <- unique(unlist(lapply(setdiff(names(code_text_list), user), function(f)
+    .repro_attached_pkgs(code_text_list[[f]])), use.names = FALSE))
+  others <- setdiff(others, own)
+  if (length(others) && any(vapply(others, provides, logical(1)))) return(others)
+
+  pkg <- .repro_find_export_pkg(name, candidates)
+  if (!is.na(pkg)) return(pkg)
+
+  if (identical(name, "%>%") &&
+      !any(vapply(unique(c(own, others)), provides, logical(1))))
+    return("magrittr")
+  character(0)
 }
 
 # Normalise a basename for FUZZY source()-target matching (repro_run_order()'s
@@ -1650,11 +1773,11 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #' that should not have been in the code and needs to be fixed".
 #'
 #' @param inject_libs optional named character vector/list (names are
-#'   `file_name`s already present in `code_text_list`) — a package name to
-#'   inject as a `library(<pkg>)` call at the very top of that script's text
-#'   before it is written. Used by the module's corrective re-run for a
-#'   `could not find function "X"` error resolved to exactly one package that
-#'   exports `X` (see the module's own missing-`library()` corrective step) —
+#'   `file_name`s already present in `code_text_list`) — one or more package
+#'   names to inject as `library(<pkg>)` calls at the very top of that
+#'   script's text before it is written. Used by the module's corrective
+#'   re-run for a `could not find function "X"` error (see
+#'   [.repro_missing_fn_pkgs()] for which packages) —
 #'   reusing this function's existing text-rewrite plumbing rather than a
 #'   separate rewrite path. `NULL` (default) injects nothing, unchanged from
 #'   before this parameter existed. R only: there is no Python corrective
@@ -1684,8 +1807,8 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'   arguments replaced with `"sans"`, so a plot call does not fail with
 #'   "invalid font type" for a font not registered on the machine running the
 #'   sandbox), `family_detail` (semicolon-joined `<old> -> "sans"` text for
-#'   each replacement), and `library_injected` (the package name injected via
-#'   `inject_libs` for that file, or `NA` when none was).
+#'   each replacement), and `library_injected` (the package name(s) injected
+#'   via `inject_libs` for that file, comma-joined, or `NA` when none was).
 #' @export
 repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
                                 inject_libs = NULL, lang = "R") {
@@ -1818,10 +1941,13 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     # first (also, the corrective rerun only has a file-level signal — "this
     # script needs package P" — not a line number to target). R only — see
     # this function's own `inject_libs` docs above.
+    # One or more packages per file (a script that relies on the packages
+    # another script of the project attaches gets all of them).
     injected_pkg <- if (identical(fn_lang, "R") && !is.null(inject_libs) &&
                         fn %in% names(inject_libs))
-      inject_libs[[fn]] else NA_character_
-    if (!is.na(injected_pkg) && nzchar(injected_pkg))
+      inject_libs[[fn]] else character(0)
+    injected_pkg <- injected_pkg[!is.na(injected_pkg) & nzchar(injected_pkg)]
+    if (length(injected_pkg))
       txt <- c(sprintf("library(%s)  # [reproducibility_check injected]", injected_pkg), txt)
 
     tgt  <- script_target(fn)
@@ -1834,7 +1960,8 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
                family_replaced = family_n,
                family_detail = paste(
                  sprintf("%s -> \"sans\"", family_matches), collapse = "; "),
-               library_injected = injected_pkg)
+               library_injected = if (length(injected_pkg))
+                 paste(injected_pkg, collapse = ", ") else NA_character_)
   })
   dplyr::bind_rows(rows)
 }

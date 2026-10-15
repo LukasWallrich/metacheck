@@ -313,6 +313,42 @@ test_that("repo_check keeps a root-level package's own files when it IS the depo
   expect_true("study_data.rda" %in% mo$table$file_name)
 })
 
+test_that("a root-level package that IS the deposit is kept despite its CI config files (#469)", {
+  # .travis.yml / codecov.yml / GitHub Actions workflows classify as "code"
+  # by their .yml extension, which made the package look vendored and
+  # removed all of its files. They are build/test configuration, not analysis
+  # code, and stay listed themselves.
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "R"))
+  dir.create(file.path(d, ".github", "workflows"), recursive = TRUE)
+  writeLines("Package: mypkg\nVersion: 0.1.0", file.path(d, "DESCRIPTION"))
+  writeLines("export(foo)", file.path(d, "NAMESPACE"))
+  writeLines("foo <- function() 1", file.path(d, "R", "foo.R"))
+  writeLines("language: r", file.path(d, ".travis.yml"))
+  writeLines("comment: false", file.path(d, "codecov.yml"))
+  writeLines("on: push", file.path(d, ".github", "workflows", "R-CMD-check.yaml"))
+
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+
+  expect_true("foo.R" %in% mo$table$file_name)
+  expect_true("DESCRIPTION" %in% mo$table$file_name)
+  expect_true("codecov.yml" %in% mo$table$file_name)
+})
+
+test_that("a paper's own config.yml still counts as content next to a root-level package", {
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "R"))
+  writeLines("Package: mypkg\nVersion: 0.1.0", file.path(d, "DESCRIPTION"))
+  writeLines("export(foo)", file.path(d, "NAMESPACE"))
+  writeLines("foo <- function() 1", file.path(d, "R", "foo.R"))
+  writeLines("alpha: 0.05", file.path(d, "config.yml"))
+
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+
+  expect_false("foo.R" %in% mo$table$file_name)
+  expect_true("config.yml" %in% mo$table$file_name)
+})
+
 test_that("repo_check excludes a nested vendored package but keeps real sibling content", {
   # a study's repo that bundles a vendored copy of someone else's general-
   # purpose package (its own DESCRIPTION+NAMESPACE nested in a subfolder)

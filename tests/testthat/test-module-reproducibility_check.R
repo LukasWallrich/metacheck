@@ -237,6 +237,64 @@ test_that("execute = TRUE: setwd() is stripped and reported, and the script stil
   expect_match(paste(mo$report, collapse = "\n"), "setwd", fixed = TRUE)
 })
 
+test_that("execute = TRUE: a script another script source()s runs only inside that script", {
+  # main.R loads dplyr and then sources a.R, which uses %>% without loading
+  # anything: run on its own, a.R fails, so it is only run inside main.R.
+  skip_if_quick()
+  skip_if_not_installed("callr")
+  skip_if_not_installed("dplyr")
+
+  tmp <- withr::local_tempdir()
+  writeLines(c("library(dplyr)", 'source("a.R")'), file.path(tmp, "main.R"))
+  writeLines(c("x <- data.frame(v = 1:3) %>% mutate(w = v * 2)", "print(x)"),
+             file.path(tmp, "a.R"))
+  paper <- test_paper()
+  code_tbl <- dplyr::bind_rows(
+    code_tbl_row(paper, "main.R", file.path(tmp, "main.R")),
+    code_tbl_row(paper, "a.R", file.path(tmp, "a.R")))
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = data.frame(
+    paper_id = character(0), file_name = character(0), file_location = character(0))))
+
+  mo <- module_run(fake_code, "reproducibility_check", execute = TRUE, timeout = 60)
+
+  oc <- stats::setNames(mo$table$outcome, mo$table$file_name)
+  expect_equal(oc[["main.R"]], "ran_ok")
+  expect_equal(oc[["a.R"]], "run_by_source")
+  expect_equal(mo$traffic_light, "green")
+  expect_match(paste(mo$report, collapse = "\n"), "Run by another script", fixed = TRUE)
+})
+
+test_that("execute = TRUE: a script relying on another script's library() calls gets them added", {
+  # 1_prep.R loads dplyr; 2_analysis.R uses %>% and mutate() without loading
+  # it, and nothing sources it. The re-run adds library(dplyr) to it.
+  skip_if_quick()
+  skip_if_not_installed("callr")
+  skip_if_not_installed("dplyr")
+
+  tmp <- withr::local_tempdir()
+  writeLines(c("library(dplyr)", "y <- 1"), file.path(tmp, "1_prep.R"))
+  writeLines(c("x <- data.frame(v = 1:3) %>% mutate(w = v * 2)", "print(x)"),
+             file.path(tmp, "2_analysis.R"))
+  paper <- test_paper()
+  code_tbl <- dplyr::bind_rows(
+    code_tbl_row(paper, "1_prep.R", file.path(tmp, "1_prep.R")),
+    code_tbl_row(paper, "2_analysis.R", file.path(tmp, "2_analysis.R")))
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = data.frame(
+    paper_id = character(0), file_name = character(0), file_location = character(0))))
+
+  mo <- module_run(fake_code, "reproducibility_check", execute = TRUE, timeout = 60)
+
+  oc <- stats::setNames(mo$table$outcome, mo$table$file_name)
+  expect_equal(oc[["2_analysis.R"]], "ran_ok")
+  inj <- mo$modifications[mo$modifications$change_type == "library_injected", ]
+  expect_equal(inj$file_name, "2_analysis.R")
+  expect_equal(inj$detail, "library(dplyr)")
+  expect_match(paste(mo$report, collapse = "\n"),
+               "Reproducible after adding `library()` calls: 2_analysis.R", fixed = TRUE)
+})
+
 test_that("execute = TRUE: console output feeds stat_output and match_reported_output", {
   skip_if_quick()
   skip_if_not_installed("callr")
@@ -576,26 +634,13 @@ test_that("execute = TRUE: os.chdir() is stripped and reported, and the Python s
   expect_true("setwd_removed" %in% mo$modifications$change_type)
 })
 
-test_that("execute = TRUE: a Python NameError adds a reorder edge, but each script still runs in its OWN process/namespace", {
-  # IMPORTANT, REAL FINDING (see this suite's own development notes / final
-  # report): unlike R's repro_run_scripts(), which runs every script via
-  # source(..., echo = TRUE) inside ONE shared callr session, so a variable
-  # a later script's reorder places after its definer's script really IS
-  # still bound when the later script runs -- repro_run_scripts_py() runs
-  # EVERY script as its OWN SEPARATE `python <script>` subprocess (confirmed
-  # directly: running definer.py then undefined_var.py as two separate
-  # `python` invocations still raises NameError for undefined_var.py, since
-  # Python processes do not share global state the way one shared R session
-  # does). So the reorder edge this module adds is mechanically identical to
-  # the R path (same extra_edges / repro_run_order() call, same "re-run
-  # once"), and IS exercised here (confirmed below), but it can never
-  # actually fix a genuine Python NameError the way the equivalent R fix
-  # fixes an R "object not found" error -- the name is still undefined in
-  # the SECOND script's own fresh process regardless of run order. The
-  # error is still reported (correctly -- it is a real, unfixable-by-
-  # reordering error for Python), just with the reorder attempted and a
-  # corrected run order recorded, exactly as the module's own corrective-
-  # re-run contract promises (one extra pass, not a guarantee of success).
+test_that("execute = TRUE: a Python NameError is reported with the script that defines the name, without a re-run", {
+  # Unlike R's repro_run_scripts(), which runs every script inside ONE shared
+  # callr session, repro_run_scripts_py() runs every script as its own
+  # `python` process, so a name another script defines is never available,
+  # whatever the order. The module therefore does not re-run Python scripts
+  # in a corrected order (that could never succeed); the report names the
+  # script that defines the missing name instead.
   skip_if_quick()
   skip_if_not(!is.na(.repro_py_bin), "no python interpreter available")
 
@@ -616,15 +661,13 @@ test_that("execute = TRUE: a Python NameError adds a reorder edge, but each scri
 
   mo <- module_run(fake_code, "reproducibility_check", execute = TRUE, timeout = 60)
 
-  # the reorder DID happen (the corrective step ran)...
-  ord <- stats::setNames(mo$table$run_order, mo$table$file_name)
-  expect_lt(ord[["definer.py"]], ord[["undefined_var.py"]])
-  # ...but undefined_var.py still genuinely errors: separate processes do
-  # not share Python's global namespace the way one shared R session does.
   expect_equal(mo$table$outcome[mo$table$file_name == "definer.py"], "ran_ok")
   expect_equal(mo$table$outcome[mo$table$file_name == "undefined_var.py"], "errored")
   expect_equal(mo$table$error_type[mo$table$file_name == "undefined_var.py"],
               "undefined_variable")
+  report <- paste(mo$report, collapse = "\n")
+  expect_match(report, "Undefined-name errors", fixed = TRUE)
+  expect_false(grepl("re-ran once", report, fixed = TRUE))
 })
 
 test_that("execute = TRUE: a missing Python dependency is reported as dependency_unavailable, not errored", {
