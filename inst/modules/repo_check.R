@@ -4,7 +4,7 @@
 #' This module retrieves information from repositories.
 #'
 #' @details
-#' The Repository Check module lists files on the OSF, GitHub, ResearchBox, DSpace (PsychArchives and other legacy- and DSpace 7-based installations), Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, and DataONE (Arctic Data Center, KNB, and other member nodes) based on links in the manuscript.
+#' The Repository Check module lists files on the OSF, GitHub, ResearchBox, DSpace (PsychArchives and other legacy- and DSpace 7-based installations), Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, DataONE (Arctic Data Center, KNB, and other member nodes), and LDbase based on links in the manuscript.
 #'
 #' Listing a repository's files never requires an API key, but some hosts
 #' answer faster or more completely with one: OSF allows 100 requests/hour
@@ -109,6 +109,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     dspace7_links_found <- empty_links
     mendeley_links_found <- empty_links
     dataone_links_found <- empty_links
+    ldbase_links_found <- empty_links
   } else {
     osf_links_found <- osf_links(paper)
     # exclude psychsci badges
@@ -143,6 +144,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     mendeley_links_found$repo_type <- "mendeley"
     dataone_links_found <- dataone_links(paper)
     dataone_links_found$repo_type <- "dataone"
+    ldbase_links_found <- ldbase_links(paper)
+    ldbase_links_found$repo_type <- "ldbase"
   }
 
   ## organise repos in a table
@@ -161,7 +164,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     researchdata4tu_links_found[, cols],
     dspace7_links_found[, cols],
     mendeley_links_found[, cols],
-    dataone_links_found[, cols]
+    dataone_links_found[, cols],
+    ldbase_links_found[, cols]
   ) |> dplyr::distinct()
   names(repos)[2] <- "repo_url"
   repos$repo_error <- NA_character_
@@ -1407,6 +1411,72 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     })
   }
 
+  ## LDbase ----
+  # No API: ldbase_info() reads the public pages (archive-ldbase.R). A
+  # project lists every item in its hierarchy, each item's file in a folder
+  # named after the item. Pages give no file sizes; download_repo_files()
+  # asks the host for them when it needs them.
+  ldbase_urls <- repos |>
+    dplyr::filter(repo_type == "ldbase") |>
+    _$repo_url |>
+    unique()
+  ldbase_files_df <- data.frame(repo_name = character(0))
+  ldbase_meta_df <- data.frame(repo_url = character(0), doi = character(0),
+                               license = character(0))
+  if (length(ldbase_urls) > 0) {
+    tryCatch({
+      .ldbase_info_tbl <- suppressMessages(ldbase_info(ldbase_urls, pb = pb, cache = cache))
+
+      if (nrow(.ldbase_info_tbl) > 0) {
+        ldbase_meta_df <- data.frame(
+          repo_url = as.character(.ldbase_info_tbl$ldbase_url),
+          doi = as.character(.ldbase_info_tbl$doi),
+          license = as.character(.ldbase_info_tbl$license)
+        )
+        # A link that could not be listed is kept, with its reason, rather
+        # than dropped silently (see the OSF block above).
+        failed <- .ldbase_info_tbl[!is.na(.ldbase_info_tbl$error), , drop = FALSE]
+        hit <- match(repos$repo_url, failed$ldbase_url)
+        repos$repo_error[!is.na(hit)] <- failed$error[hit[!is.na(hit)]]
+      }
+
+      if (nrow(.ldbase_info_tbl) > 0 && "files" %in% names(.ldbase_info_tbl)) {
+        file_rows <- lapply(seq_len(nrow(.ldbase_info_tbl)), function(i) {
+          files_i <- .ldbase_info_tbl$files[[i]]
+          if (is.null(files_i) || !nrow(files_i)) return(NULL)
+          data.frame(
+            repo_url = as.character(.ldbase_info_tbl$ldbase_url[[i]]),
+            file_name = files_i$file_name,
+            file_path = files_i$file_path,
+            file_url = files_i$file_url,
+            file_location = NA_character_,
+            file_size = NA_real_
+          )
+        })
+
+        ldbase_files_df <- dplyr::bind_rows(file_rows)
+
+        if (nrow(ldbase_files_df) > 0) {
+          ldbase_files_df$ext <- tolower(sub("^.*\\.", "", basename(ldbase_files_df$file_name)))
+          no_ext <- !is.na(ldbase_files_df$file_name) &
+            !grepl("\\.", basename(ldbase_files_df$file_name))
+          ldbase_files_df$ext[no_ext] <- NA_character_
+
+          ldbase_files_df <- ldbase_files_df |>
+            dplyr::left_join(metacheck::file_types, by = "ext") |>
+            dplyr::rename(file_type = type)
+
+          ldbase_files_df$ext <- NULL
+        } else {
+          ldbase_files_df$file_type <- character(0)
+        }
+      }
+    }, error = \(e) {
+      # See the OSF block above for why every url is flagged on failure.
+      repos$repo_error[repos$repo_url %in% ldbase_urls] <<- conditionMessage(e)
+    })
+  }
+
   ## Local files ----
   local_files_df <- data.frame(repo_name = character(0))
   if (!is.null(local_path)) {
@@ -1444,7 +1514,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (nrow(repos) == 0) {
     info <- list(
       traffic_light = "na",
-      summary_text = "We found no links to repositories on the Open Science Framework, Github, ResearchBox, DSpace, Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, or DataONE.",
+      summary_text = "We found no links to repositories on the Open Science Framework, Github, ResearchBox, DSpace, Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, DataONE, or LDbase.",
       summary_table = data.frame(
         paper_id = paper_id(paper),
         repo_n = 0,
@@ -1460,7 +1530,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   }
 
   ## file numbers and types ----
-  all_files <- dplyr::bind_rows(osf_files_df, github_files_df, gitlab_files_df, rb_files_df, pa_files_df, dspace7_files_df, zenodo_files_df, dv_files_df, fs_files_df, dryad_files_df, reshare_files_df, fourtu_files_df, mendeley_files_df, dataone_files_df, local_files_df)
+  all_files <- dplyr::bind_rows(osf_files_df, github_files_df, gitlab_files_df, rb_files_df, pa_files_df, dspace7_files_df, zenodo_files_df, dv_files_df, fs_files_df, dryad_files_df, reshare_files_df, fourtu_files_df, mendeley_files_df, dataone_files_df, ldbase_files_df, local_files_df)
 
   # One row per REPOSITORY (not per paper, not per file): a paper can link
   # more than one repository (e.g. one for data, one for code) with
@@ -1474,7 +1544,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   repo_metadata <- dplyr::bind_rows(
     osf_meta_df, github_meta_df, gitlab_meta_df, pa_meta_df, dspace7_meta_df,
     zenodo_meta_df, dv_meta_df, fs_meta_df, dryad_meta_df, reshare_meta_df,
-    fourtu_meta_df, mendeley_meta_df, dataone_meta_df
+    fourtu_meta_df, mendeley_meta_df, dataone_meta_df, ldbase_meta_df
   )
 
   # remove duplicate links
@@ -1629,6 +1699,36 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       }
     }
   }
+
+  ## files the operating system adds ----
+  # __MACOSX/, "._" files, .DS_Store, Thumbs.db, desktop.ini (see
+  # .is_system_file()): left out here, after zips are opened, so they are
+  # never counted, classified or flagged for naming. Listed in the report so
+  # the authors can remove them.
+  system_files <- if (nrow(all_files) > 0) {
+    is_sys <- .is_system_file(dplyr::coalesce(all_files$file_path, all_files$file_name))
+    sys <- all_files[is_sys, c("repo_url", "file_path"), drop = FALSE]
+    all_files <- all_files[!is_sys, , drop = FALSE]
+    sys
+  } else data.frame(repo_url = character(0), file_path = character(0))
+  n_system <- nrow(system_files)
+  summary_system <- if (n_system > 0) sprintf(
+    "We left out %d file%s that the operating system adds (such as __MACOSX folders, ._ files and .DS_Store); remove %s from the repository.",
+    n_system, plural(n_system), plural(n_system, "it", "them")) else NULL
+  report_system <- if (n_system > 0) c(
+    "#### Files the operating system adds",
+    sprintf(paste(
+      "We left out %d file%s that the operating system creates by itself, not",
+      "the authors: macOS adds a `__MACOSX` folder and a `._` copy of every",
+      "file it puts in a zip, and `.DS_Store` files to folders; Windows adds",
+      "`Thumbs.db` and `desktop.ini`. They hold no data or code, but readers",
+      "see them as clutter, and software can mistake a `._` copy of a `.csv`",
+      "for data. Remove them from the repository (on a Mac, create zips from",
+      "the command line with `zip -r -X`, or remove them afterwards with",
+      "`zip -d archive.zip \"__MACOSX/*\" \"*.DS_Store\"`)."),
+      n_system, plural(n_system)),
+    scroll_table(data.frame(Repository = system_files$repo_url,
+                            File = system_files$file_path), maxrows = 10)) else NULL
 
   ## preliminary classification + study grouping ----
   # A PRELIMINARY, name/path-only pass: repo_check does not download files, so
@@ -2114,6 +2214,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     report_unknown,
     report_roster,
     report_naming,
+    report_system,
     report_classification
   )
 
@@ -2157,7 +2258,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     summary_closed_reg,
     summary_unknown,
     summary_roster,
-    summary_naming
+    summary_naming,
+    summary_system
   ) |>
     paste("\n- ", x = _, collapse = "")
 

@@ -58,6 +58,30 @@
   function(resp) httr2::resp_status(resp) != 403L && is_transient(resp)
 }
 
+# A host behind an Amazon web firewall (AWS WAF) can answer a request with a
+# browser check instead of the file: HTTP 202, an empty body and the header
+# "x-amzn-waf-action: challenge", which only a browser running JavaScript can
+# pass. LDbase's firewall did this to R's requests for about an hour after a
+# burst of requests (verified 2026-10-15; command-line curl from the same
+# machine still got the file). Such an answer gives no size, and a file of
+# unknown size is left out of download_repo_files()'s downloads without a
+# word, so this warns once per host and session, saying why.
+.waf_challenge_warned <- new.env(parent = emptyenv())
+.waf_challenge_check <- function(resp, url) {
+  action <- httr2::resp_header(resp, "x-amzn-waf-action")
+  if (is.null(action) || !identical(tolower(action), "challenge")) return(invisible(FALSE))
+  host <- tryCatch(httr2::url_parse(url)$hostname, error = function(e) NA_character_)
+  host <- tolower(host %||% NA_character_)
+  if (!is.na(host) && !exists(host, envir = .waf_challenge_warned, inherits = FALSE)) {
+    assign(host, TRUE, envir = .waf_challenge_warned)
+    warning(host, "'s firewall answered with a browser check (AWS WAF challenge) ",
+            "instead of the file, usually after many requests in a short time. ",
+            "Its files cannot be sized or downloaded until it lifts; try again later.",
+            call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 # Total size from a response's Content-Range header, or NA when the header is
 # absent or its total is "*" (unknown).
 .content_range_total <- function(resp) {
@@ -84,6 +108,7 @@
                        backoff = .storage_backoff,
                        after = .storage_retry_after_factory(skip_on_api_limit)) |>
       httr2::req_error(is_error = function(r) FALSE) |> httr2::req_perform()
+    if (.waf_challenge_check(h, url)) return(NA_real_)
     status <- httr2::resp_status(h)
     if (status < 200 || status >= 300) return(NA_real_)
     cl <- suppressWarnings(as.numeric(httr2::resp_header(h, "content-length")))
@@ -107,6 +132,8 @@
     httr2::req_error(is_error = function(r) FALSE) |>
     httr2::req_perform_connection()
   on.exit(close(resp), add = TRUE)
+  if (.waf_challenge_check(resp, url))
+    return(list(status = httr2::resp_status(resp), total = NA_real_, body = NULL))
   status <- httr2::resp_status(resp)
   # A suffix range ("bytes=-n") never covers the whole file on purpose, so a
   # 200 answer here means the host ignores Range (see .range_ignored_record()).

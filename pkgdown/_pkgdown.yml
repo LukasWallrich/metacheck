@@ -200,6 +200,8 @@ reference:
   - '`researchdata4tu_info`'
   - '`researchdata4tu_file_download`'
   - '`researchdata4tu_pat`'
+  - '`ldbase_links`'
+  - '`ldbase_info`'
 - title: Integrations
   desc: ~
   contents:

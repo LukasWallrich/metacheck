@@ -44,6 +44,7 @@ open_practices <- function(paper) {
                   "datadryad",
                   "kaggle",
                   "mendeley",
+                  "ldbase",
                   "ukbiobank",
                   "ukdataservice",
                   "dataverse",

@@ -301,7 +301,7 @@ dspace7_links <- function(paper) {
 # DOI prefixes dspace7_links() does not resolve: each belongs to a host
 # another detector already handles (OSF, Zenodo, Dryad, Figshare and its
 # institutional instances, 4TU.ResearchData, Mendeley Data, DataONE, UK Data
-# Service ReShare, PsychArchives, Dataverse), so a DOI under it cannot lead
+# Service ReShare, PsychArchives, Dataverse, LDbase), so a DOI under it cannot lead
 # to a DSpace 7 item. Read from the other detectors' own prefix tables
 # rather than copied, so a prefix added there is skipped here too.
 #
@@ -322,6 +322,7 @@ dspace7_links <- function(paper) {
     "10.6084", names(.figshare_doi_prefix_hosts()),  # Figshare
     "10.4121",                                 # 4TU.ResearchData
     "10.17632",                                # Mendeley Data
+    "10.33009",                                # LDbase
     stats::na.omit(dataone),                   # DataONE member nodes
     "10.5255",                                 # UK Data Service ReShare
     "10.23668",                                # PsychArchives

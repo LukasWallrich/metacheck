@@ -32,6 +32,24 @@
 # lexicographic sort order — see repro_run_order()'s numeric, not string,
 # tie-break) — real, worth following, but not load-bearing, so they never
 # affect the traffic light on their own.
+# Files the operating system creates by itself, never the authors: macOS's
+# __MACOSX/ folder and "._" companion files (resource forks a Mac adds to
+# every file it zips), Finder's .DS_Store, and Windows's Thumbs.db and
+# desktop.ini. They hold no data or code, so repo_check and data_check leave
+# them out of the file list (and repo_check asks the authors to remove them).
+# Kept, they were counted as files, flagged for naming, and the "._" copies
+# of .csv files were read as (unreadable) data: in one LDbase zip they were
+# about half of 1,826 listed files.
+.is_system_file <- function(path) {
+  if (!length(path)) return(logical(0))
+  p <- gsub("\\\\", "/", as.character(path))
+  base <- basename(p)
+  out <- grepl("(^|/)__MACOSX(/|$)", p) | startsWith(base, "._") |
+    tolower(base) %in% c(".ds_store", "thumbs.db", "desktop.ini")
+  out[is.na(out)] <- FALSE
+  out
+}
+
 .file_naming_severity <- c(
   "spaces"               = "bad",
   "special-characters"   = "bad",

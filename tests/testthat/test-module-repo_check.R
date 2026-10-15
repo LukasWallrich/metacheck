@@ -16,7 +16,7 @@ test_that("repo_check offline", {
                     files_readme = NA,
                     files_zip = NA)
   expect_equal(mod_output$summary_table, exp)
-  exp <- "We found no links to repositories on the Open Science Framework, Github, ResearchBox, DSpace, Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, or DataONE."
+  exp <- "We found no links to repositories on the Open Science Framework, Github, ResearchBox, DSpace, Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, DataONE, or LDbase."
   expect_equal(mod_output$summary_text, exp)
   expect_equal(mod_output$report, exp)
 })
@@ -347,6 +347,29 @@ test_that("a paper's own config.yml still counts as content next to a root-level
 
   expect_false("foo.R" %in% mo$table$file_name)
   expect_true("config.yml" %in% mo$table$file_name)
+})
+
+test_that(".is_system_file recognises files the operating system adds", {
+  paths <- c("LAMP.zip/__MACOSX/LAMP/._data.csv", "__MACOSX", "study/._analysis.R",
+             "study/.DS_Store", "img/Thumbs.db", "Desktop.ini",
+             "data.csv", "study/a_.csv", "MACOSX_notes.txt", NA)
+  expect_equal(.is_system_file(paths),
+               c(TRUE, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE))
+  expect_equal(.is_system_file(character(0)), logical(0))
+})
+
+test_that("repo_check leaves out and reports files the operating system adds", {
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "__MACOSX"))
+  writeLines("a,b\n1,2", file.path(d, "data.csv"))
+  writeLines("junk", file.path(d, "__MACOSX", "data.csv"))
+  writeLines("junk", file.path(d, "Thumbs.db"))
+
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+
+  expect_equal(mo$table$file_name, "data.csv")
+  expect_match(mo$summary_text, "left out 2 files that the operating system adds", fixed = TRUE)
+  expect_match(paste(mo$report, collapse = "\n"), "Files the operating system adds", fixed = TRUE)
 })
 
 test_that("repo_check excludes a nested vendored package but keeps real sibling content", {
