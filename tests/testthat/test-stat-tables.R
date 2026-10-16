@@ -320,3 +320,43 @@ test_that("read_stat_tables handles notebooks with no usable output", {
 
   expect_error(read_stat_tables("no_such_file.ipynb"), "File not found")
 })
+
+
+test_that(".r_output_tables stays fast on a long print that is not a table (#483)", {
+  # A printed data frame with no numeric column: every row looks like a
+  # header, so each row used to start a fresh scan of the rest of the print
+  # (quadratic: 384 s for 1,000 rows, hours for 10,000). Now about 3 s.
+  set.seed(1)
+  m <- 1000
+  df <- data.frame(site    = sample(c("Donana", "Gorbea"), m, TRUE),
+                   plot    = paste0("plot", sample(1:40, m, TRUE)),
+                   species = sample(c("Bombus terrestris", "Apis mellifera"), m, TRUE),
+                   date    = format(as.Date("2021-04-01") + sample(0:90, m, TRUE)))
+  lines <- utils::capture.output(print(df, row.names = FALSE))
+  t <- system.time(tabs <- .r_output_tables(lines))[["elapsed"]]
+  expect_lt(t, 30)
+  expect_length(tabs, 0)
+
+  # A table printed directly after such a print (no blank line) is still
+  # found. Its header has digits ("[0.025  0.975]"), so it lies INSIDE the
+  # rejected block, and its "---" divider is the line that ended that block:
+  # the start just before the divider must be scanned afresh, not treated as
+  # a block with no data.
+  sm <- c("                 coef    std err          t      P>|t|      [0.025      0.975]",
+          "------------------------------------------------------------------------------",
+          "const          1.2345      0.123     10.037      0.000       0.989       1.480",
+          "x1             0.5000      0.050     10.000      0.000       0.400       0.600")
+  tabs2 <- .r_output_tables(c(lines[1:40], sm))
+  expect_length(tabs2, 1)
+  expect_equal(tabs2[[1]]$data$coef, c("1.2345", "0.5000"))
+  # the same table twice, each after a text-only print
+  expect_length(.r_output_tables(c(lines[1:40], sm, lines[1:40], sm)), 2)
+
+  # a block with trailing significance codes still parses as before
+  sig <- c("            Estimate Std. Error t value Pr(>|t|)    ",
+           "(Intercept)   0.1234     0.0456   2.706  0.00912 ** ",
+           "x             0.5678     0.1234   4.601 2.07e-05 ***")
+  tabs3 <- .r_output_tables(c(lines[1:20], sig))
+  expect_length(tabs3, 1)
+  expect_equal(tabs3[[1]]$data[["Pr(>|t|)"]], c("0.00912", "2.07e-05"))
+})

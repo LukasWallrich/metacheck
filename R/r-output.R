@@ -682,8 +682,10 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
     x
   }
 
-  # Split a set of block lines at columns blank in EVERY line.
-  split_block <- function(block) {
+  # The per-line part of split_block(): tab expansion, combined-df protection
+  # and significance-code blanking all work line by line, so the same text is
+  # also what the rejected-block cache below measures (#483).
+  prep_block <- function(block) {
     # Expand literal tabs to spaces first: formatC()'s width padding is based
     # on nchar(), but a tab is ONE character to nchar() while the console that
     # originally printed it rendered it as several columns. Left un-expanded,
@@ -693,7 +695,12 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
     # with "number of columns of result is not a multiple of vector length".
     # 8-space tab stops match the common terminal default.
     block <- gsub("\t", strrep(" ", 8), block, fixed = TRUE)
-    block <- blank_sigcode(protect_combined_df(block))
+    blank_sigcode(protect_combined_df(block))
+  }
+
+  # Split a set of block lines at columns blank in EVERY line.
+  split_block <- function(block) {
+    block <- prep_block(block)
     w <- max(nchar(block))
     padded <- formatC(block, width = -w, flag = "-")   # left-justify to width w
     chars <- do.call(rbind, strsplit(padded, "", fixed = TRUE))
@@ -707,12 +714,114 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
       restore_combined_df(trimws(substr(padded, starts[k], ends[k]))))
   }
 
+  # Which character positions of a prepared line are non-blank, as a logical
+  # vector of length W (positions past the line's end are blank). The column
+  # boundaries split_block() finds depend only on which positions are
+  # non-blank in ANY line of the block, so two blocks with the same union of
+  # these vectors are cut into the same cells.
+  occupancy <- function(prepped, W) {
+    ch <- strsplit(prepped, "", fixed = TRUE)[[1]]
+    out <- logical(W); out[seq_along(ch)] <- ch != " "; out
+  }
+  # strip trailing significance codes so they don't form a column
+  strip_sigcode <- function(dl) sub("\\s+[*.]+\\s*$", "", dl)
+  data_stop_re <- "(?i)^(---|signif|residual standard|multiple r-|f-statistic|call:|data:|alternative)"
+
+  # Try to read a header line plus its data lines as a table; TRUE when one
+  # was added to `tables`.
+  try_block <- function(header_line, data_lines) {
+    cols <- split_block(c(header_line, data_lines))
+    if (is.null(cols) || length(cols) < 2) return(FALSE)
+    header <- vapply(cols, `[[`, character(1), 1L)         # first row = header
+    body   <- lapply(cols, function(cl) cl[-1])            # rest = data
+      # Mirror-image repair FIRST: a NARROW single-letter header ("F")
+      # under WIDE data ("41.86", or a combined "2, 560" df cell wider
+      # than its own "df" header) -- the DATA spills past its narrow
+      # header's own position into what looks like the PRECEDING column,
+      # so the split lands the value in an ANONYMOUS column just before
+      # the real header's own (now-empty-data) column. Symptom: a column
+      # with an empty header but real data, immediately followed by a
+      # column with a real header but all-empty data -- splice them,
+      # keeping the anonymous column's data under the following column's
+      # header. Confirmed against a real corpus paper's aov_car() output
+      # ("F" header over "41.86 ***" data -- blank_sigcode() above already
+      # removes the "***" so it cannot itself absorb the mismatch, but
+      # the bare "F" header is still only one character wide against a
+      # 5-character value). MUST run before the wide-header/narrow-data
+      # repair below: that repair's own trigger (empty DATA, non-empty
+      # header on both sides) also matches an UNFIXED narrow-header
+      # column's real header sitting next to its own now-empty-until-
+      # spliced data cell, and would wrongly glue two real headers
+      # together (e.g. "F" + "ges" -> "F ges") before this repair ever
+      # gets a chance to fill "F"'s data in from its neighbour.
+    k <- 1L
+    while (k < length(body)) {
+      if (!nzchar(trimws(header[[k]])) && any(nzchar(trimws(body[[k]]))) &&
+          all(!nzchar(trimws(body[[k + 1L]]))) && nzchar(trimws(header[[k + 1L]]))) {
+        header[[k]] <- header[[k + 1L]]
+        header <- header[-(k + 1L)]; body <- body[-(k + 1L)]
+      } else k <- k + 1L
+    }
+    # Repair a header word that a blank "river" wrongly split (e.g. a narrow
+      # "F value" column: the value column is narrower than its 2-word header,
+      # so a gutter appears mid-header). Symptom: a column whose DATA cells are
+      # all empty and whose header is a bare word -- merge it into the next
+      # column's header. Only merges when the spurious column carries no data.
+    k <- 1L
+    while (k < length(body)) {
+      if (all(!nzchar(trimws(body[[k]]))) && nzchar(trimws(header[[k]])) &&
+          nzchar(trimws(header[[k + 1L]]))) {
+        header[[k + 1L]] <- paste(trimws(header[[k]]), trimws(header[[k + 1L]]))
+        header <- header[-k]; body <- body[-k]
+      } else k <- k + 1L
+    }
+    df <- as.data.frame(body, stringsAsFactors = FALSE)
+    nm <- trimws(header); nm[!nzchar(nm)] <- paste0("V", which(!nzchar(nm)))
+    names(df) <- make.unique(nm)
+      # keep only if the body actually has numeric cells (a real result table)
+    if (any(vapply(df, function(c) any(is_numlike(c)), logical(1)))) {
+      tables[[length(tables) + 1L]] <<- list(
+        analysis = section %||% NA_character_,
+        title = section %||% NA_character_, data = df)
+      return(TRUE)
+    }
+    FALSE
+  }
+
   n <- length(lines); i <- 1L; tables <- list(); section <- NA_character_
+  # The last REJECTED block (#483). Every later line inside it that looks like
+  # a header starts a block with the SAME end (the data-line tests are per
+  # line, and a tibble type row or "---" divider can never have been a data
+  # line), and its data lines are a subset of the rejected block's. If its
+  # non-blank-position pattern (raw header OR the stripped lines below it)
+  # equals the pattern of the last block actually split, its cells are the
+  # same and its body is a subset, so it would be rejected too and need not be
+  # split. Without this, a printed data frame with no numeric column (every
+  # row looks like a header) was re-split once per row: quadratic, 384 s for
+  # 1,000 rows and hours for the 10,000-row prints real scripts produce.
+  cache <- NULL
   while (i <= n) {
     tl <- trimws(lines[[i]])
     if (grepl("^[A-Za-z][A-Za-z0-9 .()|>-]*:$", tl)) section <- sub(":$", "", tl)
 
     if (looks_header(lines[[i]]) && !is_quantile_hdr(strsplit(tl, "\\s+")[[1]])) {
+      # Only when line i+1 was a DATA line of the rejected block: then the
+      # two skips below cannot apply to it, and the block's end is the same.
+      # For the start just before the block's end, the end line may be a
+      # tibble type row or a "---" divider that is skipped, so the block runs
+      # on past it and is scanned afresh.
+      if (!is.null(cache) && i > cache$start && i + 1L < cache$end) {
+        j <- cache$end
+        pattern <- occupancy(prep_block(lines[[i]]), cache$W) | cache$suffix[[i + 1L]]
+        if (!identical(pattern, cache$last_pattern)) {
+          if (try_block(lines[[i]], cache$stripped[(i + 1L):(j - 1L)])) {
+            cache <- NULL; i <- j; next
+          }
+          cache$last_pattern <- pattern
+        }
+        i <- i + 1L; next
+      }
+      cache <- NULL
       # A tibble's type-tag row sits directly under the real header; step past
       # it here so it is never mistaken for data (it has no digits) or, on a
       # later iteration, wrongly adopted as a header of its own -- see
@@ -732,73 +841,31 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
       # table whose coefficient block was silently dropped without this).
       if (j <= n && grepl("^-{3,}\\s*$", trimws(lines[[j]]))) j <- j + 1L
       # gather contiguous data lines (non-blank, containing a number, not prose)
-      data_lines <- character(0)
+      first_data <- j
       while (j <= n) {
-        dl <- lines[[j]]; dtl <- trimws(dl)
+        dtl <- trimws(lines[[j]])
         if (!nzchar(dtl)) break
-        if (grepl("(?i)^(---|signif|residual standard|multiple r-|f-statistic|call:|data:|alternative)", dtl)) break
+        if (grepl(data_stop_re, dtl)) break
         if (!grepl("[0-9]", dtl)) break
-        # strip trailing significance codes so they don't form a column
-        data_lines <- c(data_lines, sub("\\s+[*.]+\\s*$", "", dl))
         j <- j + 1L
       }
-      if (length(data_lines) >= 1) {
-        cols <- split_block(c(lines[[i]], data_lines))
-        if (!is.null(cols) && length(cols) >= 2) {
-          header <- vapply(cols, `[[`, character(1), 1L)         # first row = header
-          body   <- lapply(cols, function(cl) cl[-1])            # rest = data
-          # Mirror-image repair FIRST: a NARROW single-letter header ("F")
-          # under WIDE data ("41.86", or a combined "2, 560" df cell wider
-          # than its own "df" header) -- the DATA spills past its narrow
-          # header's own position into what looks like the PRECEDING column,
-          # so the split lands the value in an ANONYMOUS column just before
-          # the real header's own (now-empty-data) column. Symptom: a column
-          # with an empty header but real data, immediately followed by a
-          # column with a real header but all-empty data -- splice them,
-          # keeping the anonymous column's data under the following column's
-          # header. Confirmed against a real corpus paper's aov_car() output
-          # ("F" header over "41.86 ***" data -- blank_sigcode() above already
-          # removes the "***" so it cannot itself absorb the mismatch, but
-          # the bare "F" header is still only one character wide against a
-          # 5-character value). MUST run before the wide-header/narrow-data
-          # repair below: that repair's own trigger (empty DATA, non-empty
-          # header on both sides) also matches an UNFIXED narrow-header
-          # column's real header sitting next to its own now-empty-until-
-          # spliced data cell, and would wrongly glue two real headers
-          # together (e.g. "F" + "ges" -> "F ges") before this repair ever
-          # gets a chance to fill "F"'s data in from its neighbour.
-          k <- 1L
-          while (k < length(body)) {
-            if (!nzchar(trimws(header[[k]])) && any(nzchar(trimws(body[[k]]))) &&
-                all(!nzchar(trimws(body[[k + 1L]]))) && nzchar(trimws(header[[k + 1L]]))) {
-              header[[k]] <- header[[k + 1L]]
-              header <- header[-(k + 1L)]; body <- body[-(k + 1L)]
-            } else k <- k + 1L
-          }
-          # Repair a header word that a blank "river" wrongly split (e.g. a narrow
-          # "F value" column: the value column is narrower than its 2-word header,
-          # so a gutter appears mid-header). Symptom: a column whose DATA cells are
-          # all empty and whose header is a bare word -- merge it into the next
-          # column's header. Only merges when the spurious column carries no data.
-          k <- 1L
-          while (k < length(body)) {
-            if (all(!nzchar(trimws(body[[k]]))) && nzchar(trimws(header[[k]])) &&
-                nzchar(trimws(header[[k + 1L]]))) {
-              header[[k + 1L]] <- paste(trimws(header[[k]]), trimws(header[[k + 1L]]))
-              header <- header[-k]; body <- body[-k]
-            } else k <- k + 1L
-          }
-          df <- as.data.frame(body, stringsAsFactors = FALSE)
-          nm <- trimws(header); nm[!nzchar(nm)] <- paste0("V", which(!nzchar(nm)))
-          names(df) <- make.unique(nm)
-          # keep only if the body actually has numeric cells (a real result table)
-          if (any(vapply(df, function(c) any(is_numlike(c)), logical(1)))) {
-            tables[[length(tables) + 1L]] <- list(
-              analysis = section %||% NA_character_,
-              title = section %||% NA_character_, data = df)
-            i <- j; next
-          }
+      if (j > first_data) {
+        stripped <- character(n)
+        stripped[first_data:(j - 1L)] <- strip_sigcode(lines[first_data:(j - 1L)])
+        if (try_block(lines[[i]], stripped[first_data:(j - 1L)])) { i <- j; next }
+        # Rejected: record what every later start inside this block shares
+        # (see the comment above `cache`). suffix[[k]] is the union of the
+        # stripped lines k..j-1.
+        prepped <- prep_block(c(lines[[i]], stripped[first_data:(j - 1L)]))
+        W <- max(nchar(prepped))
+        suffix <- vector("list", n)
+        acc <- logical(W)
+        for (k in (j - 1L):first_data) {
+          acc <- acc | occupancy(prepped[k - first_data + 2L], W)
+          suffix[[k]] <- acc
         }
+        cache <- list(start = i, end = j, stripped = stripped, W = W, suffix = suffix,
+                      last_pattern = occupancy(prepped[1L], W) | suffix[[first_data]])
       }
     }
     i <- i + 1L

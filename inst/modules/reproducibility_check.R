@@ -1694,6 +1694,11 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     r_stat_output <- lapply(seq_len(nrow(run_results)), function(i) {
       so <- run_results$stdout[i]
       fn <- run_results$file_name[i]
+      # One line per script, with the amount of output: parsing long output
+      # used to take hours with nothing printed (#483).
+      .dbg("parsing output of '", fn, "' (",
+           if (is.null(so) || is.na(so) || !nzchar(so)) 0L else length(strsplit(so, "\n", fixed = TRUE)[[1]]),
+           " lines) ...")
       exec_lines <- run_results$script_lines[[i]]
       caps <- if ("captures" %in% names(run_results))
         run_results$captures[[i]] else NULL
@@ -2682,6 +2687,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
       fn <- py_run_results$file_name[i]
       if (is.null(so) || !nzchar(so)) return(NULL)
       lines <- strsplit(so, "\n", fixed = TRUE)[[1]]
+      .dbg("[repro/py] parsing output of '", fn, "' (", length(lines), " lines) ...")
       lines <- lines[nzchar(trimws(lines))]
       if (!length(lines) || .ipynb_is_noise(lines)) return(NULL)
 
