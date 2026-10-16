@@ -26,6 +26,18 @@ github_links <- function(paper) {
     text_search(github_regex, perl = TRUE) |>
     dplyr::select(href, text_id, paper_id)
 
+  # A link to an account ("https://github.com/OneZoom/") names no repository,
+  # but is kept so repo_check can report it as an account rather than drop it
+  # without a word (see .github_account_name(), #485).
+  account_regex <- "^(?:https?://)?(?:www\\.)?github\\.com/(?:orgs/)?[A-Za-z0-9-]+/?[.,;:)]*$"
+  found_account <- paper_table(paper, "url") |>
+    text_search(account_regex, perl = TRUE) |>
+    dplyr::select(href, text_id, paper_id)
+  found_account <- found_account[
+    !vapply(found_account$href, \(u) is.null(.github_account_name(u)), logical(1)), ,
+    drop = FALSE]
+  found_gh <- dplyr::bind_rows(found_gh, found_account)
+
 
   # find github repos referenced only by org/repo near github (+-10 words)
   # like "See our github repo at scienceverse/metacheck"
@@ -135,7 +147,32 @@ github_repo <- function(repo) {
     return(NULL)
   }
 
-  sub("\\.git$", "", x = thematch[[1]][[1]])
+  out <- sub("\\.git$", "", x = thematch[[1]][[1]])
+  # GitHub does not allow a repository named "." or "..". Such a match is an
+  # account address followed by a sentence's full stop
+  # ("https://github.com/OneZoom/."), see .github_account_name() (#485).
+  if (grepl("/\\.+$", out)) return(NULL)
+  out
+}
+
+# The account (user or organisation) name of a GitHub address that names an
+# account but no repository: "https://github.com/OneZoom", with or without a
+# trailing slash or sentence punctuation, or "github.com/orgs/OneZoom". Such
+# a page lists an account's repositories, but does not say which one holds a
+# paper's files (#485). NULL when the address is not an account page. Single
+# value only.
+.github_account_name <- function(url) {
+  if (length(url) != 1 || is.na(url)) return(NULL)
+  m <- regmatches(url, regexec(
+    "^(?:https?://)?(?:www\\.)?github\\.com/(?:orgs/)?([A-Za-z0-9-]+)/?[.,;:)]*$",
+    trimws(url), perl = TRUE, ignore.case = TRUE))[[1]]
+  if (length(m) < 2) return(NULL)
+  # GitHub's own pages at the same depth are not accounts.
+  site_pages <- c("about", "features", "topics", "explore", "marketplace",
+                  "pricing", "sponsors", "settings", "login", "join",
+                  "trending", "collections", "search", "enterprise", "orgs")
+  if (tolower(m[[2]]) %in% site_pages) return(NULL)
+  m[[2]]
 }
 
 #' Get README from GitHub
@@ -330,6 +367,12 @@ github_tree_files <- function(repo) {
   # Text pattern only -- no HEAD request to the github.com page first (see
   # .github_repo_name()): the metadata request below answers "does this
   # repository exist?" itself, with a 404.
+  # An account page is reachable; it is just not a repository (#485). Checked
+  # first, because "github.com/orgs/OneZoom" also has the owner/repo shape.
+  if (!is.null(.github_account_name(repo))) {
+    invalid$reason <- "links to a GitHub account, not to a specific repository"
+    return(invalid)
+  }
   clean_repo <- .github_repo_name(repo)
   if (is.null(clean_repo)) return(invalid)
 

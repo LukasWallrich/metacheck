@@ -221,3 +221,50 @@ test_that(".dryad_verify_downloads checks SHA-256 as well as MD5 digests", local
   expect_equal(out$checksum_ok, c(NA, TRUE, NA))
   expect_equal(out$downloaded, c(TRUE, TRUE, TRUE))
 }))
+
+test_that("a Dryad sharing link is followed to its DOI (#484)", local({
+  # Verified live 2026-10-16: the sharing link cited by 10.1111/1365-2664.13980
+  # answers 302 to the landing page of doi:10.5061/dryad.t76hdr81n, and an
+  # unknown token answers 404.
+  share <- "https://datadryad.org/stash/share/M9h0katm5VCYRhfTCUkYBUx_zRYNnnFM3BXgzV_fhMU"
+  expired <- "https://datadryad.org/stash/share/NOTAREALTOKEN123"
+  expect_equal(.dryad_share_token(c(share, "https://datadryad.org/share/abc_D-1",
+                                    "https://doi.org/10.5061/dryad.j1fd7")),
+               c("M9h0katm5VCYRhfTCUkYBUx_zRYNnnFM3BXgzV_fhMU", "abc_D-1", NA))
+  expect_true(is.na(.dryad_doi(share)))
+
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- c(seen, req$url)
+      if (grepl("NOTAREALTOKEN", req$url)) return(httr2::response(status_code = 404))
+      httr2::response(status_code = 302, headers = list(
+        location = "https://datadryad.org/landing/show?id=doi%3A10.5061%2Fdryad.t76hdr81n"))
+    },
+    .package = "httr2"
+  )
+  expect_equal(.dryad_share_doi(share),
+               list(doi = "10.5061/dryad.t76hdr81n", error = NA_character_))
+  # the redirect is read, not followed: one request to /share/
+  expect_equal(seen, "https://datadryad.org/share/M9h0katm5VCYRhfTCUkYBUx_zRYNnnFM3BXgzV_fhMU")
+  expect_equal(.dryad_share_doi(expired)$error, "private or expired Dryad sharing link")
+
+  # dryad_info() looks the dataset up by the resolved DOI, and keeps the
+  # reason for a link that leads nowhere
+  testthat::local_mocked_bindings(
+    online = \(...) TRUE,
+    .dryad_info = function(dryad_doi, pb = NULL)
+      data.frame(dryad_doi = dryad_doi, doi = paste0("doi:", dryad_doi), license = "cc0")
+  )
+  info <- suppressMessages(dryad_info(c(share, expired)))
+  expect_equal(info$dryad_doi, c("10.5061/dryad.t76hdr81n", NA))
+  expect_equal(info$license, c("cc0", NA))
+  expect_equal(info$error, c(NA, "private or expired Dryad sharing link"))
+  # also when no link leads anywhere
+  info <- suppressMessages(dryad_info(expired))
+  expect_equal(info$error, "private or expired Dryad sharing link")
+
+  # a bare sharing link in the text is found
+  paper <- test_paper(paste("Data are available at", share))
+  expect_equal(dryad_links(paper)$dryad_url, share)
+}))

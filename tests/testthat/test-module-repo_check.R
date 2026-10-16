@@ -570,3 +570,46 @@ test_that("a zip inside a ResearchBox is listed from its local copy", {
   expect_true(all(is.na(mo$table$file_location)))
 })
 assignInNamespace("rbox_file_download", .real_rbox_file_download, ns = "metacheck")
+
+test_that("repo_check reads the licence of the project a cited registration was made from (#486)", {
+  # 10.1002/2688-8319.12402 cites registration TP78A, made from project
+  # qw685, whose files repo_check lists.
+  osf_info_mock <- function(osf_url, recursive = TRUE, pb = NULL, cache = FALSE, ...) {
+    if (grepl("tp78a", osf_url, ignore.case = TRUE))
+      return(data.frame(osf_url = osf_url, osf_type = "registrations", parent = "qw685",
+                        kind = NA_character_, public = TRUE, name = NA_character_,
+                        path = NA_character_, download_url = NA_character_, size = NA_real_,
+                        filetype = NA_character_, provider = NA_character_))
+    data.frame(osf_url = osf_url, osf_type = c("nodes", "files"), parent = NA_character_,
+               kind = c(NA, "file"), public = TRUE, name = c(NA, "data.csv"),
+               path = c(NA, "/data.csv"), download_url = c(NA, "https://osf.io/download/abcde"),
+               size = c(NA, 10), filetype = c(NA, "data"), provider = c(NA, "osfstorage"))
+  }
+  paper <- test_paper(text = "Data: https://doi.org/10.17605/OSF.IO/TP78A")
+
+  local_mocked_bindings(
+    online = \(...) TRUE, osf_info = osf_info_mock,
+    .osf_license = \(osf_id) if (osf_id == "qw685") "CC-By Attribution 4.0 International" else NA_character_
+  )
+  mo <- module_run(paper, "repo_check", peek_zips = FALSE, osf_license = TRUE)
+  expect_equal(mo$repo_metadata$repo_url, "https://osf.io/qw685")
+  expect_equal(mo$repo_metadata$license, "CC-By Attribution 4.0 International")
+  expect_false(is.na(mo$repo_metadata$paper_id))
+
+  # a parent without a licence takes the registration's
+  local_mocked_bindings(
+    .osf_license = \(osf_id) if (osf_id == "tp78a") "CC-By Attribution 4.0 International" else NA_character_
+  )
+  mo <- module_run(paper, "repo_check", peek_zips = FALSE, osf_license = TRUE)
+  expect_equal(mo$repo_metadata$license, "CC-By Attribution 4.0 International")
+})
+
+test_that("repo_check reports an expired Dryad sharing link with its reason (#484)", {
+  local_mocked_bindings(
+    online = \(...) TRUE,
+    .dryad_share_doi = \(url) list(doi = NA_character_, error = "private or expired Dryad sharing link")
+  )
+  paper <- test_paper(text = "Data: https://datadryad.org/stash/share/NOTAREALTOKEN123")
+  mo <- module_run(paper, "repo_check", peek_zips = FALSE)
+  expect_equal(mo$gated_repos$repo_error, "private or expired Dryad sharing link")
+})

@@ -237,3 +237,40 @@ test_that("github_tree_files reports a 404 from the API as an invalid repository
   expect_true(res$gated)
   expect_length(seen, 0)
 }))
+
+test_that("a GitHub account address is reported as an account, not as invalid (#485)", local({
+  # 10.1111/2041-210X.13766: "freely downloadable from https://github.com/OneZoom/."
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- c(seen, req$url)
+      httr2::response(status_code = 404)
+    },
+    .package = "httr2"
+  )
+  for (u in c("https://github.com/OneZoom/", "https://github.com/OneZoom",
+              "github.com/OneZoom/.", "https://github.com/orgs/OneZoom")) {
+    expect_equal(.github_account_name(u), "OneZoom")
+    res <- github_tree_files(u)
+    expect_true(res$gated)
+    expect_equal(res$reason, "links to a GitHub account, not to a specific repository")
+  }
+  # no request is needed to tell
+  expect_length(seen, 0)
+
+  # a repository named "." does not exist on GitHub
+  expect_null(.github_repo_name("https://github.com/OneZoom/."))
+  expect_equal(.github_repo_name("https://github.com/a/.github"), "a/.github")
+  expect_null(.github_account_name("https://github.com/OneZoom/OZtree"))
+  expect_null(.github_account_name("https://github.com/features"))
+}))
+
+test_that("github_links keeps a linked GitHub account address (#485)", {
+  paper <- test_paper("The code is on GitHub.")
+  paper$url <- data.frame(
+    href = c("https://github.com/OneZoom/", "https://github.com/a/b", "https://github.com/features"),
+    text_id = 1:3
+  )
+  obs <- github_links(paper)
+  expect_setequal(obs$href, c("https://github.com/OneZoom/", "https://github.com/a/b"))
+})
