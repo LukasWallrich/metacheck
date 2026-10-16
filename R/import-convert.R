@@ -119,7 +119,7 @@ convert <- function(file_path,
     ## bibr: convert PDF or DOC to bibr ----
     bibr_args <- formals(convert_bibr) |> names()
     valid_args <- intersect(names(args), bibr_args)
-    bibr_path <- do.call(convert_bibr, valid_args)
+    bibr_path <- do.call(convert_bibr, args[valid_args])
   }
 
   return(bibr_path)

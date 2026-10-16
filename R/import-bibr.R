@@ -7,27 +7,32 @@
 #'
 #' When \code{backend = "auto"} (the default), the \code{"scivrs"} backend is
 #' used if \code{api_key} is provided or the \code{SCIVRS_API_KEY} environment
-#' variable is set. Otherwise, \code{"selfhosted"} is used (no authentication
-#' required).
+#' variable is set. Otherwise, \code{"selfhosted"} is used.
+#'
+#' A self-hosted bibr server that requires authentication (\code{bibr serve}
+#' with \code{AUTH_API_KEY} set, as on a SURF Research Cloud workspace) gets
+#' its bearer token from \code{api_key} or the \code{BIBR_API_KEY}
+#' environment variable; its address can be set with \code{BIBR_API_URL}.
 #'
 #' @param file_path Path to the document file, or a directory of documents
 #' @param save_path Path to a directory in which to save the JSON file
 #' @param backend Which backend to use: \code{"auto"} (default) detects from
 #'   the available API key, \code{"scivrs"} uses the Scienceverse platform,
 #'   \code{"selfhosted"} uses a direct bibr API instance.
-#' @param api_key API key (scivrs backend only). A Bearer token starting with
-#'   \code{sv_}, defaults to the \code{SCIVRS_API_KEY} env var. Ignored for
-#'   the \code{"selfhosted"} backend, which requires no authentication.
+#' @param api_key API key. For the scivrs backend, a Bearer token starting
+#'   with \code{sv_}, defaulting to the \code{SCIVRS_API_KEY} env var. For the
+#'   selfhosted backend, the server's bearer token if it requires one,
+#'   defaulting to the \code{BIBR_API_KEY} env var (none if unset).
 #' @param api_url Base URL of the API. Defaults to the appropriate URL for
-#'   the selected backend.
+#'   the selected backend (for selfhosted, the \code{BIBR_API_URL} env var or
+#'   \code{http://localhost:8000}).
 #' @param include_figures Whether to include base64-encoded figure images
 #'   in the output (default FALSE)
 #' @param start_page First page of the file to extract (default 1)
 #' @param end_page Last page of the file to extract (default Inf for all pages)
 #' @param poll_interval Seconds between status polls, scivrs backend only
 #'   (default 2)
-#' @param timeout Maximum seconds to wait for processing, scivrs backend only
-#'   (default 600)
+#' @param timeout Maximum seconds to wait for processing (default 600)
 #'
 #' @return Path(s) to the saved JSON file(s)
 #' @export
@@ -82,11 +87,17 @@ convert_bibr <- function(file_path,
     }
   }
 
+  # resolve API key (selfhosted: optional bearer token) ----
+  if (backend == "selfhosted" && is.null(api_key) &&
+      nchar(Sys.getenv("BIBR_API_KEY")) > 0) {
+    api_key <- Sys.getenv("BIBR_API_KEY")
+  }
+
   # resolve API URL ----
   if (is.null(api_url)) {
     api_url <- switch(backend,
       scivrs = "https://platform.metacheck.app",
-      selfhosted = "http://localhost:8000"
+      selfhosted = Sys.getenv("BIBR_API_URL", "http://localhost:8000")
     )
   }
 
@@ -134,7 +145,8 @@ convert_bibr <- function(file_path,
     ),
     selfhosted = .bibr_request_selfhosted(
       file_path, api_url, include_figures,
-      zb_start_page, zb_end_page
+      zb_start_page, zb_end_page,
+      api_key = api_key, timeout = timeout
     )
   )
 
@@ -253,7 +265,11 @@ format_bib_authors <- function(authors) {
 
   # check readiness
   body <- httr2::resp_body_json(resp)
-  if (body$status != "ready" || body$checks$bibr != "ok") {
+  # The Scienceverse platform reports checks$bibr; a self-hosted bibr serve
+  # reports its own checks (ocr, classifiers, redis) and no bibr entry.
+  bibr_check <- body$checks$bibr
+  if (!identical(body$status, "ready") ||
+      (!is.null(bibr_check) && !identical(bibr_check, "ok"))) {
     if (error) {
       stop("The server is running, but BIBR is not ready", status,
            call. = FALSE)
@@ -361,9 +377,14 @@ format_bib_authors <- function(authors) {
 #' Send a direct request to a self-hosted bibr instance
 #' @noRd
 .bibr_request_selfhosted <- function(file_path, api_url,
-                                      include_figures, start_page, end_page) {
+                                      include_figures, start_page, end_page,
+                                      api_key = NULL, timeout = 300) {
   req <- httr2::request(api_url) |>
     httr2::req_url_path_append("papers", "extract")
+
+  if (!is.null(api_key) && nchar(api_key) > 0) {
+    req <- httr2::req_auth_bearer_token(req, api_key)
+  }
 
   body <- list(
     .req = req,
@@ -374,7 +395,7 @@ format_bib_authors <- function(authors) {
   if (!is.null(end_page)) body$end_page <- as.character(end_page)
 
   req <- do.call(httr2::req_body_multipart, body) |>
-    httr2::req_timeout(300)
+    httr2::req_timeout(timeout)
 
   resp <- httr2::req_perform(req)
 

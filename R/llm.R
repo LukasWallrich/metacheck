@@ -170,6 +170,28 @@ llm <- function(text, system_prompt,
 
   # route vllm/<model> through chat_vllm() so custom endpoints can be used
   make_chat <- function() {
+    # Structured calls to Ollama go to its OpenAI-compatible /v1 address
+    # through ellmer's OpenAI-compatible provider (chat_vllm) rather than
+    # chat_ollama() (#494). ellmer's Ollama provider marks optional schema
+    # fields as not required, and small local models then leave them out
+    # (qwen3.5:4b returned no sample size or power for the demo paper's power
+    # analyses, and invented an effect size); the OpenAI-style schema makes
+    # every field required but nullable. `think` is dropped: /v1 ignores it,
+    # and .llm_apply_reasoning() sends reasoning_effort instead.
+    if (startsWith(model, "ollama") && structured) {
+      v1_params <- do.call(ellmer::params,
+                           params_list[setdiff(names(params_list), "think")])
+      v1_call_args <- list(
+        model = ollama_model,
+        base_url = paste0(sub("/+$", "", ollama_base_url), "/v1"),
+        credentials = function() "ollama",
+        system_prompt = system_prompt,
+        params = v1_params
+      )
+      if (length(reasoning_api_args) > 0) v1_call_args$api_args <- reasoning_api_args
+      return(do.call(ellmer::chat_vllm, v1_call_args))
+    }
+
     if (startsWith(model, "vllm/")) {
       vllm_model <- sub("^vllm/", "", model)
       vllm_base_url <- getOption("metacheck.llm.vllm.base_url")
@@ -986,6 +1008,12 @@ llm_reasoning <- function(effort = NULL) {
     # rather than guessing a mapping the API does not have.
     if (effort %in% c("low", "none") && is.null(params_list$think))
       out$params_list$think <- FALSE
+    # Structured calls use Ollama's OpenAI-compatible /v1 endpoint, which
+    # ignores `think` but honours reasoning_effort = "none" (#494): measured on
+    # qwen3.5:4b, 351 completion tokens with think = FALSE, 27 with "none".
+    # The native /api/chat path used for free-text calls does not send api_args.
+    if (effort %in% c("low", "none") && is.null(api_args$reasoning_effort))
+      out$api_args$reasoning_effort <- "none"
     return(out)
   }
   if (is_qwen3 && is.null(api_args$reasoning_effort)) {

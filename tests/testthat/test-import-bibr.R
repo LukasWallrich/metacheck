@@ -365,3 +365,41 @@ test_that("format_bib_authors", {
   expect_equal(obs, exp)
 })
 
+
+test_that("convert_bibr selfhosted sends the bearer token and timeout (#490)", {
+  file_path <- demofile("pdf")
+  seen <- list()
+  httr2::local_mocked_responses(function(req) {
+    seen$auth <<- !is.null(req$headers$Authorization)
+    seen$timeout <<- req$options$timeout_ms
+    httr2::response_json(body = list(status = "ok"))
+  })
+  save_path <- withr::local_tempdir()
+
+  withr::local_envvar(BIBR_API_KEY = "test-token")
+  convert_bibr(file_path, save_path, backend = "selfhosted", timeout = 900)
+  expect_true(seen$auth)
+  expect_equal(seen$timeout, 900 * 1000)
+
+  seen <- list()
+  withr::local_envvar(BIBR_API_KEY = "")
+  convert_bibr(file_path, save_path, backend = "selfhosted")
+  expect_false(seen$auth)
+})
+
+test_that(".bibr_isalive accepts a self-hosted bibr /ready answer (#491)", {
+  httr2::local_mocked_responses(function(req) {
+    httr2::response_json(body = list(
+      status = "ready",
+      checks = list(ocr = "ok", classifiers = "ok", redis = "ok")
+    ))
+  })
+  expect_true(.bibr_isalive("http://localhost:8000", NULL, error = FALSE))
+
+  # the platform's answer, with a failing bibr check, is still "not ready"
+  httr2::local_mocked_responses(function(req) {
+    httr2::response_json(body = list(status = "ready",
+                                     checks = list(bibr = "error")))
+  })
+  expect_false(.bibr_isalive("http://localhost:8000", NULL, error = FALSE))
+})

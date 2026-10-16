@@ -706,9 +706,13 @@ server <- function(input, output, session) {
     if (!isTRUE(input$query_pubpeer)) modules <- setdiff(modules, "ref_pubpeer")
     # ref_accuracy needs the CrossRef bib_match table to compare against
     if (!use_crossref) modules <- setdiff(modules, "ref_accuracy")
+    # prereg_check contacts the OSF API and AsPredicted too, so it goes as
+    # well: the checkbox promises no queries to repositories such as the OSF,
+    # and the privacy panel says none are made (#495).
     if (!isTRUE(input$query_repos))
       modules <- setdiff(modules, c("repo_check", "code_check",
-                                    "data_check", "codebook_check"))
+                                    "data_check", "codebook_check",
+                                    "prereg_check"))
     # data_check/codebook_check are the slowest modules (can take several
     # minutes), so they are opt-in even when repositories are queried.
     if (!isTRUE(input$query_data_codebook))

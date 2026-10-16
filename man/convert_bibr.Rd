@@ -26,12 +26,14 @@ convert_bibr(
 the available API key, \code{"scivrs"} uses the Scienceverse platform,
 \code{"selfhosted"} uses a direct bibr API instance.}
 
-\item{api_key}{API key (scivrs backend only). A Bearer token starting with
-\code{sv_}, defaults to the \code{SCIVRS_API_KEY} env var. Ignored for
-the \code{"selfhosted"} backend, which requires no authentication.}
+\item{api_key}{API key. For the scivrs backend, a Bearer token starting
+with \code{sv_}, defaulting to the \code{SCIVRS_API_KEY} env var. For the
+selfhosted backend, the server's bearer token if it requires one,
+defaulting to the \code{BIBR_API_KEY} env var (none if unset).}
 
 \item{api_url}{Base URL of the API. Defaults to the appropriate URL for
-the selected backend.}
+the selected backend (for selfhosted, the \code{BIBR_API_URL} env var or
+\code{http://localhost:8000}).}
 
 \item{include_figures}{Whether to include base64-encoded figure images
 in the output (default FALSE)}
@@ -43,8 +45,7 @@ in the output (default FALSE)}
 \item{poll_interval}{Seconds between status polls, scivrs backend only
 (default 2)}
 
-\item{timeout}{Maximum seconds to wait for processing, scivrs backend only
-(default 600)}
+\item{timeout}{Maximum seconds to wait for processing (default 600)}
 }
 \value{
 Path(s) to the saved JSON file(s)
@@ -58,8 +59,12 @@ self-hosted bibr instance (\code{"selfhosted"}) for direct API access.
 \details{
 When \code{backend = "auto"} (the default), the \code{"scivrs"} backend is
 used if \code{api_key} is provided or the \code{SCIVRS_API_KEY} environment
-variable is set. Otherwise, \code{"selfhosted"} is used (no authentication
-required).
+variable is set. Otherwise, \code{"selfhosted"} is used.
+
+A self-hosted bibr server that requires authentication (\code{bibr serve}
+with \code{AUTH_API_KEY} set, as on a SURF Research Cloud workspace) gets
+its bearer token from \code{api_key} or the \code{BIBR_API_KEY}
+environment variable; its address can be set with \code{BIBR_API_URL}.
 }
 \examples{
 \dontrun{
