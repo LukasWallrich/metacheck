@@ -257,6 +257,23 @@
     r("sbx",  "data", readable = FALSE),
     r("cpg",  "data", readable = FALSE),
     r("gpkg", "data", readable = FALSE),
+    # GIS raster data and its sidecar files (#488): a world file (.tfw/.tifw)
+    # georeferences a raster, .ovr holds a raster's overview pyramids, and
+    # NetCDF (.nc), raster-package grids (.grd/.gri), band files (.bil) and
+    # GDAL virtual rasters (.vrt) are raster datasets themselves. KML/KMZ
+    # (Google Earth) is vector data; metacheck::file_types calls it "image".
+    # The rasters these describe are mostly .tif, which is handled by
+    # .is_geotiff() in data_classify_files(), since a .tif can also be a photo.
+    r("tfw",  "data", readable = FALSE),
+    r("tifw", "data", readable = FALSE),
+    r("ovr",  "data", readable = FALSE),
+    r("nc",   "data", readable = FALSE),
+    r("grd",  "data", readable = FALSE),
+    r("gri",  "data", readable = FALSE),
+    r("bil",  "data", readable = FALSE),
+    r("vrt",  "data", readable = FALSE),
+    r("kml",  "data", readable = FALSE),
+    r("kmz",  "data", readable = FALSE),
     # Phylogenetic tree formats (Nexus, Newick, Phylip) -- confirmed corpus
     # evidence (issue #441) of papers citing these as their archived data
     # format, previously falling through to "unknown" with no Tier-1 rule.
@@ -492,6 +509,23 @@
   )
 })()
 
+# Text-document formats the "data" name keyword never turns into data (see
+# data_classify_files()).
+.document_exts <- c("doc", "docx", "odt", "pdf", "rtf")
+
+# Which .tif/.tiff files in a listing are GIS rasters rather than images: those
+# in a folder that also holds a GIS file (a shapefile part, a world file, a
+# GDAL sidecar, another raster format). Judged per folder, so a deposit's
+# photos/ folder keeps its images while its maps/ folder counts as data. When
+# only base names are given, the whole listing counts as one folder.
+# `path` is the listing's file paths (or names); returns a logical vector.
+.is_geotiff <- function(path) {
+  p <- tolower(gsub("\\\\", "/", path))
+  dir <- dirname(p)
+  gis <- grepl("\\.(shp|shx|prj|cpg|sbn|sbx|gpkg|geojson|tfw|tifw|ovr|nc|grd|gri|bil|vrt|kml|kmz)$|\\.aux\\.xml$", p)
+  grepl("\\.tiff?$", p) & dir %in% dir[gis]
+}
+
 # Format-locked lookup used by data_classify_files() Tier 1. Kept as a plain
 # named vector (not the full data frame) so existing `.fixed_ext_type[ext]`
 # call sites are untouched; built from .ext_registry so it can never drift
@@ -591,9 +625,26 @@ data_classify_files <- function(file_name, file_path = NULL) {
   claimed <- !is.na(locked)
   for (rule in keyword_rules) {
     hit <- grepl(tok(rule$pattern), path_lc) & is.na(fixed) & !claimed
+    # A text document is almost never a data file, so "data" in its name or
+    # folder describes what it documents: "Data description.docx" is the
+    # deposit's README (#487), and a PDF in "Data/" is not a dataset. It
+    # falls through to the crosswalk below, which makes it documentation.
+    if (rule$type == "data") hit <- hit & !ext %in% .document_exts
     type[hit] <- rule$type
     claimed <- claimed | hit
   }
+
+  # -- GeoTIFF ----------------------------------------------------------------
+  # A .tif is a photograph or a raster dataset, and the crosswalk below would
+  # call it an image (materials). Next to GIS files it is the raster: a
+  # land-cover map beside the study's shapefiles (#488). Files are only
+  # listed, not read, at this point, so the TIFF's own geographic tags
+  # cannot be checked. A .tif a keyword rule already placed keeps its type.
+  is_tif <- ext %in% c("tif", "tiff") & !claimed
+  if (any(is_tif)) type[is_tif & .is_geotiff(path_for_kw)] <- "data"
+  # A GDAL sidecar ("map.tif.aux.xml") holds a raster's georeferencing and
+  # statistics; its ".xml" extension alone would make it code.
+  type[grepl("\\.aux\\.xml$", path_lc)] <- "data"
 
   # -- Tier 3: coarse crosswalk fallback -------------------------------------
   # Whatever Tier 1/2 left unresolved falls back to metacheck::file_types via
@@ -781,6 +832,11 @@ data_classify_files <- function(file_name, file_path = NULL) {
     cat_raw == "readme" ~ "readme",
     grepl("^ro-crate-metadata\\.json$", base, ignore.case = TRUE) ~ "readme",
     grepl("^readme($|\\.)", tolower(base)) ~ "readme",
+    # "Data description.docx" (title, creators, licence, folder layout and a
+    # description of every file) is the deposit's README under another name
+    # (#487). Only a documentation file gets the role, so a
+    # "data_description.csv" table is not affected.
+    is_doc & grepl("^data(set)?[ _.-]?descriptions?($|[ _.-])", tolower(base)) ~ "readme",
     # A LICENSE file is collection-level, like the readme (one licence for the
     # whole deposit, not per-study), so it gets the same root placement in
     # convert_psychds()'s target_of() -- see psychds_check.R.
@@ -1950,6 +2006,8 @@ txt_classify_content <- function(path) {
 # number (>= 3) of fields, and at least one value below the first line is a
 # number.
 .csv_is_space_separated <- function(path) {
+  # readLines() warns before it fails on a missing file
+  if (is.na(path) || !file.exists(path)) return(FALSE)
   lines <- tryCatch(.utf8_lines(readLines(path, n = 20, warn = FALSE)),
                     error = function(e) character(0))
   lines <- trimws(lines)

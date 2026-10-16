@@ -149,20 +149,44 @@
 #'   project could not be read
 #' @keywords internal
 .osf_license <- function(osf_id) {
-  osf_api <- getOption("metacheck.osf.api")
-  node <- tryCatch({
-    resp <- httr2::request(sprintf("%s/nodes/%s/?embed=license", osf_api, osf_id)) |>
-      .osf_headers() |>
-      httr2::req_error(is_error = \(r) FALSE) |>
-      httr2::req_perform()
-    if (httr2::resp_status(resp) != 200) NULL else
-      httr2::resp_body_json(resp, simplifyVector = TRUE)$data
-  }, error = \(e) NULL)
+  node <- .osf_node_record(osf_id, "?embed=license")
 
   # %empty_or% (not %||%) because name can come back as a length-zero value
   # rather than NULL, and this function's contract is to always return a
   # length-1 scalar.
   node$embeds$license$data$attributes$name %empty_or% NA_character_
+}
+
+#' Get an OSF project's or registration's own record
+#'
+#' A registration is not a node to the OSF API: `/nodes/<id>/` answers 404
+#' for it, and its record (licence included) is at `/registrations/<id>/`
+#' (#486, reported 2026-10-15 for registration tp78a). So `/nodes/` is asked
+#' first, which costs nothing extra for a project, and `/registrations/` only
+#' after a 404.
+#'
+#' @param osf_id the OSF node or registration ID
+#' @param query the query string, e.g. `"?embed=license"`
+#'
+#' @returns the parsed `data` element, or NULL when it could not be read
+#' @keywords internal
+.osf_node_record <- function(osf_id, query = "") {
+  osf_api <- getOption("metacheck.osf.api")
+  for (kind in c("nodes", "registrations")) {
+    resp <- tryCatch(
+      httr2::request(sprintf("%s/%s/%s/%s", osf_api, kind, osf_id, query)) |>
+        .osf_headers() |>
+        httr2::req_error(is_error = \(r) FALSE) |>
+        httr2::req_perform(),
+      error = \(e) NULL)
+    if (is.null(resp)) return(NULL)
+    status <- httr2::resp_status(resp)
+    if (status == 200)
+      return(tryCatch(httr2::resp_body_json(resp, simplifyVector = TRUE)$data,
+                      error = \(e) NULL))
+    if (status != 404) return(NULL)
+  }
+  NULL
 }
 
 #' Collect an OSF project's structured metadata
@@ -178,16 +202,7 @@
 .osf_node_metadata <- function(osf_id) {
   osf_api <- getOption("metacheck.osf.api")
 
-  node <- tryCatch({
-    resp <- httr2::request(sprintf(
-      "%s/nodes/%s/?embed=license&embed=bibliographic_contributors",
-      osf_api, osf_id)) |>
-      .osf_headers() |>
-      httr2::req_error(is_error = \(r) FALSE) |>
-      httr2::req_perform()
-    if (httr2::resp_status(resp) != 200) NULL else
-      httr2::resp_body_json(resp, simplifyVector = TRUE)$data
-  }, error = \(e) NULL)
+  node <- .osf_node_record(osf_id, "?embed=license&embed=bibliographic_contributors")
 
   att <- node$attributes
   users <- node$embeds$bibliographic_contributors$data$embeds$users$data

@@ -87,3 +87,16 @@ test_that("edge case summarise", {
   summary <- file_category(contents)
   expect_equal(summary$file_category, contents$classify)
 })
+
+test_that("README names, including read.me (#487)", {
+  readmes <- c("README.md", "README_data.txt", "Read_me.txt", "READ ME.pdf", "read-me.txt",
+               "read.me.txt", "READ.ME", "DataReadMe.txt", "27README", "Lange.et.al.2021_readme.txt")
+  expect_true(all(.is_readme_name(readmes)))
+  expect_true(all(file_category(readmes)$file_category == "readme"))
+  # Dryad 10.5061/dryad.dt7bh4b keeps its README as read.me.txt
+  expect_equal(.data_doc_role("read.me.txt"), "readme")
+
+  # the dotted form only as a whole word
+  not_readmes <- c("spread.means.csv", "thread.metadata.csv", "bread.me", "data.csv")
+  expect_false(any(.is_readme_name(not_readmes)))
+})

@@ -2005,7 +2005,9 @@ code_packages <- function(packages) {
   # Filename-gated (see roxygen @details): a dedicated file, or a README that
   # might embed the dump, downloaded only if not already local.
   is_si_name <- grepl("session[_-]?info", base_nm, ignore.case = TRUE)
-  is_readme  <- grepl("^readme", base_nm, ignore.case = TRUE)
+  # Names that START with a README name only ("read.me.txt" too, #487), not
+  # every name .is_readme_name() accepts: each candidate may be downloaded.
+  is_readme  <- grepl("^read[ _.-]?me", base_nm, ignore.case = TRUE)
   si_candidates <- is_si_name | is_readme
   if (any(si_candidates)) {
     si_rows <- all_files[si_candidates, , drop = FALSE]

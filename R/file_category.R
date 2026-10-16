@@ -59,7 +59,7 @@ file_category <- function(contents) {
     ft_has("data") & ft_has("archive") ~ "data", # sample.fasta.gz / .fq.gz
   )
 
-  is_readme <- grepl("read[ _-]?me", contents$name, ignore.case = TRUE)
+  is_readme <- .is_readme_name(contents$name)
 
   # data
   is_data <- dplyr::case_when(
@@ -123,6 +123,15 @@ file_category <- function(contents) {
   )
 
   return(contents)
+}
+
+# Whether a file name names a README. "README", "Read_me", "READ ME" and
+# "DataReadMe" match anywhere in the name; the dotted form "read.me.txt"
+# (#487) only as a whole word, so "spread.means.csv" is not a README. The one
+# rule file_category(), repo_check and code_check all use.
+.is_readme_name <- function(x) {
+  grepl("read[ _-]?me", x, ignore.case = TRUE) |
+    grepl("(^|[^A-Za-z])read\\.me([^A-Za-z]|$)", x, ignore.case = TRUE, perl = TRUE)
 }
 
 #' Get file Type from Extension

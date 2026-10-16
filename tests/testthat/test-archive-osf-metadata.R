@@ -144,3 +144,37 @@ test_that(".osf_metadata_download handles an unreachable project", {
   expect_null(suppressWarnings(
     .osf_metadata_download("notanid", download_to)))
 })
+
+test_that(".osf_license reads a registration's licence from /registrations/ (#486)", local({
+  # Reported 2026-10-15: /nodes/tp78a/ answers 404 for the registration
+  # 10.17605/OSF.IO/TP78A, and /registrations/tp78a/ holds its licence.
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- c(seen, req$url)
+      if (grepl("/nodes/", req$url)) return(httr2::response(status_code = 404))
+      httr2::response(
+        status_code = 200,
+        headers = list(`Content-Type` = "application/vnd.api+json"),
+        body = charToRaw(paste0(
+          '{"data":{"id":"tp78a","type":"registrations","embeds":{"license":',
+          '{"data":{"attributes":{"name":"CC-By Attribution 4.0 International"}}}}}}')))
+    },
+    .package = "httr2"
+  )
+  expect_equal(.osf_license("tp78a"), "CC-By Attribution 4.0 International")
+  expect_equal(sub("^.*/v2/", "", seen),
+               c("nodes/tp78a/?embed=license", "registrations/tp78a/?embed=license"))
+
+  # any other failure is not retried
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    req_perform = function(req, ...) {
+      seen <<- c(seen, req$url)
+      httr2::response(status_code = 503)
+    },
+    .package = "httr2"
+  )
+  expect_true(is.na(.osf_license("tp78a")))
+  expect_length(seen, 1)
+}))

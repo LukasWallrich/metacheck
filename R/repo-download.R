@@ -1364,11 +1364,23 @@ download_repo_files <- function(files,
         # trace of why, so a transient failure worth retrying and a host that
         # will never support range requests looked identical after the fact
         # (issue #429).
+        # A member of a plain .tar (repo_check lists those by downloading the
+        # archive whole, see .tar_peek()) is taken from that session copy, or
+        # from one new download of the archive; a tar has no index to fetch
+        # members by byte range from.
+        is_tar_arc <- identical((files$archive_format %||%
+                                   rep(NA_character_, nrow(files)))[idx[1]], "tar")
         fetched <- tryCatch(
-          .zip_fetch_members(arc, names = files$archive_member[idx], dest = member_dest,
-                            cache = cache, skip_on_api_limit = skip_on_api_limit,
-                            max_whole_bytes = whole_bytes, archive_path = arc_path,
-                            request_bytes = request_bytes, size = arc_size),
+          if (is_tar_arc)
+            .tar_fetch_members(arc, names = files$archive_member[idx], dest = member_dest,
+                               archive_path = arc_path, size = arc_size,
+                               max_whole_bytes = whole_bytes,
+                               skip_on_api_limit = skip_on_api_limit)
+          else
+            .zip_fetch_members(arc, names = files$archive_member[idx], dest = member_dest,
+                              cache = cache, skip_on_api_limit = skip_on_api_limit,
+                              max_whole_bytes = whole_bytes, archive_path = arc_path,
+                              request_bytes = request_bytes, size = arc_size),
           error = function(e) conditionMessage(e))
         if (is.character(fetched)) {
           failed <- rbind(failed, data.frame(

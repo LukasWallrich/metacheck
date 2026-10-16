@@ -249,11 +249,20 @@ gitlab_tree_files <- function(repo) {
   # Path pattern only -- the project metadata request below reports a
   # missing/inaccessible project itself (see .gitlab_repo_path()).
   clean_repo <- .gitlab_repo_path(repo)
-  if (is.null(clean_repo))
+  if (is.null(clean_repo)) {
+    # A single path segment ("gitlab.com/somegroup") is a user or group page,
+    # which lists projects but names none of them (the same case as a GitHub
+    # account address, #485).
+    is_account <- !is.na(repo) && grepl(
+      "^(?:https?://)?(?:www\\.)?gitlab\\.com/[A-Za-z0-9_.-]+/?[.,;:)]*$",
+      trimws(repo), perl = TRUE, ignore.case = TRUE)
     return(list(gated = TRUE,
-                reason = "invalid or inaccessible GitLab repository",
+                reason = if (isTRUE(is_account))
+                  "links to a GitLab user or group, not to a specific repository"
+                else "invalid or inaccessible GitLab repository",
                 files  = NULL, default_branch = NA_character_,
                 license = NA_character_))
+  }
 
   proj_id <- .gitlab_project_id(clean_repo)
 

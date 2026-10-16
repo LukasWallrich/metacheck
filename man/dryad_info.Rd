@@ -28,7 +28,10 @@ metadata, its file records in the list column \code{files}, and
 \code{storage_size} (the dataset's total size in bytes as Dryad reports it),
 \code{files_total} (the number of files Dryad reports), and
 \code{files_incomplete} (\code{TRUE} when fewer files could be listed than Dryad
-reports; a warning is given too)
+reports; a warning is given too). A sharing link
+(\code{datadryad.org/stash/share/...}) is followed to the dataset it leads to;
+one that leads nowhere has its reason in \code{error}, as a dataset that
+could not be found does.
 }
 \description{
 Retrieve info from Dryad by URL

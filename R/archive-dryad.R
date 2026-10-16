@@ -75,6 +75,8 @@ dryad_links <- function(paper) {
   dryad_bare_regex <- paste0(
     "(?:https?://)?(?:www\\.)?datadryad\\.org/(?:stash/)?dataset[s]?/doi[:%]",
     "[A-Za-z0-9%._/-]*",
+    # a sharing link, resolved to its DOI by dryad_info() (#484)
+    "|(?:https?://)?(?:www\\.)?datadryad\\.org/(?:stash/)?share/[A-Za-z0-9_-]+",
     "|(?:https?://)?(?:doi\\.org/)?10\\.5061/dryad\\.[A-Za-z0-9]+",
     "|(?:https?://)?(?:doi\\.org/)?(?:", alt_prefix_regex, ")/[A-Za-z0-9]+"
   )
@@ -136,6 +138,40 @@ dryad_links <- function(paper) {
   return(NA_character_)
 }
 
+# The token of a Dryad sharing link ("datadryad.org/stash/share/<token>" or
+# "datadryad.org/share/<token>"), or NA. Vectorised.
+.dryad_share_token <- function(url) {
+  m <- regmatches(url, regexec("datadryad\\.org/(?:stash/)?share/([A-Za-z0-9_-]+)",
+                               url, perl = TRUE, ignore.case = TRUE))
+  vapply(m, \(x) if (length(x) >= 2) x[[2]] else NA_character_, character(1))
+}
+
+# The DOI behind a Dryad sharing link (#484). Authors link a sharing link,
+# made for reviewers before publication, instead of the dataset DOI; it keeps
+# working after publication and redirects to the dataset's landing page,
+# whose address carries the DOI (verified 2026-10-16: datadryad.org/share/
+# <token> answers 302 to /landing/show?id=doi%3A10.5061%2Fdryad.t76hdr81n,
+# and an unknown token answers 404). One request, without following the
+# redirect. Returns list(doi, error): the DOI, or NA with the reason.
+.dryad_share_doi <- function(url) {
+  token <- .dryad_share_token(url)
+  if (is.na(token)) return(list(doi = NA_character_, error = NA_character_))
+  resp <- tryCatch(
+    httr2::request(sprintf("https://datadryad.org/share/%s", token)) |>
+      httr2::req_headers(`User-Agent` = "metacheck") |>
+      httr2::req_options(followlocation = FALSE) |>
+      httr2::req_error(is_error = \(r) FALSE) |>
+      httr2::req_perform(),
+    error = \(e) NULL)
+  status <- if (is.null(resp)) NA_integer_ else httr2::resp_status(resp)
+  loc <- if (is.null(resp)) NULL else httr2::resp_header(resp, "location")
+  doi <- if (is.null(loc)) NA_character_ else .dryad_doi(loc)
+  error <- if (!is.na(doi)) NA_character_ else if (isTRUE(status == 404))
+    "private or expired Dryad sharing link" else
+    "the Dryad sharing link could not be resolved"
+  list(doi = doi, error = error)
+}
+
 #' Retrieve info from Dryad by URL
 #'
 #' @param dryad_url a Dryad dataset URL or DOI, or a table containing them
@@ -155,7 +191,10 @@ dryad_links <- function(paper) {
 #'   `storage_size` (the dataset's total size in bytes as Dryad reports it),
 #'   `files_total` (the number of files Dryad reports), and
 #'   `files_incomplete` (`TRUE` when fewer files could be listed than Dryad
-#'   reports; a warning is given too)
+#'   reports; a warning is given too). A sharing link
+#'   (`datadryad.org/stash/share/...`) is followed to the dataset it leads to;
+#'   one that leads nowhere has its reason in `error`, as a dataset that
+#'   could not be found does.
 #' @export
 #' @examples
 #' \dontrun{
@@ -198,13 +237,31 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
   ) |>
     unique()
   ids <- ids[!is.na(ids$dryad_url), , drop = FALSE]
+
+  # A sharing link carries no DOI; ask Dryad where it leads (#484). One that
+  # leads nowhere keeps its reason, which repo_check reports.
+  share_error <- character(0)
+  is_share <- is.na(ids$dryad_doi) & !is.na(.dryad_share_token(ids$dryad_url))
+  for (k in which(is_share)) {
+    res <- .dryad_share_doi(ids$dryad_url[[k]])
+    ids$dryad_doi[[k]] <- res$doi
+    if (!is.na(res$error)) share_error[[ids$dryad_url[[k]]]] <- res$error
+  }
+  add_share_error <- function(d) {
+    if (length(share_error) == 0) return(d)
+    if (!"error" %in% names(d)) d$error <- NA_character_
+    hit <- d$dryad_url %in% names(share_error)
+    d$error[hit] <- unname(share_error[d$dryad_url[hit]])
+    d
+  }
+
   valid_dois <- unique(stats::na.omit(ids$dryad_doi))
 
   if (length(valid_dois) == 0) {
     ("No valid Dryad links") |>
       list(what = _) |>
       pb$tick(0, tokens = _)
-    return(dplyr::left_join(table, ids, by = "dryad_url"))
+    return(add_share_error(dplyr::left_join(table, ids, by = "dryad_url")))
   }
 
   paste0(
@@ -237,6 +294,7 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
   data <- table |>
     dplyr::left_join(ids, by = "dryad_url") |>
     dplyr::left_join(info, by = "dryad_doi", suffix = c("", ".dryad"))
+  data <- add_share_error(data)
 
   paste0("...Dryad retrieval complete!") |>
     list(what = _) |>

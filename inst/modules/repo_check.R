@@ -41,10 +41,15 @@
 #'   without downloading it (one Range request per archive, see [zip_peek()]) and
 #'   list its contents in place of the archive row. Set FALSE to leave archives
 #'   as single opaque entries and make no per-archive request. Only `.zip` can be
-#'   inspected this way; other archive formats have no tail index.
+#'   inspected this way; other archive formats have no tail index. A plain
+#'   (uncompressed) `.tar` of known size up to 50 MB is listed too, by
+#'   downloading it once; its files are later taken from that copy.
 #' @param osf_license if TRUE, make one extra lightweight API request
 #'   (`?embed=license`, not the full four-call project-metadata lookup) per
-#'   distinct OSF project linked, to include OSF's licence in `repo_metadata`.
+#'   OSF project, to include OSF's licence in `repo_metadata`. A cited
+#'   registration is looked up as the project it was registered from, which
+#'   is where its files are listed from; when that project is closed or has
+#'   no licence, the registration's own licence is used.
 #'   FALSE (the default) skips this, since it is one additional request per
 #'   OSF project on top of what this module otherwise makes -- meaningful
 #'   added latency across a large corpus. Every other supported repository
@@ -222,29 +227,10 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   osf_paper_id <- if (length(osf_paper_ids) > 0) osf_paper_ids[[1]] else
     paper_id(paper)[[1]]
 
-  # OSF has no project-level DOI field to surface (see .osf_license()'s own
-  # docs) -- only license is fetched here, one extra lightweight request
-  # (?embed=license alone, not the full four-call .osf_node_metadata()) per
-  # distinct OSF URL actually linked. Done against the URLs as linked, not
-  # after registration->parent resolution below, so this stays a simple,
-  # separate lookup rather than threading through that resolution logic.
-  # Gated behind osf_license (default FALSE, see its own docs above): unlike
-  # every other backend, this is a genuinely extra request this module would
-  # not otherwise make, so it is opt-in rather than always-on.
   osf_meta_df <- data.frame(repo_url = character(0), doi = character(0),
                             license = character(0))
-  if (isTRUE(osf_license) && length(osf_urls) > 0) {
-    osf_node_ids <- osf_check_id(osf_urls)
-    osf_lic <- vapply(osf_node_ids, \(id) {
-      if (is.na(id)) return(NA_character_)
-      tryCatch(.osf_license(id), error = \(e) NA_character_)
-    }, character(1))
-    osf_meta_df <- data.frame(
-      repo_url = osf_urls,
-      doi = NA_character_,
-      license = unname(osf_lic)
-    )
-  }
+  # registration URL -> the project it was registered from; filled below
+  reg_url_to_parent <- character(0)
 
   osf_files_df <- data.frame(repo_name = character(0))
   if (length(osf_urls) > 0) {
@@ -460,6 +446,45 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       unflagged <- osf_urls[is.na(repos$repo_error[match(osf_urls, repos$repo_url)])]
       repos$repo_error[repos$repo_url %in% unflagged] <<- conditionMessage(e)
     })
+  }
+
+  # OSF has no project-level DOI field to surface (see .osf_license()'s own
+  # docs) -- only license is fetched here, one extra lightweight request
+  # (?embed=license alone, not the full four-call .osf_node_metadata()) per
+  # OSF repository. Gated behind osf_license (default FALSE, see its own docs
+  # above): unlike every other backend, this is a genuinely extra request this
+  # module would not otherwise make, so it is opt-in rather than always-on.
+  #
+  # Done AFTER the registration -> parent resolution above, for the OSF rows
+  # left in `repos` (#486): a cited registration has been replaced there by
+  # the project it was registered from, which is where the files are listed
+  # from, so that project's licence is the one asked for, and its metadata
+  # row joins to the paper below (a row keyed to the removed registration
+  # URL had no paper_id). A parent that is closed or has no licence set
+  # takes its registration's licence, which covers the same files.
+  if (isTRUE(osf_license)) {
+    osf_repo_urls <- unique(repos$repo_url[repos$repo_type %in% "osf"])
+    lic_of <- function(url) {
+      id <- osf_check_id(url)[[1]]
+      if (is.na(id)) return(NA_character_)
+      tryCatch(.osf_license(id), error = \(e) NA_character_)
+    }
+    osf_lic <- vapply(osf_repo_urls, \(url) {
+      lic <- lic_of(url)
+      regs <- names(reg_url_to_parent)[reg_url_to_parent == url]
+      for (r in regs) {
+        if (!is.na(lic)) break
+        lic <- lic_of(r)
+      }
+      lic
+    }, character(1))
+    if (length(osf_repo_urls) > 0) {
+      osf_meta_df <- data.frame(
+        repo_url = osf_repo_urls,
+        doi = NA_character_,
+        license = unname(osf_lic)
+      )
+    }
   }
 
   ## GitHub ----
@@ -1031,11 +1056,21 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # dataset-record lookup (see archive-dryad.R) -- plain extraction of
       # columns already in memory, not a new API call.
       if (nrow(.dryad_info_tbl) > 0) {
+        # .col_chr(), as in the Zenodo block: when every Dryad link fails
+        # (an expired sharing link, #484), dryad_info() returns no doi/
+        # license columns, and a bare as.character() made this data.frame()
+        # fail with "differing number of rows" in place of the real reason.
         dryad_meta_df <- data.frame(
-          repo_url = as.character(.dryad_info_tbl$dryad_url),
-          doi = as.character(.dryad_info_tbl$doi),
-          license = as.character(.dryad_info_tbl$license)
+          repo_url = .col_chr(.dryad_info_tbl, "dryad_url"),
+          doi = .col_chr(.dryad_info_tbl, "doi"),
+          license = .col_chr(.dryad_info_tbl, "license")
         )
+        # A link that could not be listed is kept, with its reason, rather
+        # than dropped silently (see the OSF block above).
+        dryad_err <- .col_chr(.dryad_info_tbl, "error")
+        failed <- .dryad_info_tbl[!is.na(dryad_err), , drop = FALSE]
+        hit <- match(repos$repo_url, failed$dryad_url)
+        repos$repo_error[!is.na(hit)] <- dryad_err[!is.na(dryad_err)][hit[!is.na(hit)]]
       }
 
       if (nrow(.dryad_info_tbl) > 0 && "files" %in% names(.dryad_info_tbl)) {
@@ -1601,11 +1636,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       all_files <- all_files[!is_r_pkg, , drop = FALSE]
     }
 
-    is_readme <- grepl(
-      "readme|read[_ ]me",
-      all_files$file_name,
-      ignore.case = TRUE
-    )
+    is_readme <- .is_readme_name(all_files$file_name)
     all_files$file_type[is_readme] <- "readme"
   }
   all_files$repo_name <- basename(all_files$repo_url)
@@ -1618,14 +1649,19 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # without downloading the archive (see zip_peek()) — which is exactly the
   # "list, don't fetch" operation this module is built around.
   #
-  # Only .zip can be inspected this way. A .7z/.rar/.tar.gz has no tail index,
-  # so its contents stay unknown until data_check downloads it — which is why
-  # the report below still recommends .zip over those formats.
+  # Only .zip can be inspected this way. A plain .tar has no index either, but
+  # its headers are not compressed, so one of up to 50 MB is downloaded once,
+  # whole, and listed from that copy (see .tar_peek(), #487); the download step
+  # later takes its members from the same copy. A .7z/.rar/.tar.gz has no tail
+  # index, so its contents stay unknown until data_check downloads it — which
+  # is why the report below still recommends .zip over those formats (and over
+  # .tar, which can only be listed by downloading it).
   #
   # The archive row is REPLACED by its contents when the peek succeeds, so the
   # listing shows the files a reader gets rather than the container. A failed
   # peek (host ignores ranges, directory not in the tail) leaves the archive row
   # untouched, and data_check opens it after download as before.
+  listed_tars <- character(0)
   if (isTRUE(peek_zips) && nrow(all_files) > 0) {
     # A zip that is already on disk is listed from the file, with no request:
     # a ResearchBox box is downloaded and unpacked whole above, so a zip
@@ -1639,17 +1675,22 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     zip_src <- .zip_local_source(all_files)
     zip_src[is.na(zip_src)] <- all_files$file_url[is.na(zip_src)]
     is_zip <- .is_zip(all_files$file_name) & has_url
-    if (any(is_zip)) {
-      zpb <- pb(sum(is_zip), "Reading zip contents [:bar] :current/:total")
+    is_tar <- grepl("[.]tar$", all_files$file_name, ignore.case = TRUE) & has_url
+    if (any(is_zip | is_tar)) {
+      zpb <- pb(sum(is_zip | is_tar), "Reading archive contents [:bar] :current/:total")
       on.exit(zpb$terminate(), add = TRUE)
       expanded <- list(); consumed <- integer(0)
-      for (i in which(is_zip)) {
+      for (i in which(is_zip | is_tar)) {
         # The listing's own size, where it gave one, saves a HEAD request per
-        # archive (see zip_peek()'s `size`).
-        peek <- tryCatch(zip_peek(zip_src[i], cache = cache,
-                                  skip_on_api_limit = skip_on_api_limit,
-                                  size = all_files$file_size[i]),
-                        error = \(e) NULL)
+        # archive (see zip_peek()'s `size`); a tar is listed only when its
+        # size is known (see .tar_peek()).
+        peek <- tryCatch(
+          if (is_tar[i]) .tar_peek(zip_src[i], size = all_files$file_size[i],
+                                   cache = cache, skip_on_api_limit = skip_on_api_limit)
+          else zip_peek(zip_src[i], cache = cache,
+                        skip_on_api_limit = skip_on_api_limit,
+                        size = all_files$file_size[i]),
+          error = \(e) NULL)
         zpb$tick()
         if (is.null(peek) || nrow(peek) == 0) next
         rows <- all_files[rep(i, nrow(peek)), , drop = FALSE]
@@ -1673,7 +1714,11 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         # For a zip already on disk this is the local path instead, which
         # download_repo_files() extracts the member from directly.
         rows$archive_url    <- zip_src[i]
-        rows$archive_member <- peek$name
+        # A tar member is taken by its name exactly as stored (see
+        # .tar_list_file()); `archive_format` tells download_repo_files()
+        # which way to fetch it, since an archive's URL need not end in .tar.
+        rows$archive_member <- if (is_tar[i]) peek$member else peek$name
+        rows$archive_format <- if (is_tar[i]) "tar" else "zip"
         # The archive's own size, so the later member fetch can skip the HEAD
         # request zip_peek() would otherwise make in a new session.
         rows$archive_size   <- as.numeric(all_files$file_size[i] %||% NA_real_)
@@ -1693,6 +1738,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         expanded[[length(expanded) + 1L]] <- rows
         consumed <- c(consumed, i)
       }
+      # A listed tar is still not as reusable as a zip (it can only be listed
+      # by downloading it), so the report's archive advice keeps naming it.
+      listed_tars <- all_files$file_name[consumed[is_tar[consumed]]]
       if (length(consumed) > 0) {
         all_files <- dplyr::bind_rows(all_files[-consumed, , drop = FALSE],
                                       dplyr::bind_rows(expanded))
@@ -1881,18 +1929,19 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # without downloading the whole file — and .7z/.rar metacheck cannot read at
   # all), or a .zip whose host ignored the Range request. Both are opaque from a
   # listing, which is exactly what the recommendation below is about.
+  # A plain .tar listed above (by downloading it) is no longer an archive row,
+  # but the advice still applies to it, so it is named here too.
   zip_n <- sum(repos$files_zip)
+  zip_files <- all_files$file_name[!is.na(all_files$file_type) & all_files$file_type == "archive"]
+  nonzip_files <- c(zip_files[!grepl("[.]zip$", zip_files, ignore.case = TRUE)],
+                    listed_tars)
+  report_zip <- if (length(nonzip_files) > 0) {
+    sprintf(
+      "#### Archive Files\n\nThe following files are not ZIP archives: %s. We recommend the `.zip` format for archives: only ZIP stores its file listing in a way that lets a tool inspect the contents without downloading the whole archive, so a `.zip` is more discoverable and re-usable than a `.7z`, `.rar`, `.tar` or `.tar.gz`.",
+      paste(nonzip_files, collapse = ", ")
+    )
+  } else NULL
   if (zip_n > 0) {
-    zip_files <- all_files$file_name[!is.na(all_files$file_type) & all_files$file_type == "archive"]
-    nonzip_files <- zip_files[!grepl("[.]zip$", zip_files, ignore.case = TRUE)]
-    if (length(nonzip_files) > 0) {
-      report_zip <- sprintf(
-        "#### Archive Files\n\nThe following files are not ZIP archives: %s. We recommend the `.zip` format for archives: only ZIP stores its file listing in a way that lets a tool inspect the contents without downloading the whole archive, so a `.zip` is more discoverable and re-usable than a `.7z`, `.rar`, or `.tar.gz`.",
-        paste(nonzip_files, collapse = ", ")
-      )
-    } else {
-      report_zip <- NULL
-    }
     summary_zip <- sprintf(
       "We found %d archive file%s.",
       zip_n,
@@ -1900,7 +1949,6 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     )
   } else {
     summary_zip <- NULL
-    report_zip <- NULL
   }
 
   ## proprietary E-Prime binary files ----

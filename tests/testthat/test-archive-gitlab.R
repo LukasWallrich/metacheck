@@ -164,3 +164,9 @@ test_that(".gitlab_repo_path parses without any request", local({
   expect_null(metacheck:::.gitlab_repo_path("just-one-segment"))
   expect_null(metacheck:::.gitlab_repo_path(NA_character_))
 }))
+
+test_that("gitlab_tree_files reports a user or group address as such (#485)", {
+  result <- gitlab_tree_files("https://gitlab.com/somegroup/")
+  expect_true(result$gated)
+  expect_equal(result$reason, "links to a GitLab user or group, not to a specific repository")
+})

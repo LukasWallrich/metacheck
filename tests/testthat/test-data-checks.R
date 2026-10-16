@@ -305,6 +305,44 @@ test_that("data_classify_files recognizes domain data formats by extension alone
   expect_equal(data_classify_files("model.stl"), "materials")
 })
 
+test_that("data_classify_files counts GIS rasters and their sidecars as data (#488)", {
+  # Unambiguous raster and geographic formats, by extension alone.
+  files <- c("dem.tfw", "dem.tifw", "dem.ovr", "climate.nc", "dist.grd", "dist.gri",
+             "band.bil", "mosaic.vrt", "sites.kml", "sites.kmz", "dem.tif.aux.xml")
+  expect_true(all(data_classify_files(files) == "data"))
+
+  # A .tif is data in a folder that holds GIS files, and stays an image
+  # elsewhere. Dryad 10.5061/dryad.nvx0k6dpd keeps its land-cover rasters next
+  # to its shapefiles.
+  paths <- c("02_Lancover_Alt_Boundary/Present_landcover_2000.tif",
+             "02_Lancover_Alt_Boundary/boundary.shp",
+             "maps/dem.tiff", "maps/dem.tfw",
+             "photos/site1.tif",
+             "stimuli/face.tif")
+  expect_equal(data_classify_files(basename(paths), paths),
+               c("data", "data", "data", "data", "materials", "materials"))
+  # with base names only, the whole listing counts as one folder
+  expect_equal(data_classify_files(c("Crop_00_13.tiff", "layer.shp")), c("data", "data"))
+  expect_equal(data_classify_files(c("Crop_00_13.tiff", "photo.jpg")), c("materials", "materials"))
+  # a keyword in the path still decides first
+  expect_equal(data_classify_files(c("face.tif", "a.shp"), c("stimuli/face.tif", "stimuli/a.shp"))[[1]],
+               "materials")
+})
+
+test_that("data_classify_files keeps text documents named 'data' as documentation (#487)", {
+  # 4TU "Data 4TU/Data description.docx" is the deposit's README.
+  docs <- c("Data description.docx", "Data_appendix.pdf", "data.odt", "data notes.rtf", "data.doc")
+  expect_true(all(data_classify_files(docs) == "documentation"))
+  expect_equal(data_classify_files("consent.pdf", "Data/consent.pdf"), "documentation")
+  # data formats are unaffected
+  expect_equal(data_classify_files(c("data.csv", "data.txt", "raw.txt"), c("data.csv", "data.txt", "Data/raw.txt")),
+               c("data", "data", "data"))
+
+  roles <- .data_doc_role(c("Data description.docx", "Dataset_description.pdf",
+                            "data_description.csv", "Data appendix.pdf"))
+  expect_equal(roles, c("readme", "readme", NA, "supplemental"))
+})
+
 test_that("data_classify_files recognizes additional corpus-confirmed formats (issue #456)", {
   # .rdat (R's dput()-based ASCII data dump), .str (STRUCTURE input), and .dtg
   # (DTAG biologging sensor output) previously had no Tier-1 rule.
