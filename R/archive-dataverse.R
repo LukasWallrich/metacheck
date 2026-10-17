@@ -566,11 +566,25 @@ dataverse_links <- function(paper) {
     }, character(1))
   }
 
-  doi_pattern <- "persistentId=doi:([^&\\s\"']+)"
+  # The label's ":" may be percent-encoded ("persistentId=doi%3A10.7910..."),
+  # as a copied link often has it; the value is decoded below.
+  doi_pattern <- "persistentId=doi(?::|%3A)([^&\\s\"']+)"
   doi_m <- regmatches(url, regexec(doi_pattern, url, ignore.case = TRUE, perl = TRUE))
   doi <- vapply(doi_m, function(m) {
     if (length(m) < 2) NA_character_ else utils::URLdecode(m[[2]])
   }, character(1))
+
+  # A dataset with a Handle instead of a DOI ("?persistentId=hdl:10411/B2VWDH"
+  # on dataverse.nl, #476) is kept with its "hdl:" label, so .dataverse_info()
+  # asks the API for that persistentId as it is; a DOI is kept without its
+  # label, as before. The API accepts the Handle (verified in #476: dataset
+  # 8988, persistentUrl https://doi.org/10.34894/OL0XG2).
+  hdl_m <- regmatches(url, regexec("persistentId=hdl(?::|%3A)([^&\\s\"']+)", url,
+                                   ignore.case = TRUE, perl = TRUE))
+  hdl <- vapply(hdl_m, function(m) {
+    if (length(m) < 2) NA_character_ else paste0("hdl:", utils::URLdecode(m[[2]]))
+  }, character(1))
+  doi[is.na(doi)] <- hdl[is.na(doi)]
 
   # A bare DOI citation (e.g. "https://doi.org/10.18167/DVN1/T0DMFJ") carries
   # neither a dataset.xhtml host page nor a persistentId query param -- both
@@ -740,9 +754,11 @@ dataverse_info <- function(dataverse_url, id_col = 1, pb = NULL, cache = FALSE) 
 
   obj <- data.frame(dataverse_host = host, dataverse_doi = doi)
 
+  # A Handle carries its own "hdl:" label (see .dataverse_parse()).
+  pid <- if (startsWith(doi, "hdl:")) doi else paste0("doi:", doi)
   api_url <- sprintf(
-    "https://%s/api/datasets/:persistentId/?persistentId=doi:%s",
-    host, doi)
+    "https://%s/api/datasets/:persistentId/?persistentId=%s",
+    host, pid)
 
   resp <- .batch_query(api_url, msg = NULL, req_func = .dataverse_headers)[[1]]
 

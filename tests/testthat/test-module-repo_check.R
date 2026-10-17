@@ -613,3 +613,18 @@ test_that("repo_check reports an expired Dryad sharing link with its reason (#48
   mo <- module_run(paper, "repo_check", peek_zips = FALSE)
   expect_equal(mo$gated_repos$repo_error, "private or expired Dryad sharing link")
 })
+
+test_that("repo_check reports each link's own reason when every link of a platform fails (#476)", {
+  # When every Figshare link failed, figshare_info() returned no doi/license
+  # columns, and building the metadata table stopped with "arguments imply
+  # differing number of rows", which then replaced each link's reason.
+  local_mocked_bindings(
+    online = \(...) TRUE,
+    figshare_info = function(figshare_url, ...) data.frame(
+      figshare_url = figshare_url, figshare_id = NA_character_, error = "unfound")
+  )
+  paper <- test_paper(text = "Data: https://figshare.com/articles/dataset/x/99999999")
+  mo <- module_run(paper, "repo_check")
+  expect_equal(mo$gated_repos$repo_error, "unfound")
+  expect_false(any(grepl("differing number of rows", mo$gated_repos$repo_error)))
+})

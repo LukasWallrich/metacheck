@@ -141,3 +141,46 @@ test_that(".dataone_package_sizes builds the Solr query and reads its reply", lo
   )
   expect_equal(metacheck:::.dataone_package_sizes("h", "/x/", "doi:1"), numeric(0))
 }))
+
+test_that(".dataone_info asks for a DOI in upper case after a 404 (#476)", local({
+  # Verified 2026-10-17: KNB answers 404 for doi:10.5063/f11z42jx and 200 for
+  # doi:10.5063/F11Z42JX.
+  eml <- paste0('<eml:eml xmlns:eml="https://eml.ecoinformatics.org/eml-2.2.0">',
+                '<dataset><title>Kedougou Nutrient Diversity</title></dataset></eml:eml>')
+  seen <- character(0)
+  stored <- "doi%3A10.5063%2FF11Z42JX"
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls, ...) {
+      seen <<- c(seen, urls)
+      list(if (endsWith(urls, stored))
+        httr2::response(status_code = 200, body = charToRaw(eml))
+      else httr2::response(status_code = 404))
+    },
+    .dataone_package_sizes = function(...) numeric(0)
+  )
+
+  info <- metacheck:::.dataone_info("doi:10.5063/f11z42jx", host = "knb.ecoinformatics.org")
+  expect_equal(info$title, "Kedougou Nutrient Diversity")
+  # the identifier as given stays the key dataone_info() joins on
+  expect_equal(info$dataone_pid, "doi:10.5063/f11z42jx")
+  expect_equal(info$doi, "doi:10.5063/F11Z42JX")
+  expect_length(seen, 2)
+
+  # found as written: no second request
+  seen <- character(0)
+  info <- metacheck:::.dataone_info("doi:10.5063/F11Z42JX", host = "knb.ecoinformatics.org")
+  expect_equal(info$title, "Kedougou Nutrient Diversity")
+  expect_length(seen, 1)
+
+  # not found in either case: still unfound, after two requests
+  seen <- character(0)
+  expect_warning(info <- metacheck:::.dataone_info("doi:10.5063/nope", host = "knb.ecoinformatics.org"),
+                 "could not be found")
+  expect_equal(info$error, "unfound")
+  expect_length(seen, 2)
+
+  # an identifier that is not a DOI is never changed
+  seen <- character(0)
+  expect_warning(metacheck:::.dataone_info("urn:uuid:abc", host = "knb.ecoinformatics.org"))
+  expect_length(seen, 1)
+}))

@@ -416,6 +416,34 @@ dataone_info <- function(dataone_url, id_col = 1, pb = NULL, cache = FALSE) {
 
   resp <- .batch_query(obj_url, msg = NULL)[[1]]
 
+  # DataONE matches identifiers as exact strings, but a DOI is the same DOI in
+  # any case, and DataCite registers DOIs in upper case, which is how KNB
+  # stores them (verified 2026-10-17: doi:10.5063/f11z42jx and
+  # doi:10.5063/F11z42jx answer 404, doi:10.5063/F11Z42JX answers 200; #476).
+  # So a DOI written in lower or mixed case is asked for once more in upper
+  # case. Only after a 404, so an identifier found as written is never
+  # changed; only for a "doi:" identifier, since a urn:uuid or knb.* docid is
+  # not case-insensitive; and the DOI prefix is digits, so only the suffix
+  # changes. The upper-case form cannot be a different dataset: DOI names
+  # differ only by more than case. `obj$dataone_pid` keeps the identifier as
+  # given, which dataone_info() joins on; `pid` becomes the one found, for the
+  # requests below.
+  if (!is.null(resp) && httr2::resp_status(resp) == 404 &&
+      startsWith(pid, "doi:")) {
+    upper <- paste0("doi:", toupper(substring(pid, 5)))
+    if (!identical(upper, pid)) {
+      resp_upper <- .batch_query(
+        paste0("https://", host, api_base, "object/",
+               utils::URLencode(upper, reserved = TRUE)), msg = NULL)[[1]]
+      if (!is.null(resp_upper) && httr2::resp_status(resp_upper) == 200) {
+        resp <- resp_upper
+        pid <- upper
+        epid <- utils::URLencode(pid, reserved = TRUE)
+        obj_url <- paste0("https://", host, api_base, "object/", epid)
+      }
+    }
+  }
+
   if (is.null(resp) || httr2::resp_status(resp) != 200) {
     warning(pid, " could not be found on ", host, call. = FALSE)
     obj$error <- "unfound"

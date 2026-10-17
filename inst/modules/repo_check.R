@@ -192,6 +192,32 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   # get files ----
 
+  # One platform's metadata rows (repo_url, doi, license) from its *_info()
+  # table. .col_chr(), not a bare as.character(): when every link of a
+  # platform fails, the table has no doi/license columns, as.character(NULL)
+  # is character(0), and data.frame() then failed with "arguments imply
+  # differing number of rows: n, 0" -- which the block's tryCatch reported for
+  # every link in place of each link's real reason (#476; the Zenodo block
+  # below explains the first case found).
+  meta_rows <- function(tbl, url_col) data.frame(
+    repo_url = .col_chr(tbl, url_col),
+    doi = .col_chr(tbl, "doi"),
+    license = .col_chr(tbl, "license")
+  )
+  # `repo_error` with each link's own reason from its *_info() table
+  # ("unfound", "parse_error", ...) filled in, so a link that could not be
+  # looked up is reported in gated_repos rather than dropped without a word
+  # (#476). A reason already recorded is kept.
+  link_errors <- function(repo_error, repo_url, tbl, url_col) {
+    err <- .col_chr(tbl, "error")
+    urls <- .col_chr(tbl, url_col)[!is.na(err)]
+    err <- err[!is.na(err)]
+    hit <- match(repo_url, urls)
+    fill <- !is.na(hit) & is.na(repo_error)
+    repo_error[fill] <- err[hit[fill]]
+    repo_error
+  }
+
   ## OSF ----
   osf_urls <- repos |>
     dplyr::filter(repo_type == "osf") |>
@@ -818,11 +844,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # guard belongs here too: extracting the metadata never needs the
       # record to have been readable.
       if (nrow(.zenodo_info) > 0) {
-        zenodo_meta_df <- data.frame(
-          repo_url = .col_chr(.zenodo_info, "zenodo_url"),
-          doi = .col_chr(.zenodo_info, "doi"),
-          license = .col_chr(.zenodo_info, "license")
-        )
+        zenodo_meta_df <- meta_rows(.zenodo_info, "zenodo_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .zenodo_info, "zenodo_url")
       }
 
       if (nrow(.zenodo_info) > 0 && "files" %in% names(.zenodo_info)) {
@@ -898,11 +922,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # dataset-version lookup (see archive-dataverse.R) -- plain extraction
       # of columns already in memory, not a new API call.
       if (nrow(.dv_info) > 0) {
-        dv_meta_df <- data.frame(
-          repo_url = as.character(.dv_info$dataverse_url),
-          doi = as.character(.dv_info$doi),
-          license = as.character(.dv_info$license)
-        )
+        dv_meta_df <- meta_rows(.dv_info, "dataverse_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .dv_info, "dataverse_url")
       }
 
       if (nrow(.dv_info) > 0 && "files" %in% names(.dv_info)) {
@@ -979,11 +1001,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # article lookup (see archive-figshare.R) -- plain extraction of
       # columns already in memory, not a new API call.
       if (nrow(.fs_info) > 0) {
-        fs_meta_df <- data.frame(
-          repo_url = as.character(.fs_info$figshare_url),
-          doi = as.character(.fs_info$doi),
-          license = as.character(.fs_info$license)
-        )
+        fs_meta_df <- meta_rows(.fs_info, "figshare_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .fs_info, "figshare_url")
       }
 
       if (nrow(.fs_info) > 0 && "files" %in% names(.fs_info)) {
@@ -1056,21 +1076,11 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # dataset-record lookup (see archive-dryad.R) -- plain extraction of
       # columns already in memory, not a new API call.
       if (nrow(.dryad_info_tbl) > 0) {
-        # .col_chr(), as in the Zenodo block: when every Dryad link fails
-        # (an expired sharing link, #484), dryad_info() returns no doi/
-        # license columns, and a bare as.character() made this data.frame()
-        # fail with "differing number of rows" in place of the real reason.
-        dryad_meta_df <- data.frame(
-          repo_url = .col_chr(.dryad_info_tbl, "dryad_url"),
-          doi = .col_chr(.dryad_info_tbl, "doi"),
-          license = .col_chr(.dryad_info_tbl, "license")
-        )
-        # A link that could not be listed is kept, with its reason, rather
-        # than dropped silently (see the OSF block above).
-        dryad_err <- .col_chr(.dryad_info_tbl, "error")
-        failed <- .dryad_info_tbl[!is.na(dryad_err), , drop = FALSE]
-        hit <- match(repos$repo_url, failed$dryad_url)
-        repos$repo_error[!is.na(hit)] <- dryad_err[!is.na(dryad_err)][hit[!is.na(hit)]]
+        # An expired sharing link (#484) is reported with its reason; see
+        # meta_rows() and link_errors() above.
+        dryad_meta_df <- meta_rows(.dryad_info_tbl, "dryad_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .dryad_info_tbl, "dryad_url")
       }
 
       if (nrow(.dryad_info_tbl) > 0 && "files" %in% names(.dryad_info_tbl)) {
@@ -1154,11 +1164,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # licence field through this endpoint at all (not a bug, a real gap
       # in what ReShare's own API returns).
       if (nrow(.reshare_info_tbl) > 0) {
-        reshare_meta_df <- data.frame(
-          repo_url = as.character(.reshare_info_tbl$reshare_url),
-          doi = as.character(.reshare_info_tbl$doi),
-          license = as.character(.reshare_info_tbl$license)
-        )
+        reshare_meta_df <- meta_rows(.reshare_info_tbl, "reshare_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .reshare_info_tbl, "reshare_url")
       }
 
       if (nrow(.reshare_info_tbl) > 0 && "files" %in% names(.reshare_info_tbl)) {
@@ -1234,11 +1242,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # fetched the same way as the Figshare block above -- plain
       # extraction, not a new API call.
       if (nrow(.fourtu_info) > 0) {
-        fourtu_meta_df <- data.frame(
-          repo_url = as.character(.fourtu_info$researchdata4tu_url),
-          doi = as.character(.fourtu_info$doi),
-          license = as.character(.fourtu_info$license)
-        )
+        fourtu_meta_df <- meta_rows(.fourtu_info, "researchdata4tu_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .fourtu_info, "researchdata4tu_url")
       }
 
       if (nrow(.fourtu_info) > 0 && "files" %in% names(.fourtu_info)) {
@@ -1307,11 +1313,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # dataset-record lookup (see archive-mendeley.R) -- this is a plain
       # extraction of columns already in memory, not a new API call.
       if (nrow(.mendeley_info) > 0) {
-        mendeley_meta_df <- data.frame(
-          repo_url = as.character(.mendeley_info$mendeley_url),
-          doi = as.character(.mendeley_info$doi),
-          license = as.character(.mendeley_info$license)
-        )
+        mendeley_meta_df <- meta_rows(.mendeley_info, "mendeley_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .mendeley_info, "mendeley_url")
       }
 
       if (nrow(.mendeley_info) > 0 && "files" %in% names(.mendeley_info)) {
@@ -1382,11 +1386,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       .dataone_info_tbl <- suppressMessages(dataone_info(dataone_urls, cache = cache))
 
       if (nrow(.dataone_info_tbl) > 0) {
-        dataone_meta_df <- data.frame(
-          repo_url = as.character(.dataone_info_tbl$dataone_url),
-          doi = as.character(.dataone_info_tbl$doi),
-          license = as.character(.dataone_info_tbl$license)
-        )
+        dataone_meta_df <- meta_rows(.dataone_info_tbl, "dataone_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .dataone_info_tbl, "dataone_url")
       }
 
       if (nrow(.dataone_info_tbl) > 0 && "files" %in% names(.dataone_info_tbl)) {
@@ -1463,16 +1465,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       .ldbase_info_tbl <- suppressMessages(ldbase_info(ldbase_urls, pb = pb, cache = cache))
 
       if (nrow(.ldbase_info_tbl) > 0) {
-        ldbase_meta_df <- data.frame(
-          repo_url = as.character(.ldbase_info_tbl$ldbase_url),
-          doi = as.character(.ldbase_info_tbl$doi),
-          license = as.character(.ldbase_info_tbl$license)
-        )
-        # A link that could not be listed is kept, with its reason, rather
-        # than dropped silently (see the OSF block above).
-        failed <- .ldbase_info_tbl[!is.na(.ldbase_info_tbl$error), , drop = FALSE]
-        hit <- match(repos$repo_url, failed$ldbase_url)
-        repos$repo_error[!is.na(hit)] <- failed$error[hit[!is.na(hit)]]
+        ldbase_meta_df <- meta_rows(.ldbase_info_tbl, "ldbase_url")
+        repos$repo_error <- link_errors(repos$repo_error, repos$repo_url,
+                                        .ldbase_info_tbl, "ldbase_url")
       }
 
       if (nrow(.ldbase_info_tbl) > 0 && "files" %in% names(.ldbase_info_tbl)) {

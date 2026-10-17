@@ -541,3 +541,29 @@ test_that(".dataverse_resolve_doi_host does not remember a failed lookup", local
   # tried again the second time, since the first gave no answer
   expect_equal(n, 2)
 }))
+
+test_that("a Dataverse Handle (persistentId=hdl:) is parsed and asked for as a Handle (#476)", {
+  parsed <- .dataverse_parse(c(
+    "https://dataverse.nl/dataset.xhtml?persistentId=hdl:10411/B2VWDH",
+    "https://dataverse.nl/dataset.xhtml?persistentId=hdl%3A10411%2FB2VWDH&version=1.0",
+    "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/GGDUND",
+    "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi%3A10.7910%2FDVN%2FGGDUND"))
+  expect_equal(parsed$host, c("dataverse.nl", "dataverse.nl", "dataverse.harvard.edu",
+                              "dataverse.harvard.edu"))
+  expect_equal(parsed$doi, c("hdl:10411/B2VWDH", "hdl:10411/B2VWDH", "10.7910/DVN/GGDUND",
+                             "10.7910/DVN/GGDUND"))
+
+  seen <- character(0)
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls, msg = NULL, req_func = identity) {
+      seen <<- c(seen, urls)
+      list(structure(list(status = 404), class = "httr2_response"))
+    }
+  )
+  testthat::local_mocked_bindings(resp_status = function(resp) resp$status, .package = "httr2")
+  suppressWarnings(.dataverse_info("dataverse.nl", "hdl:10411/B2VWDH"))
+  suppressWarnings(.dataverse_info("dataverse.harvard.edu", "10.7910/DVN/GGDUND"))
+  expect_equal(seen, c(
+    "https://dataverse.nl/api/datasets/:persistentId/?persistentId=hdl:10411/B2VWDH",
+    "https://dataverse.harvard.edu/api/datasets/:persistentId/?persistentId=doi:10.7910/DVN/GGDUND"))
+})
