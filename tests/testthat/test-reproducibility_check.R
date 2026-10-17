@@ -1183,3 +1183,45 @@ test_that("a noise-only Python stdout block does not parse (no raw-text fallback
   lines <- strsplit(so, "\n", fixed = TRUE)[[1]]
   expect_true(.ipynb_is_noise(lines))
 })
+
+# A redirected write names the output folder relative to the sandbox root: the
+# root is a host path, and in the Docker sandbox it is mounted at /sandbox, so
+# an absolute host path failed inside the container (#502).
+.write_script_502 <- function(root) {
+  code_list <- list("analysis.R" = c(
+    'd <- data.frame(condition = c("a", "b"), score = c(1, 2))',
+    'write.csv(d, "data/means.csv", row.names = FALSE)',
+    'cat("wrote the file\n")'))
+  rewrite_list <- list("analysis.R" = data.frame(
+    ref = character(0), basename = character(0), matched = logical(0),
+    target = character(0), ambiguous = logical(0), n_candidates = integer(0),
+    is_call = logical(0)))
+  plan <- data.frame(file_name = "analysis.R", target_path = "code/analysis.R")
+  dir.create(file.path(root, "output"), showWarnings = FALSE)
+  repro_write_scripts(code_list, rewrite_list, plan, root)
+}
+
+test_that("repro_write_scripts redirects writes to output/ relative to the sandbox root (#502)", {
+  root <- withr::local_tempdir()
+  out <- .write_script_502(root)
+  written <- paste(readLines(out$script_path[1]), collapse = "\n")
+  expect_match(written, '"output/means.csv"', fixed = TRUE)
+  expect_false(grepl(gsub("\\\\", "/", root), written, fixed = TRUE))
+  expect_false(grepl(basename(root), written, fixed = TRUE))
+})
+
+test_that("a script that writes a file succeeds in the Docker sandbox (#502)", {
+  skip_if_quick()
+  skip_if_not_installed("processx")
+  docker_ok <- tryCatch(repro_docker_available(), error = function(e) list(ok = FALSE))
+  skip_if_not(isTRUE(docker_ok$ok), "Docker not available")
+
+  root <- withr::local_tempdir()
+  run_tbl <- .write_script_502(root)
+  out <- repro_run_scripts_docker(
+    run_tbl, order = "analysis.R", sandbox_root = root,
+    image = "ghcr.io/scienceverse/metacheck_r_large:latest", timeout = 120)
+  expect_equal(out$outcome, "ran_ok")
+  # written inside the container, found in the host's output folder
+  expect_true(file.exists(file.path(root, "output", "means.csv")))
+})

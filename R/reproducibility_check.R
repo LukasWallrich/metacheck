@@ -1895,13 +1895,20 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     # can wrap across lines, e.g. piped into write.csv() on its own line), then
     # re-split back into per-line form so the rest of this function's
     # line-vector operations (setwd detection below) still work unchanged.
+    #
+    # The output folder is given RELATIVE to the sandbox root ("output/"), not
+    # as file.path(root, "output"): the root is a host path, and in the Docker
+    # sandbox the same folder is mounted at /sandbox, so an absolute host path
+    # does not exist inside the container and every script that wrote a file
+    # failed with "cannot open the connection" (#502). Every run uses the root
+    # as its working directory (run_dir, in both sandboxes; setwd()/os.chdir()
+    # are neutralised below), which is also what the rewritten READ paths
+    # (plan target paths, relative to the root) already rely on.
     wr <- .repro_redirect_writes(txt, lang = fn_lang)
     if (nrow(wr) > 0) {
       joined_txt <- paste(txt, collapse = "\n")
       for (k in seq_len(nrow(wr))) {
-        repl <- gsub("{{REPRO_OUTPUT}}",
-                    paste0(gsub("\\\\", "/", file.path(root, "output")), "/"),
-                    wr$replacement[k], fixed = TRUE)
+        repl <- gsub("{{REPRO_OUTPUT}}", "output/", wr$replacement[k], fixed = TRUE)
         joined_txt <- sub(wr$call_text[k], repl, joined_txt, fixed = TRUE)
       }
       txt <- strsplit(joined_txt, "\n", fixed = TRUE)[[1]]
