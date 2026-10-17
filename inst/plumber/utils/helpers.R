@@ -38,6 +38,59 @@ json_safe <- function(x) {
   x
 }
 
+#' Parse a multipart/form-data request body
+#'
+#' Reads the upload with `webutils::parse_http()`, the parser plumber itself
+#' uses, rather than `mime::parse_multipart()` (#498). mime only recognises a
+#' part whose `Content-Disposition` header comes first, but .NET's
+#' `MultipartFormDataContent` (PowerShell, C#) writes `Content-Type` first, so
+#' every upload from those clients was rejected with "No file uploaded", and
+#' their text fields (`modules`, `fields`, ...) were lost too. Both orders are
+#' valid (RFC 7578 does not fix the order of a part's headers).
+#'
+#' Returns the shape the endpoints already use: a text field as a character
+#' string, and an uploaded file as `list(name, size, type, datapath)`, its
+#' bytes written to a tempfile that the caller removes (see
+#' `with_uploaded_paper()`). Several files under one field name become a list
+#' of such lists, which `validate_file_upload()` rejects.
+#'
+#' @param req plumber request object
+#' @return named list of form fields (empty when the body is not multipart)
+parse_upload <- function(req) {
+  ctype <- req$CONTENT_TYPE %||% req$HTTP_CONTENT_TYPE
+  if (is.null(ctype) || !grepl("^multipart/form-data", ctype, ignore.case = TRUE))
+    return(list())
+  body <- req$bodyRaw
+  if ((is.null(body) || length(body) == 0) && !is.null(req$rook.input)) {
+    req$rook.input$rewind()
+    body <- req$rook.input$read()
+  }
+  if (is.null(body) || length(body) == 0) return(list())
+  parts <- tryCatch(webutils::parse_http(body, ctype), error = function(e) list())
+
+  out <- list()
+  for (i in seq_along(parts)) {
+    nm <- names(parts)[[i]]
+    p <- parts[[i]]
+    if (is.null(nm) || !nzchar(nm)) next
+    if (!is.null(p$filename)) {
+      ext <- tools::file_ext(p$filename)
+      path <- tempfile(fileext = if (nzchar(ext)) paste0(".", ext) else "")
+      writeBin(p$value, path)
+      f <- list(name = p$filename, size = length(p$value),
+                type = p$content_type %||% NA_character_, datapath = path)
+      out[[nm]] <- if (is.null(out[[nm]])) f
+                   else if (!is.null(out[[nm]]$datapath)) list(out[[nm]], f)
+                   else c(out[[nm]], list(f))
+    } else {
+      v <- rawToChar(p$value)
+      Encoding(v) <- "UTF-8"
+      out[[nm]] <- v
+    }
+  }
+  out
+}
+
 #' Extract uploaded file path from multipart form data
 #'
 #' @param mp Parsed multipart form data
@@ -157,10 +210,10 @@ read_paper <- function(file_path, request_id) {
 #' validation, and the bibr parse — returning the right `error_response()` at
 #' each failure point.
 #'
-#' The upload is read straight from the tempfile `mime::parse_multipart()`
-#' already wrote — no second copy (that doubled I/O on payloads up to the 50MB
-#' cap) — and is `unlink()`ed when the request returns, so parsed uploads don't
-#' accumulate in the session tempdir.
+#' The upload is read straight from the tempfile `parse_upload()` wrote — no
+#' second copy (that doubled I/O on payloads up to the 50MB cap) — and is
+#' `unlink()`ed when the request returns, so parsed uploads don't accumulate
+#' in the session tempdir.
 #'
 #' `prevalidate` (optional) runs after the multipart parse but BEFORE the
 #' (expensive) bibr parse, so an endpoint can reject bad parameters without
@@ -176,10 +229,10 @@ with_uploaded_paper <- function(req, res, endpoint, handler, prevalidate = NULL)
   request_id <- uuid::UUIDgenerate()
   logger::log_info("Request started ({endpoint}): {request_id}")
 
-  mp <- mime::parse_multipart(req)
+  mp <- parse_upload(req)
   uploaded_file <- extract_uploaded_file(mp)
-  # mime leaves its multipart tempfile(s) in the session tempdir; clean them up
-  # when the request returns (the response body is already in memory by then).
+  # parse_upload() writes the upload to a tempfile in the session tempdir; clean
+  # it up when the request returns (the response body is already in memory by then).
   on.exit(if (!is.null(uploaded_file)) unlink(uploaded_file), add = TRUE)
 
   validation <- validate_file_upload(uploaded_file)

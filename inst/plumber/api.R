@@ -35,10 +35,12 @@ function(pr) {
   # Paper analysis endpoints - upload bibr JSON to analyze.
   #
   # The restricted parser set is load-bearing: each handler parses the
-  # multipart upload itself (mime::parse_multipart) and reads the file with
-  # .read_bibr. "multi" must stay registered — plumber's body-read step feeds
-  # rook.input, and without it mime sees an empty body and every upload 500s
-  # (the "none" parser breaks exactly this way). Restricting the inner parsers
+  # multipart upload itself (parse_upload(), utils/helpers.R, which reads
+  # req$bodyRaw with webutils::parse_http(), in any order of a part's headers,
+  # #498) and reads the file with .read_bibr. "multi" must stay registered —
+  # plumber's body-read step fills req$bodyRaw, and without it the handler sees
+  # an empty body and every upload fails (the "none" parser breaks exactly this
+  # way). Restricting the inner parsers
   # to "octet" keeps file parts as raw bytes: with plumber's defaults the
   # application/json file part (the Content-Type clients set for a .json
   # upload) would be JSON-parsed a *second* time — wasteful on payloads up to

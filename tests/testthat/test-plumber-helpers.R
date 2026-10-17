@@ -127,3 +127,47 @@ test_that("render_report_html degrades gracefully (never throws, one string)", {
   expect_type(out, "character")
   expect_length(out, 1L)
 })
+
+# A multipart body as .NET's MultipartFormDataContent (PowerShell, C#) writes
+# it, with each part's Content-Type header before its Content-Disposition, or
+# as curl and httr2 write it. mime::parse_multipart() found no file in the
+# first order (#498).
+.multipart_498 <- function(net_order, n_files = 1) {
+  b <- "5d2572d0-bf4c-4881-b097-e37483cfc876"
+  part <- function(headers, value) c(paste0("--", b), if (net_order) rev(headers) else headers, "", value)
+  file_part <- function(i) part(c(sprintf('Content-Disposition: form-data; name="file"; filename="paper%d.json"', i),
+                                  "Content-Type: application/json"), sprintf('{"x": %d}', i))
+  lines <- c(unlist(lapply(seq_len(n_files), file_part)),
+             part(c('Content-Disposition: form-data; name="modules"',
+                    "Content-Type: text/plain; charset=utf-8"), "power,stat_check"),
+             paste0("--", b, "--"), "")
+  list(bodyRaw = charToRaw(paste(lines, collapse = "\r\n")),
+       CONTENT_TYPE = paste0("multipart/form-data; boundary=", b))
+}
+
+test_that("parse_upload reads a part's headers in either order (#498)", {
+  skip_if_not_installed("webutils")
+  for (net_order in c(TRUE, FALSE)) {
+    mp <- parse_upload(.multipart_498(net_order))
+    f <- extract_uploaded_file(mp)
+    withr::defer(unlink(f))
+    expect_length(f, 1)
+    expect_equal(readLines(f, warn = FALSE), '{"x": 1}')
+    expect_equal(tools::file_ext(f), "json")
+    expect_equal(mp$file$name, "paper1.json")
+    expect_equal(mp$modules, "power,stat_check")
+  }
+})
+
+test_that("parse_upload returns every file sent under one field, for rejection (#498)", {
+  skip_if_not_installed("webutils")
+  mp <- parse_upload(.multipart_498(TRUE, n_files = 2))
+  f <- extract_uploaded_file(mp)
+  withr::defer(unlink(f))
+  expect_length(f, 2)
+})
+
+test_that("parse_upload returns no fields for a body that is not multipart", {
+  expect_equal(parse_upload(list(bodyRaw = charToRaw("{}"), CONTENT_TYPE = "application/json")), list())
+  expect_equal(parse_upload(list()), list())
+})

@@ -90,7 +90,9 @@ module_run <- function(paper, module, ...) {
   results <- tryCatch(eval(parse(text = code)),
     error = function(e) {
       m <- basename(module) |> gsub("\\.R$", "", x = _)
-      logger(m, list(paper = paper_id(paper),
+      # paper_id() can fail too (a paper with no id, #499); that must not
+      # replace the module's own error, which is the one to report
+      logger(m, list(paper = tryCatch(paper_id(paper), error = \(e2) NA_character_),
                      error = e$message,
                      details = as.character(e)))
       stop("Running the module '", m, "' produced errors: ", e$message, call. = FALSE)

@@ -62,6 +62,16 @@ read <- function(file_path, include_images = FALSE, recursive = FALSE) {
                               simplifyVector = TRUE,
                               simplifyDataFrame = TRUE)
 
+  # A JSON file that is not a paper ("{}", or the output of another tool) was
+  # read as a paper with no paper_id, and every module then failed with
+  # "replacement has 0 rows, data has 1" (#499). Every bibr export, old and
+  # current schema, has a paper_id at its root.
+  id <- if (is.list(data)) data$paper_id else NULL
+  if (!is.character(id) || length(id) != 1 || is.na(id) || !nzchar(id)) {
+    stop(basename(file_path), " is not bibr output (it has no paper_id), ",
+         "so it cannot be read as a paper", call. = FALSE)
+  }
+
   # bibr export schema 11 and later put schema_version at the root ----
   if (!is.null(data$schema_version)) {
     return(.read_bibr12(file_path, include_images))

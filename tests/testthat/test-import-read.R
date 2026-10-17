@@ -126,3 +126,25 @@ test_that("read - directory", {
   expect_true(paper_validate(papers[[2]]))
   expect_true(paper_validate(papers[[3]]))
 })
+
+test_that("a JSON file that is not a paper is refused with a clear message (#499)", {
+  f <- withr::local_tempfile(fileext = ".json")
+  for (txt in c("{}", "[]", '{"foo": 1}', '{"paper_id": ""}')) {
+    writeLines(txt, f)
+    expect_error(metacheck:::.read_bibr(f), "is not bibr output", fixed = TRUE)
+    # read() skips it with a warning instead of returning a paper without an id
+    expect_warning(p <- read(f), "is not bibr output")
+    expect_length(p, 0)
+  }
+})
+
+test_that("module_run reports the module's own error for a paper without an id (#499)", {
+  p <- paper()
+  p$paper_id <- character(0)
+  p$info <- data.frame(title = "x")
+  # paper_id() itself fails on such a paper
+  expect_error(paper_id(p))
+  # the module's error is the one reported, not paper_id()'s
+  err <- tryCatch(module_run(p, "power"), error = function(e) conditionMessage(e))
+  expect_match(err, "Running the module 'power' produced errors", fixed = TRUE)
+})
