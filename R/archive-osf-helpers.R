@@ -223,16 +223,19 @@ osf_pat <- function(pat = NULL) {
       id <- fetch_ids[[k]]
 
       results[[i]] <- tryCatch({
-        if (inherits(resp, "error")) {
+        if (inherits(resp, "error") || is.null(resp)) {
           warning(id, " resulted in an error", call. = FALSE)
-          data.frame(osf_id = id, osf_type = "error")
+          data.frame(osf_id = id, osf_type = "error",
+                     error = paste("the request to the OSF failed:",
+                                   if (inherits(resp, "error")) conditionMessage(resp) else "no response"))
         } else {
           # `id` is the ID this response was requested for, so a failure can name
           # it rather than reporting "NA could not be found".
           .osf_parse_response(resp, pb = pb, osf_id = id)
         }
       }, error = \(e) {
-        data.frame(osf_id = id, osf_type = "error")
+        data.frame(osf_id = id, osf_type = "error",
+                   error = paste("the OSF answer could not be read:", conditionMessage(e)))
       })
 
       if (isTRUE(cache) && .repo_info_ok(results[[i]]))
@@ -445,7 +448,20 @@ osf_pat <- function(pat = NULL) {
                         public = FALSE))
     } else if (sc == 429) {
       warning("Too many requests", call. = FALSE)
-      return(data.frame(osf_id = id, osf_type = "too many requests"))
+      # `error` marks the row as a failed lookup, so repo_check reports it and
+      # the listing cache does not keep it (.repo_info_ok(), #501)
+      return(data.frame(osf_id = id, osf_type = "too many requests",
+                        error = "the OSF rate limit was reached (HTTP 429)"))
+    } else if (sc >= 500) {
+      # The OSF API is down or overloaded (an outage answered every request
+      # with HTTP 503 on 2026-10-17): that says nothing about whether the
+      # project exists, so it is not reported as "could not be found", and is
+      # kept with its reason instead of being dropped (#501).
+      warning(if (is.na(id)) "An OSF resource" else id,
+              ": the OSF API did not answer (HTTP ", sc,
+              "); the OSF may be down. Try again later.", call. = FALSE)
+      return(data.frame(osf_id = id, osf_type = "error",
+                        error = sprintf("the OSF API did not answer (HTTP %d)", as.integer(sc))))
     } else {
       # 410 (Gone) is the OSF saying the project existed and was deleted or
       # withdrawn, which is worth distinguishing from 404 (never existed, or
@@ -462,7 +478,10 @@ osf_pat <- function(pat = NULL) {
             ". A private project needs an OSF token; see ?osf_pat")
         },
         call. = FALSE)
-      return(data.frame(osf_id = id, osf_type = "unfound"))
+      return(data.frame(osf_id = id, osf_type = "unfound",
+                        error = if (identical(as.integer(sc), 410L))
+                          "deleted or withdrawn from the OSF (HTTP 410)"
+                        else sprintf("not found on the OSF (HTTP %d)", as.integer(sc))))
     }
   }
 

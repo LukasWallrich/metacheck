@@ -333,8 +333,25 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # exists specifically to give every removed registration's files a new
       # home in `repos` (the project it was registered from) so they are
       # never orphaned by this removal.
+      #
+      # A link the OSF could not look up ("unfound", "error", "too many
+      # requests") is kept, with its reason, instead of being removed with the
+      # registrations (#501): during an OSF outage (HTTP 503) every OSF link
+      # was dropped this way, so the paper read as linking no repository at
+      # all, with nothing in gated_repos. Now it is a repository that could
+      # not be checked, like a failed link on any other platform (#476).
+      osf_failed_types <- c("unfound", "error", "too many requests")
+      osf_failed <- osf_info[osf_info$osf_type %in% osf_failed_types &
+                               osf_info$osf_url %in% osf_urls, , drop = FALSE]
+      if (nrow(osf_failed) > 0) {
+        why <- .col_chr(osf_failed, "error")
+        why[is.na(why)] <- "the OSF could not look this link up"
+        hit <- match(repos$repo_url, osf_failed$osf_url)
+        fill <- !is.na(hit) & is.na(repos$repo_error)
+        repos$repo_error[fill] <- why[hit[fill]]
+      }
       osf_to_remove <- osf_info |>
-        dplyr::filter(!osf_type %in% c("nodes", "files", "private")) |>
+        dplyr::filter(!osf_type %in% c("nodes", "files", "private", osf_failed_types)) |>
         _$osf_url
       repos <- repos[!repos$repo_url %in% osf_to_remove, ]
 
@@ -1880,8 +1897,30 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     plural(nrow(repos), "repository", "repositories")
   )
 
+  ## repositories that could not be checked ----
+  # A repository with a recorded failure and no files (the OSF API down, a
+  # record that was not found, a private link) was never listed: it is not
+  # "empty", and nothing is known about its README (#501). It is named, with
+  # its reason, instead of being counted with the empty repositories.
+  unchecked <- !is.na(repos$repo_error) & repos$files_n == 0
+  summary_unchecked <- NULL
+  report_unchecked <- NULL
+  if (any(unchecked)) {
+    summary_unchecked <- sprintf(
+      "We could not check %d %s: %s.",
+      sum(unchecked), plural(sum(unchecked), "repository", "repositories"),
+      paste(sprintf("%s (%s)", repos$repo_url[unchecked], repos$repo_error[unchecked]),
+            collapse = "; "))
+    report_unchecked <- c(
+      "#### Repositories that could not be checked",
+      paste("These repositories are linked in the paper, but their contents could",
+            "not be retrieved, so nothing below describes them. When the reason is",
+            "that the platform did not answer, running the check again later may work."),
+      paste0("- ", repos$repo_url[unchecked], ": ", repos$repo_error[unchecked]))
+  }
+
   ## empty repos ----
-  repo_no_files <- sum(repos$files_n == 0)
+  repo_no_files <- sum(repos$files_n == 0 & !unchecked)
   summary_repo <- NULL
   report_repo <- NULL
 
@@ -1899,7 +1938,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   ## missing READMEs ----
   readme_n <- sum(is_readme)
-  repo_no_readme <- sum(repos$files_readme == 0)
+  # only repositories that were listed (see `unchecked` above)
+  repo_no_readme <- sum(repos$files_readme == 0 & !unchecked)
   summary_readme <- sprintf(
     "We found %d README file%s and %d %s without READMEs.",
     readme_n,
@@ -2262,6 +2302,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   }
 
   report <- c(
+    report_unchecked,
     report_repo,
     if(nrow(repo_tbl)) "#### Repositories" else NULL,
     scroll_table(repo_tbl, maxrows = 10),
@@ -2286,7 +2327,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # the existing zip/README criteria.
   if (zip_n == 0 && repo_no_readme == 0 && n_unknown == 0 &&
       is.null(report_roster) && n_naming_bad == 0 &&
-      length(closed_reg_unreachable) == 0) {
+      length(closed_reg_unreachable) == 0 && !any(unchecked)) {
     tl <- "green"
   } else {
     tl <- "yellow"
@@ -2294,8 +2335,12 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   # summary_table ----
   summary_table <- repos |>
+    dplyr::mutate(.unchecked = unchecked) |>
     dplyr::summarise(
       repo_n = dplyr::n(),
+      # repositories linked but not retrieved (#501), so "repo_n = 0" and
+      # "a repository could not be checked" are told apart
+      repo_unchecked = sum(.unchecked),
       dplyr::across(files_n:files_zip, sum),
       .by = c(paper_id)
     )
@@ -2310,6 +2355,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   # summary_text ----
   summary_text <- c(
+    summary_unchecked,
     summary_repo,
     summary_files,
     summary_readme,

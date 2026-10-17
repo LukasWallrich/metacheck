@@ -329,7 +329,12 @@ osf_info <- function(osf_url, id_col = 1,
     list(what = _) |>
     pb$tick(0, tokens = _)
 
-  if (use_cache) assign(cache_key, data, envir = .osf_listing_cache)
+  # A failed lookup (an `error` reason: OSF unreachable, rate limited, not
+  # found) is not kept, so a later call in the same session asks the OSF
+  # again rather than replaying an outage (#501), as for the on-disk cache
+  # (.repo_info_ok()).
+  failed <- !is.na(.col_chr(data, "error"))
+  if (use_cache && !any(failed)) assign(cache_key, data, envir = .osf_listing_cache)
   return(data)
 }
 

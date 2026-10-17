@@ -50,11 +50,17 @@ MODULE_LABELS <- c(
 # One check, run in its own R process (see background_job.R): it starts with
 # nothing loaded, so it loads metacheck and the helper files itself. Returns
 # the path of the rendered report.
-repocheck_job <- function(paper, modules, labels, args, htmlpath, cache_dir) {
+repocheck_job <- function(paper, modules, labels, args, htmlpath, cache_dir,
+                          work_dir = NULL) {
   suppressPackageStartupMessages(library(metacheck))
   source("render_report.R")
   source("brief_report.R")
   source("shiny_progress.R")
+  # An uploaded .zip is checked from the folder that holds it, so the report
+  # names it by its own folder name, not by a server path (#500). Changed only
+  # after the app's own files above are sourced, which are found relative to
+  # the app's folder.
+  if (!is.null(work_dir)) setwd(work_dir)
   use_shiny_progress()
   progress_step(0.05, "Starting the check...")
   # Keep every file metacheck downloads inside this check's own folder.
@@ -439,7 +445,8 @@ server <- function(input, output, session) {
     job <- bg_start(repocheck_job, list(
       paper = prepared$paper, modules = MODULES,
       labels = MODULE_LABELS[MODULES], args = prepared$args,
-      htmlpath = htmlpath, cache_dir = file.path(workdir, "cache")
+      htmlpath = htmlpath, cache_dir = file.path(workdir, "cache"),
+      work_dir = prepared$work_dir
     ))
     stop_watch <- bg_watch(job, session, "Checking repository",
       heartbeat = slot, max_minutes = 60,
@@ -483,12 +490,20 @@ server <- function(input, output, session) {
     zip_name <- tools::file_path_sans_ext(basename(input$repo_zip$name))
     run_check(function(workdir) {
       check_zip(zip_path)
-      repo_dir <- extract_zip(zip_path, file.path(workdir, "repo"))
+      # repo_check names a local repository by the path it is given, so the
+      # report showed the server's temporary folder ("Repository:
+      # /tmp/RtmpAbC123/repocheck_1a2b3c/repo/my_study", #500). The zip is
+      # unpacked into a folder named after it, and the check runs from the
+      # folder above, with only the repository's own folder name as
+      # local_path ("Repository: my_study").
+      folder <- gsub("[^A-Za-z0-9._ -]", "_", zip_name)
+      if (!nzchar(gsub("[ ._-]", "", folder))) folder <- "repository"
+      repo_dir <- extract_zip(zip_path, file.path(workdir, "repo", folder))
       unlink(zip_path)
       paper <- metacheck::test_paper()
       paper$info$title <- zip_name
-      list(paper = paper,
-           args = list(repo_check = list(local_path = repo_dir, local_only = TRUE)))
+      list(paper = paper, work_dir = dirname(repo_dir),
+           args = list(repo_check = list(local_path = basename(repo_dir), local_only = TRUE)))
     }, cleanup_paths = zip_path)
   }, ignoreNULL = TRUE)
 

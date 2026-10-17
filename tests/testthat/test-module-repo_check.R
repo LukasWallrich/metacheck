@@ -628,3 +628,30 @@ test_that("repo_check reports each link's own reason when every link of a platfo
   expect_equal(mo$gated_repos$repo_error, "unfound")
   expect_false(any(grepl("differing number of rows", mo$gated_repos$repo_error)))
 })
+
+test_that("repo_check reports OSF links it could not check, instead of dropping them (#501)", {
+  # During an OSF outage (HTTP 503) every OSF link was removed with the
+  # registrations, so the paper read as linking no repository at all.
+  paper <- test_paper(text = "Data and code: https://doi.org/10.17605/OSF.IO/CKZVE")
+  for (status in c(503L, 404L)) {
+    osf_cache_clear()
+    local_mocked_bindings(
+      online = \(...) TRUE,
+      .batch_query = function(urls, ...) lapply(urls, \(u) httr2::response(status_code = status)))
+    mo <- suppressWarnings(module_run(paper, "repo_check", cache = FALSE))
+    expect_equal(nrow(mo$gated_repos), 1)
+    expect_equal(mo$gated_repos$repo_error,
+                 if (status == 503L) "the OSF API did not answer (HTTP 503)"
+                 else "not found on the OSF (HTTP 404)")
+    expect_equal(mo$summary_table$repo_n, 1)
+    expect_equal(mo$summary_table$repo_unchecked, 1)
+    # not counted as empty, nor as lacking a README
+    expect_match(mo$summary_text, "We could not check 1 repository", fixed = TRUE)
+    expect_false(grepl("empty repositor", mo$summary_text))
+    expect_match(mo$summary_text, "0 repositories without READMEs", fixed = TRUE)
+    expect_equal(mo$traffic_light, "yellow")
+  }
+  # the failed lookups were not kept for the session: the 404 run above asked
+  # the OSF again instead of replaying the 503
+  osf_cache_clear()
+})

@@ -408,3 +408,22 @@ test_that("osf_file_download accepts a table of projects", {
   expect_error(osf_file_download(data.frame(name = "x")),
                "no `osf_id` column")
 })
+
+test_that(".osf_parse_response keeps the reason a lookup failed (#501)", {
+  parse <- function(status) suppressWarnings(
+    metacheck:::.osf_parse_response(httr2::response(status_code = status), osf_id = "abcde"))
+  # an outage is not "could not be found"
+  expect_warning(metacheck:::.osf_parse_response(httr2::response(status_code = 503), osf_id = "abcde"),
+                 "the OSF may be down")
+  r <- parse(503)
+  expect_equal(r$osf_type, "error")
+  expect_equal(r$error, "the OSF API did not answer (HTTP 503)")
+  expect_equal(parse(404)$osf_type, "unfound")
+  expect_equal(parse(404)$error, "not found on the OSF (HTTP 404)")
+  expect_equal(parse(410)$error, "deleted or withdrawn from the OSF (HTTP 410)")
+  expect_equal(parse(429)$error, "the OSF rate limit was reached (HTTP 429)")
+  # a failed lookup is not kept in the listing cache
+  expect_false(metacheck:::.repo_info_ok(r))
+  # a private project is not a failure
+  expect_equal(parse(403)$osf_type, "private")
+})
