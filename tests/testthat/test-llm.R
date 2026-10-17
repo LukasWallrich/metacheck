@@ -416,3 +416,15 @@ test_that("llm handles an empty structured result without error", {
   expect_equal(res2$variable_name, c("dv", NA))
 })
 
+
+test_that(".llm_apply_reasoning switches Qwen 3 reasoning off on Ollama's /v1 too (#494)", {
+  withr::local_options(metacheck.llm_reasoning = "low")
+  out <- metacheck:::.llm_apply_reasoning(list(), "ollama/qwen3.5:4b")
+  expect_false(out$params_list$think)
+  expect_identical(out$api_args$reasoning_effort, "none")
+
+  # an explicit caller setting still wins
+  out <- metacheck:::.llm_apply_reasoning(list(), "ollama/qwen3.5:4b",
+                                          api_args = list(reasoning_effort = "low"))
+  expect_identical(out$api_args$reasoning_effort, "low")
+})

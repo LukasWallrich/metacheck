@@ -165,3 +165,14 @@ test_that("DOCX-auto", {
   expect_true(paper_validate(paper))
 })
 
+
+test_that("convert(method = 'bibr') passes its arguments to convert_bibr (#489)", {
+  httr2::local_mocked_responses(function(req) {
+    httr2::response_json(body = list(paper_id = "abc"))
+  })
+  save_path <- withr::local_tempdir()
+  json_path <- convert(demofile("pdf"), save_path, method = "bibr",
+                       backend = "selfhosted",
+                       api_url = "http://localhost:8000")
+  expect_true(file.exists(json_path))
+})

@@ -450,7 +450,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$grobid_server_choice, {
     if (input$grobid_server_choice == "local") {
-      up <- .grobid_isalive("http://localhost:8070", error = FALSE)
+      up <- metacheck:::.grobid_isalive("http://localhost:8070", error = FALSE)
       if (!up)  {
         showNotification(
           "The local Grobid server does not seem to be running. Check http://localhost:8070",
