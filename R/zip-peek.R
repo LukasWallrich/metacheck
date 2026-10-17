@@ -1354,6 +1354,61 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 # Returns a 0-row frame when nothing worth keeping is inside — which is how an
 # archive of only materials ends up contributing nothing, exactly as if it had
 # not been downloaded.
+# Which inner files of an archive are kept: data and code, and documentation
+# that is a codebook or README, never a type in `skip_types`, never a file
+# that does not belong in a repository (see .useless_file_kind()). `name` is
+# the inner paths; they are classified by base name, all together (so a
+# GeoTIFF sees the GIS files beside it).
+#
+# "code" is kept alongside data/documentation (gated by skip_types like
+# everything else) so a zip's bundled code files survive expansion instead
+# of being silently discarded -- data_check itself never surfaces them (it
+# only column-extracts data_type == "data"), but code_check reads this same
+# table via get_prev_outputs("data_check", "structure") when data_check ran
+# first in the pipeline, and needs the file present to classify at all. See
+# issue #383 (Gap 3).
+#
+# The .expand_* functions apply this to the archive's listing BEFORE
+# unpacking (#472), so a file that would be dropped right after is never
+# written: picrust2's reference tables (go.txt.gz and others, plain
+# documentation by name) were decompressed into 6.4 GB of cache only to be
+# discarded.
+.archive_keep <- function(name, skip_types) {
+  if (length(name) == 0) return(logical(0))
+  name <- gsub("\\\\", "/", name)
+  base <- basename(name)
+  types <- data_classify_files(base)
+  roles <- .data_doc_role(base)
+  (types %in% c("data", "code") |
+     (types == "documentation" & !is.na(roles) & roles %in% c("codebook", "readme"))) &
+    !(types %in% skip_types) &
+    !grepl("(^|/)__MACOSX/", name) & !.is_useless_file(name)
+}
+
+# `rows` plus one row for each inner file that was NOT unpacked because it is
+# larger than the per-file limit (#472), with no local copy (file_location
+# NA), the way a file too large to download is listed; the same files are
+# attached as attribute "oversize" (file_name, file_size in bytes, NA when
+# unknown), which data_check adds to its record of files over the limit, so
+# the manifest gives them that reason. `name` is the inner paths.
+.with_oversize <- function(rows, archive_row, label, name, file_size) {
+  if (length(name) == 0) return(rows)
+  extra <- archive_row[rep(1, length(name)), , drop = FALSE]
+  extra$file_name     <- basename(name)
+  extra$file_path     <- file.path(label, name)
+  extra$file_location <- NA_character_
+  extra$file_size     <- as.numeric(file_size)
+  if ("data_type" %in% names(extra)) extra$data_type <- data_classify_files(basename(name))
+  if ("doc_role" %in% names(extra))  extra$doc_role  <- .data_doc_role(basename(name))
+  if ("data_format" %in% names(extra))
+    extra$data_format <- data_format(tolower(tools::file_ext(name)))
+  if ("file_url" %in% names(extra))  extra$file_url  <- NA_character_
+  out <- dplyr::bind_rows(rows, extra)
+  attr(out, "oversize") <- data.frame(file_name = basename(name),
+                                      file_size = as.numeric(file_size))
+  out
+}
+
 .archive_rows <- function(dest, archive_row, label, skip_types) {
   empty <- archive_row[0, , drop = FALSE]
   if (!dir.exists(dest)) return(empty)
@@ -1368,16 +1423,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   types <- data_classify_files(basename(loc))
   roles <- .data_doc_role(basename(loc))
   fmt   <- data_format(tolower(tools::file_ext(loc)))
-  # "code" is kept alongside data/documentation (gated by skip_types like
-  # everything else) so a zip's bundled code files survive expansion instead
-  # of being silently discarded -- data_check itself never surfaces them (it
-  # only column-extracts data_type == "data"), but code_check reads this same
-  # table via get_prev_outputs("data_check", "structure") when data_check ran
-  # first in the pipeline, and needs the file present to classify at all. See
-  # issue #383 (Gap 3).
-  keep  <- (types %in% c("data", "code") |
-              (types == "documentation" & !is.na(roles) & roles %in% c("codebook", "readme"))) &
-    !(types %in% skip_types)
+  keep  <- .archive_keep(rel, skip_types)
   if (!any(keep)) return(empty)
 
   loc <- loc[keep]; rel <- rel[keep]; types <- types[keep]
@@ -1407,7 +1453,13 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 #
 # Returns a data.frame with the same columns as `zip_row` (one per kept inner
 # file, file_location pointing at the extracted copy), or a 0-row frame.
-.expand_zip <- function(zip_path, zip_row, skip_types = "materials") {
+#
+# Only the members that will be kept (.archive_keep()) and are no larger than
+# `max_bytes` are unpacked (#472); the listing gives each member's size before
+# anything is written. A member over the limit is reported in the result's
+# "oversize" attribute, like a file too large to download, and a copy left by
+# an earlier run is removed, so the cache never holds more than the limits.
+.expand_zip <- function(zip_path, zip_row, skip_types = "materials", max_bytes = Inf) {
   empty <- zip_row[0, , drop = FALSE]
   if (is.null(zip_path) || is.na(zip_path) || !file.exists(zip_path)) return(empty)
 
@@ -1415,11 +1467,19 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   dest <- paste0(zip_path, ".contents")
   entries <- tryCatch(utils::unzip(zip_path, list = TRUE), error = function(e) NULL)
   if (is.null(entries) || nrow(entries) == 0) return(empty)
-  if (!dir.exists(dest))
-    tryCatch(utils::unzip(zip_path, exdir = dest),
-             error = function(e) NULL)
+  entries <- entries[!grepl("/$", entries$Name), , drop = FALSE]
+  keep <- .archive_keep(entries$Name, skip_types)
+  over <- keep & entries$Length > max_bytes
+  unlink(file.path(dest, entries$Name[over]))
+  want <- entries$Name[keep & !over]
+  missing <- want[!file.exists(file.path(dest, want))]
+  if (length(missing) > 0)
+    tryCatch(utils::unzip(zip_path, files = missing, exdir = dest),
+             error = function(e) NULL, warning = function(w) NULL)
 
-  .archive_rows(dest, zip_row, basename(zip_path), skip_types)
+  rows <- if (length(want) > 0) .archive_rows(dest, zip_row, basename(zip_path), skip_types)
+          else empty
+  .with_oversize(rows, zip_row, basename(zip_path), entries$Name[over], entries$Length[over])
 }
 
 # Expand a downloaded tar-family archive (.tar / .tar.gz / .tgz / .tar.bz2 /
@@ -1428,7 +1488,13 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 # have downloaded it first; the size caps still bound what gets fetched. A tar we
 # cannot read (corrupt, or an unusual variant) degrades to a 0-row frame rather
 # than erroring the run.
-.expand_tar <- function(tar_path, tar_row, skip_types = "materials") {
+#
+# As in .expand_zip(), only members that will be kept and are no larger than
+# `max_bytes` are unpacked (#472). A plain .tar gives each member's size from
+# its headers (.tar_list_file()) before anything is written. A compressed tar
+# gives only names without reading it all, so its kept members are unpacked
+# and any over the limit removed again straight away.
+.expand_tar <- function(tar_path, tar_row, skip_types = "materials", max_bytes = Inf) {
   empty <- tar_row[0, , drop = FALSE]
   if (is.null(tar_path) || is.na(tar_path) || !file.exists(tar_path)) return(empty)
 
@@ -1436,18 +1502,46 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   entries <- tryCatch(utils::untar(tar_path, list = TRUE), error = function(e) NULL,
                       warning = function(w) NULL)
   if (is.null(entries) || length(entries) == 0) return(empty)
-  if (!dir.exists(dest))
-    tryCatch(utils::untar(tar_path, exdir = dest),
+  entries <- entries[!grepl("/$", entries)]
+  plain <- grepl("[.]tar$", tar_path, ignore.case = TRUE)
+  listing <- if (plain) .tar_list_file(tar_path) else NULL
+  size <- if (!is.null(listing)) listing$size[match(entries, listing$member)] else
+    rep(NA_real_, length(entries))
+  keep <- .archive_keep(entries, skip_types)
+  over <- keep & !is.na(size) & size > max_bytes
+  unlink(file.path(dest, entries[over]))
+  want <- entries[keep & !over]
+  missing <- want[!file.exists(file.path(dest, want))]
+  if (length(missing) > 0)
+    tryCatch(utils::untar(tar_path, files = missing, exdir = dest),
              error = function(e) NULL, warning = function(w) NULL)
+  # sizes only known once unpacked (compressed tar)
+  got <- file.path(dest, want)
+  big <- file.exists(got) & file.size(got) > max_bytes
+  if (any(big)) {
+    size[match(want[big], entries)] <- file.size(got[big])
+    over[match(want[big], entries)] <- TRUE
+    unlink(got[big])
+  }
 
-  .archive_rows(dest, tar_row, basename(tar_path), skip_types)
+  rows <- if (any(keep & !over)) .archive_rows(dest, tar_row, basename(tar_path), skip_types)
+          else empty
+  .with_oversize(rows, tar_row, basename(tar_path), entries[over], size[over])
 }
 
 # Expand a downloaded single-file compression (.gz / .bz2 / .xz that is NOT a
 # .tar.*). These wrap exactly ONE file; there is no listing, so we decompress the
 # stream to the name with the compression suffix stripped (results.csv.gz →
 # results.csv) and classify that one file. Uses base R connections only.
-.expand_compressed <- function(gz_path, gz_row, skip_types = "materials") {
+#
+# Decompressed only when the inner file will be kept (.archive_keep(), by its
+# name), and only up to `max_bytes` (#472): the download limits are checked
+# on the compressed size, and a 74 MB go.txt.gz became a 1.2 GB copy. The
+# uncompressed size is not stored in the file, so decompression stops once
+# the limit is passed, the partial copy is deleted, and the file is reported
+# in the "oversize" attribute (size NA, since only "more than the limit" is
+# known). A copy over the limit left by an earlier run is removed.
+.expand_compressed <- function(gz_path, gz_row, skip_types = "materials", max_bytes = Inf) {
   empty <- gz_row[0, , drop = FALSE]
   if (is.null(gz_path) || is.na(gz_path) || !file.exists(gz_path)) return(empty)
 
@@ -1458,20 +1552,32 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 
   dest <- paste0(gz_path, ".contents")
   inner_name <- sub("[.](gz|bz2|xz)$", "", basename(gz_path), ignore.case = TRUE)
+  if (!.archive_keep(inner_name, skip_types)) return(empty)
   out <- file.path(dest, inner_name)
+  if (file.exists(out) && isTRUE(file.size(out) > max_bytes)) unlink(out)
   if (!file.exists(out)) {
-    ok <- tryCatch({
+    # In a function of its own, so both connections are closed before a
+    # partial copy is deleted (an open file cannot be deleted on Windows).
+    decompress <- function() {
       if (!dir.exists(dest)) dir.create(dest, recursive = TRUE, showWarnings = FALSE)
       con <- open_con(gz_path, "rb"); on.exit(close(con), add = TRUE)
       oc  <- file(out, "wb"); on.exit(close(oc), add = TRUE)
+      written <- 0
       repeat {
         chunk <- readBin(con, "raw", n = 1048576L)
-        if (length(chunk) == 0) break
+        if (length(chunk) == 0) return("ok")
+        written <- written + length(chunk)
+        if (written > max_bytes) return("over")
         writeBin(chunk, oc)
       }
-      TRUE
-    }, error = function(e) FALSE, warning = function(w) FALSE)
-    if (!isTRUE(ok)) return(empty)
+    }
+    status <- tryCatch(decompress(), error = function(e) "failed",
+                       warning = function(w) "failed")
+    if (!identical(status, "ok")) {
+      unlink(out)
+      return(if (identical(status, "over"))
+        .with_oversize(empty, gz_row, basename(gz_path), inner_name, NA) else empty)
+    }
   }
 
   .archive_rows(dest, gz_row, basename(gz_path), skip_types)

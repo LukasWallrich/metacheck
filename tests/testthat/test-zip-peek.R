@@ -935,3 +935,75 @@ test_that("a whole small file sent as 200 for a range from byte 0 is accepted, n
   expect_null(metacheck:::.http_range_bytes(url, 0, 500))
   expect_false(metacheck:::.range_ignored_known(url))
 })
+
+# Archives in data_check unpack only the inner files that will be kept, and
+# none larger than the per-file limit (#472): a 74 MB go.txt.gz became a
+# 1.2 GB copy in the cache, and picrust2's 6.4 GB of copies were all dropped
+# right after, as plain documentation.
+.archive_row_472 <- function() data.frame(
+  repo_url = "r", file_name = "x", file_path = "x", file_url = "u",
+  file_location = NA_character_, file_size = NA_real_, paper_id = "p.1",
+  data_type = "unknown", doc_role = NA_character_, data_format = NA_character_)
+.big_csv_472 <- function() c("id,value", paste0(1:20000, ",", 1:20000 / 7))
+
+test_that(".expand_compressed decompresses only a kept file, and only up to the limit (#472)", {
+  d <- withr::local_tempdir()
+  w_gz <- function(name, lines) {
+    p <- file.path(d, name); con <- gzfile(p, "w"); writeLines(lines, con); close(con); p
+  }
+  row <- .archive_row_472()
+
+  # documentation by name: dropped, so never decompressed
+  p <- w_gz("go.txt.gz", rep("GO:0000001\tdescription", 5000))
+  expect_equal(nrow(metacheck:::.expand_compressed(p, row)), 0)
+  expect_false(file.exists(file.path(paste0(p, ".contents"), "go.txt")))
+
+  # data within the limit: decompressed as before
+  p <- w_gz("results.csv.gz", .big_csv_472())
+  rows <- metacheck:::.expand_compressed(p, row)
+  expect_equal(rows$file_name, "results.csv")
+  expect_true(file.exists(rows$file_location))
+
+  # over the limit: decompression stops, no copy is kept (also not the one
+  # the call above left), and the file is listed without a copy and reported
+  rows <- metacheck:::.expand_compressed(p, row, max_bytes = 100 * 1024)
+  expect_false(file.exists(file.path(paste0(p, ".contents"), "results.csv")))
+  expect_equal(rows$file_name, "results.csv")
+  expect_true(is.na(rows$file_location))
+  expect_equal(rows$data_type, "data")
+  expect_equal(attr(rows, "oversize")$file_name, "results.csv")
+})
+
+test_that(".expand_zip and .expand_tar unpack only kept members within the limit (#472)", {
+  d <- withr::local_tempdir()
+  src <- file.path(d, "src"); dir.create(src)
+  writeLines(.big_csv_472(), file.path(src, "big.csv"))
+  writeLines(c("a,b", "1,2"), file.path(src, "small.csv"))
+  writeLines("notes", file.path(src, "notes.txt"))
+  writeLines("# Read me", file.path(src, "README.md"))
+  members <- c("big.csv", "small.csv", "notes.txt", "README.md")
+  row <- .archive_row_472()
+
+  z <- file.path(d, "data.zip")
+  withr::with_dir(src, utils::zip(z, members, flags = "-q"))
+  skip_if_not(file.exists(z), "zip utility unavailable")
+  archives <- c(zip = z,
+                tar = file.path(d, "data.tar"),
+                tgz = file.path(d, "data.tar.gz"))
+  withr::with_dir(src, {
+    utils::tar(archives[["tar"]], members, compression = "none", tar = "internal")
+    utils::tar(archives[["tgz"]], members, compression = "gzip", tar = "internal")
+  })
+
+  for (a in archives) {
+    rows <- if (grepl("zip$", a)) metacheck:::.expand_zip(a, row, max_bytes = 100 * 1024)
+            else metacheck:::.expand_tar(a, row, max_bytes = 100 * 1024)
+    # notes.txt (plain documentation) and big.csv (over the limit) are not unpacked
+    expect_setequal(list.files(paste0(a, ".contents")), c("small.csv", "README.md"))
+    expect_setequal(rows$file_name, c("small.csv", "README.md", "big.csv"))
+    expect_true(is.na(rows$file_location[rows$file_name == "big.csv"]))
+    expect_equal(attr(rows, "oversize")$file_name, "big.csv")
+    if (!grepl("tar.gz$", a))   # a compressed tar gives no size before unpacking
+      expect_equal(attr(rows, "oversize")$file_size, file.size(file.path(src, "big.csv")))
+  }
+})

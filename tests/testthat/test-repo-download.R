@@ -827,13 +827,15 @@ mk_ratelimit_resp <- function(remaining, reset, prefix = "ratelimit") {
 test_that(".rate_limit_wait reads both RateLimit-* and X-RateLimit-* header families", {
   future_reset <- as.character(round(as.numeric(Sys.time())) + 900)
 
+  # The wait is measured a moment after `future_reset` was set, from a time
+  # rounded to whole seconds, so it can be 899.x: allow a few seconds.
   wait_ratelimit <- metacheck:::.rate_limit_wait(
     mk_ratelimit_resp("0", future_reset, "ratelimit"))
-  expect_equal(round(wait_ratelimit), 900)
+  expect_lt(abs(wait_ratelimit - 900), 5)
 
   wait_x_ratelimit <- metacheck:::.rate_limit_wait(
     mk_ratelimit_resp("0", future_reset, "x-ratelimit"))
-  expect_equal(round(wait_x_ratelimit), 900)
+  expect_lt(abs(wait_x_ratelimit - 900), 5)
 })
 
 test_that(".rate_limit_wait returns NA when the bucket is not confirmed exhausted", {

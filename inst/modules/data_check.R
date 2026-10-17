@@ -759,13 +759,24 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     da <- c(da_zip, da_tar, da_gz)
     if (length(da) > 0) {
       extracted <- list()
+      # The per-file limit also holds for a file inside an archive (#472):
+      # the download limits saw only the archive's own, compressed size, so a
+      # 74 MB .gz could become a 1.2 GB copy in the cache. An inner file over
+      # the limit is not unpacked, and is listed with the files too large to
+      # download.
+      mfs <- max_file_size %||% Inf
+      max_bytes <- if (is.finite(mfs)) mfs * 1024 * 1024 else Inf
       for (i in da) {
         row1 <- all_files[i, , drop = FALSE]
         loc  <- all_files$file_location[i]
         st   <- skip_types %||% "materials"
-        rows <- if (i %in% da_zip) .expand_zip(loc, row1, skip_types = st)
-                else if (i %in% da_tar) .expand_tar(loc, row1, skip_types = st)
-                else .expand_compressed(loc, row1, skip_types = st)
+        rows <- if (i %in% da_zip) .expand_zip(loc, row1, skip_types = st, max_bytes = max_bytes)
+                else if (i %in% da_tar) .expand_tar(loc, row1, skip_types = st, max_bytes = max_bytes)
+                else .expand_compressed(loc, row1, skip_types = st, max_bytes = max_bytes)
+        ov <- attr(rows, "oversize")
+        if (!is.null(ov) && nrow(ov) > 0)
+          oversize_files <- rbind(oversize_files, data.frame(
+            repo_url = row1$repo_url, file_name = ov$file_name, file_size = ov$file_size))
         if (nrow(rows) > 0) extracted[[length(extracted) + 1L]] <- rows
       }
       # Drop the consumed container rows (see comment above); `want` is kept
