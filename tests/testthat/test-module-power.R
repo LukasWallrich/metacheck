@@ -504,19 +504,22 @@ test_that("power, with Ollama (structured)", {
     test_paper(power_text[[1]]),
     test_paper(power_text[[2]])
   )
-  testthat::local_mocked_bindings(
-    chat = .mock_structured_chat(list(
-      "for a Cohen's d = 0.5, and a desired power" = list(power_analyses = list(list(
-        power_type = "apriori", statistical_test = "unpaired t-test",
-        sample_size = 128, power = 0.8,
-        effect_size = 0.5, effect_size_metric = "Cohen's d", software = "pwr"
-      ))),
-      "paired samples t-test" = list(power_analyses = list(list(
-        power_type = "sensitivity", statistical_test = "paired t-test",
-        sample_size = 64,
-        effect_size = 0.5, effect_size_metric = "Cohen's d", software = "G*Power"
-      )))
-    )), .package = "ellmer")
+  # Structured Ollama calls go through ellmer::chat_vllm() on Ollama's /v1
+  # address since #494, so that is replaced as well as ellmer::chat().
+  mock_chat <- .mock_structured_chat(list(
+    "for a Cohen's d = 0.5, and a desired power" = list(power_analyses = list(list(
+      power_type = "apriori", statistical_test = "unpaired t-test",
+      sample_size = 128, power = 0.8,
+      effect_size = 0.5, effect_size_metric = "Cohen's d", software = "pwr"
+    ))),
+    "paired samples t-test" = list(power_analyses = list(list(
+      power_type = "sensitivity", statistical_test = "paired t-test",
+      sample_size = 64,
+      effect_size = 0.5, effect_size_metric = "Cohen's d", software = "G*Power"
+    )))
+  ))
+  testthat::local_mocked_bindings(chat = mock_chat, chat_vllm = mock_chat,
+                                  .package = "ellmer")
   mo <- module_run(paper, module)
   expect_equal(mo$traffic_light, "red")
   expect_equal(nrow(mo$table), 2)
@@ -537,3 +540,96 @@ test_that("power, with Ollama (structured)", {
            # local_mocked_bindings(), since those fixtures only cover the
            # native /api/chat endpoint, not structured mode's /v1/ one.
 
+
+# The module's internal helpers are not in the package namespace, so source the
+# module into an environment to reach them directly.
+.pw <- new.env()
+sys.source(metacheck:::module_find("power"), envir = .pw)
+
+test_that("power maps free-text answers onto the known values (#475)", {
+  sw <- .pw$.power_canonical(
+    c("G*Power 3.1", "GPower", "POWSIM v4.1", "pwr.t.test in R", "the pwrss package",
+      "simulation using simr", "Monte Carlo simulation", "pass.lme", "NCSS PASS",
+      "R", "none", NA),
+    .pw$.power_software_rules())
+  expect_equal(sw, c("G*Power", "G*Power", "POWSIM", "pwr", "pwrss", "simr",
+                     "simulation", "pass.lme", "PASS", "other", NA, NA))
+  # every listed R package maps onto itself
+  pkgs <- .pw$.power_software_packages()
+  expect_equal(.pw$.power_canonical(pkgs, .pw$.power_software_rules()), pkgs)
+
+  tests <- .pw$.power_canonical(
+    c("independent samples t-test", "paired-samples t test", "one-sample t-test",
+      "one-way ANOVA", "2 x 2 ANOVA", "2 x 3 x 2 ANOVA", "MANOVA", "logistic regression",
+      "chi-square test", "Pearson correlation", "t-test", "linear mixed model"),
+    .pw$.power_test_rules())
+  expect_equal(tests, c("unpaired t-test", "paired t-test", "one-sample t-test",
+                        "1-way ANOVA", "2-way ANOVA", "3-way ANOVA", "MANOVA",
+                        "regression", "chi-square", "correlation", "other", "other"))
+
+  es <- .pw$.power_canonical(
+    c("Cohen's d", "Cohen\u2019s dz", "d", "Hedges' g", "Cohen's f", "Cohen's f2",
+      "partial eta squared", "\u03b7p\u00b2", "eta squared", "raw mean difference",
+      "standardized mean difference", "odds ratio"),
+    .pw$.power_es_rules())
+  expect_equal(es, c("Cohen's d", "Cohen's d", "Cohen's d", "Hedges' g", "Cohen's f",
+                     "other", "partial eta squared", "partial eta squared",
+                     "eta squared", "unstandardised", "other", "other"))
+
+  pt <- .pw$.power_canonical(c("a priori", "Sensitivity", "post-hoc", "observed power",
+                               "compromise", "none"),
+                             .pw$.power_type_rules(), other = "unknown")
+  expect_equal(pt, c("apriori", "sensitivity", "posthoc", "posthoc", "unknown", NA))
+
+  # an answer that becomes "other" is kept in the *_other column
+  tbl <- .pw$.power_canonicalise(data.frame(
+    power_type = "a priori", software = c("POWSIM", "a custom R script"),
+    statistical_test = c("unpaired t-test", "linear mixed model")))
+  expect_equal(tbl$software, c("POWSIM", "other"))
+  expect_equal(tbl$software_other, c(NA, "a custom R script"))
+  expect_equal(tbl$statistical_test_other, c(NA, "linear mixed model"))
+
+  # the schema has no enum left that an answer could fail
+  spec <- .pw$.power_type_spec()
+  item <- spec@properties$power_analyses@items@properties
+  expect_false(any(vapply(item, \(p) inherits(p, "ellmer::TypeEnum"), logical(1))))
+})
+
+test_that("power reports paragraphs the LLM could not check (#475)", {
+  llm_use(TRUE)
+  llm_model("groq/llama-3.3-70b-versatile")
+  withr::local_options(metacheck.llm.cache = FALSE)
+
+  power_text <- c(
+    "We used POWSIM v4.1 to estimate power: with 40 loci, an alpha level of 0.05 and Cohen's d = 0.5, an a priori power analysis for an unpaired t-test gave 80% power with 128 samples.",
+    "A sensitivity power analysis for a paired samples t-test indicated that with 64 participants, an adequate power was reached for an effect size of d = 0.5."
+  )
+  paper <- paperlist(test_paper(power_text[[1]]), test_paper(power_text[[2]]))
+  # the first paragraph's answer names software the old fixed list lacked;
+  # the second paragraph's call fails, as Groq's did for issue #475
+  mock <- function(...) structure(list(
+    chat_structured = function(text, type) {
+      if (grepl("paired samples", text, fixed = TRUE))
+        stop("HTTP 400 Bad Request. Generated JSON does not match the expected schema")
+      list(power_analyses = list(list(
+        power_type = "a priori", statistical_test = "independent samples t-test",
+        sample_size = 128, alpha_level = 0.05, power = 0.8, effect_size = 0.5,
+        effect_size_metric = "Cohen's d", software = "POWSIM v4.1")))
+    }
+  ), class = "Chat")
+  testthat::local_mocked_bindings(chat = mock, .package = "ellmer")
+  mo <- suppressWarnings(module_run(paper, "power"))
+
+  expect_equal(nrow(mo$table), 1)
+  expect_equal(mo$table$power_type, "apriori")
+  expect_equal(mo$table$statistical_test, "unpaired t-test")
+  expect_equal(mo$table$software, "POWSIM")
+  expect_true(mo$table$complete)
+  # the failed paragraph is reported, and turns a green result yellow
+  expect_match(mo$summary_text, "1 of 2 paragraphs could not be checked by the LLM",
+               fixed = TRUE)
+  expect_true(any(grepl("could not be checked", mo$report, fixed = TRUE)))
+  expect_equal(mo$traffic_light, "yellow")
+  expect_equal(mo$summary_table$power_unchecked[order(mo$summary_table$paper_id)],
+               c(0, 1)[order(paper_id(paper))])
+})

@@ -1,6 +1,6 @@
 Package: metacheck
 Title: Check Research Outputs for Best Practices
-Version: 0.3.3.12
+Version: 0.3.3.13
 Date: 2026-10-06
 Authors@R: c(
   person(  given = "Lisa",
@@ -77,7 +77,7 @@ Imports:
     quarto,
     DT,
     bibtex,
-    ellmer,
+    ellmer (>= 0.4.2),
     jsonlite,
     xml2,
     curl,

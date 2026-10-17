@@ -78,6 +78,7 @@ power <- function(paper, seed = 8675309) {
   )
 
   llm_failed <- FALSE
+  unchecked <- NULL   # paragraphs the LLM could not check, per paper (#475)
   if (nrow(potential_power) > 0 && llm_use()) {
     ## use LLM ----
 
@@ -85,6 +86,7 @@ power <- function(paper, seed = 8675309) {
     llm_model_used <- extraction$model
     table <- extraction$table
     llm_failed <- isTRUE(extraction$failed)
+    unchecked <- extraction$unchecked
 
     # set up report text
     report_text <- sprintf("We used the LLM model '%s' to check the contents of %d paragraph%s that contained words suggesting they might contain power analyses.",
@@ -241,11 +243,32 @@ power <- function(paper, seed = 8675309) {
     )
   }
 
+  # paragraphs the LLM could not check ----
+  # Reported rather than dropped without a word (#475): a power analysis in
+  # such a paragraph is not counted, so the counts above are too low. When
+  # every paragraph failed, the summary already says the check failed.
+  # power_unchecked lets a corpus run find these papers and re-run them.
+  if (!is.null(unchecked)) {
+    # full_join: a paper whose every paragraph failed has no other row here
+    summary_table <- dplyr::full_join(summary_table, unchecked, by = "paper_id")
+    summary_table$power_unchecked[is.na(summary_table$power_unchecked)] <- 0L
+    n_unchecked <- sum(unchecked$power_unchecked)
+    if (n_unchecked > 0 && !llm_failed) {
+      msg <- sprintf(
+        "%d of %d paragraph%s could not be checked by the LLM, so power analyses in %s are not counted. Re-run the check, or check %s manually.",
+        n_unchecked, nrow(potential_power), plural(nrow(potential_power)),
+        plural(n_unchecked, "it", "them"), plural(n_unchecked, "it", "them"))
+      summary_text <- paste(summary_text, msg)
+      report <- c(msg, report)
+      if (tl %in% c("green", "na")) tl <- "yellow"
+    }
+  }
+
   # return a list ----
   list(
     table = table,
     summary_table = summary_table,
-    na_replace = c(power_n = 0),
+    na_replace = c(power_n = 0, power_unchecked = 0),
     traffic_light = tl,
     report = report,
     summary_text = summary_text
@@ -283,23 +306,25 @@ power <- function(paper, seed = 8675309) {
 # top-level array: codebook_check.R's own type spec notes Groq's gpt-oss-20b
 # 400s on a bare top-level array schema. llm()'s .unnest_result() unwraps a
 # single-field wrapper object back into one row per array item automatically.
+#
+# The four category fields are free strings, not type_enum() (#475). Groq
+# validates the answer against the schema, so a value outside an enum failed
+# the WHOLE call: two genuine power analyses done with POWSIM were lost that
+# way, deterministically (temperature 0), with nothing reported. The
+# descriptions list the values to prefer, and .power_canonicalise() maps
+# each answer onto them afterwards, so a new tool or test name can never
+# invalidate a call. That also makes the NA-in-enum workaround above
+# unnecessary.
 .power_type_spec <- function() {
   ellmer::type_object(
     power_analyses = ellmer::type_array(
       description = "Power analyses found in the text. Empty array if none.",
       ellmer::type_object(
-        power_type = ellmer::type_enum(
-          c("apriori", "sensitivity", "posthoc", "unknown"),
-          description = "The type of power analysis. 'apriori' calculates the required sample size to achieve a desired power given an effect size, statistical test, and alpha level. 'sensitivity' estimates, given a sample size, which effect sizes a design has sufficient power to detect. 'posthoc' (observed/retrospective power) computes achieved power for an empirically observed effect size. Use 'unknown' if a power analysis is present but its type cannot be determined."
+        power_type = ellmer::type_string(
+          "The type of power analysis, one of 'apriori', 'sensitivity', 'posthoc' or 'unknown'. 'apriori' calculates the required sample size to achieve a desired power given an effect size, statistical test, and alpha level. 'sensitivity' estimates, given a sample size, which effect sizes a design has sufficient power to detect. 'posthoc' (observed/retrospective power) computes achieved power for an empirically observed effect size. Use 'unknown' if a power analysis is present but its type cannot be determined."
         ),
-        statistical_test = ellmer::type_enum(
-          c("paired t-test", "unpaired t-test", "one-sample t-test",
-            "1-way ANOVA", "2-way ANOVA", "3-way ANOVA", "MANOVA",
-            "regression", "chi-square", "correlation", "other", NA),
-          description = "The statistical test used.", required = FALSE
-        ),
-        statistical_test_other = ellmer::type_string(
-          "Free-text description if statistical_test is 'other'.",
+        statistical_test = ellmer::type_string(
+          "The statistical test used: one of 'paired t-test', 'unpaired t-test', 'one-sample t-test', '1-way ANOVA', '2-way ANOVA', '3-way ANOVA', 'MANOVA', 'regression', 'chi-square', 'correlation', or else the test's name as written in the text.",
           required = FALSE
         ),
         sample_size = ellmer::type_number(
@@ -318,21 +343,12 @@ power <- function(paper, seed = 8675309) {
           "The numeric effect size used in or determined from the power analysis.",
           required = FALSE
         ),
-        effect_size_metric = ellmer::type_enum(
-          c("Cohen's d", "Hedges' g", "Cohen's f", "partial eta squared",
-            "eta squared", "unstandardised", "other", NA),
-          description = "The effect size metric. Use 'unstandardised' for raw/non-standardized effects.",
+        effect_size_metric = ellmer::type_string(
+          "The effect size metric: one of 'Cohen's d', 'Hedges' g', 'Cohen's f', 'partial eta squared', 'eta squared', 'unstandardised' (for raw/non-standardized effects), or else the metric as written in the text.",
           required = FALSE
         ),
-        effect_size_metric_other = ellmer::type_string(
-          "Free-text description if effect_size_metric is 'other'.",
-          required = FALSE
-        ),
-        software = ellmer::type_enum(
-          c("G*Power", "Superpower", "Pangea", "Morepower", "PASS", "pwr",
-            "simr", "PowerUpR", "simulation", "InteractionPoweR", "pwrss",
-            "other", NA),
-          description = "The software used to conduct the power analysis.",
+        software = ellmer::type_string(
+          "The software used to conduct the power analysis, as named in the text (e.g. 'G*Power', 'pwr', 'simr', 'Superpower', 'PASS', 'POWSIM'), or 'simulation' for a simulation without named software.",
           required = FALSE
         )
       )
@@ -354,7 +370,7 @@ power <- function(paper, seed = 8675309) {
     "power", "effect_size", "effect_size_metric", "software"
   )
 
-  structured_prompt <- "Identify power analyses from excerpts of scientific manuscripts. Use null/omit a field when information is missing, do not invent values. Only use 'other' if a value not in the enumerated options can be identified. A paragraph may contain no power analysis, or more than one -- return one entry in power_analyses per power analysis actually described, and an empty array if the paragraph only references a power analysis presented elsewhere, or explicitly states that no power analysis was run."
+  structured_prompt <- "Identify power analyses from excerpts of scientific manuscripts. Use null/omit a field when information is missing, do not invent values. For the statistical test, effect size metric and software, use one of the suggested values when it fits, and otherwise give the name as written in the text. A paragraph may contain no power analysis, or more than one -- return one entry in power_analyses per power analysis actually described, and an empty array if the paragraph only references a power analysis presented elsewhere, or explicitly states that no power analysis was run."
 
   structured_result <- tryCatch(
     llm(
@@ -392,19 +408,17 @@ power <- function(paper, seed = 8675309) {
 
   if (!all_failed) {
     table <- structured_result
-    # ellmer::type_enum() fields come back as factors (confirmed live), which
-    # would otherwise leak factor internals (structure(1L, levels = ...))
-    # into the report's embedded table and could break string comparisons
-    # anywhere downstream that assumes character -- coerce to plain character
-    # to match the fallback path's json_expand()-produced columns exactly.
-    enum_cols <- c("power_type", "statistical_test", "effect_size_metric", "software")
-    for (col in intersect(enum_cols, names(table))) {
-      table[[col]] <- as.character(table[[col]])
-    }
-    # Drop llm()'s own per-row error-tracking columns: a row that failed
-    # structured extraction (but not every row -- see all_failed above) has
-    # power_type NA and is dropped just below like any other empty result, so
-    # .error/.error_msg carry no information a caller needs from here on.
+    # Map the free-text category answers onto the known values (see
+    # .power_type_spec()).
+    table <- .power_canonicalise(table)
+    # A row that failed structured extraction (but not every row -- see
+    # all_failed above) has power_type NA and is dropped just below like an
+    # empty result. It is counted first (#475): a paragraph the LLM never
+    # checked is not a paragraph without a power analysis, and dropping it
+    # without a word made the counts silently too low.
+    row_failed <- if (".error" %in% names(table)) table$.error %in% TRUE else
+      rep(FALSE, nrow(table))
+    unchecked <- .power_unchecked(table, row_failed)
     table$.error <- NULL
     table$.error_msg <- NULL
     # `text` collides between the input paragraph column and the schema's
@@ -441,7 +455,8 @@ power <- function(paper, seed = 8675309) {
       table = table,
       model = attr(structured_result, "llm")$model,
       structured = TRUE,
-      failed = FALSE # reaching here means at least one row succeeded
+      failed = FALSE, # reaching here means at least one row succeeded
+      unchecked = unchecked
     ))
   }
 
@@ -470,10 +485,15 @@ power <- function(paper, seed = 8675309) {
   # "parsing error") -- that is neither "found nothing" (power_type == "none")
   # nor a real extraction, so drop it the same way, instead of leaving a
   # phantom power_type == "unknown" row nothing downstream ever filters out.
-  row_failed <- if ("error" %in% names(table)) !is.na(table$error) else FALSE
+  row_failed <- if ("error" %in% names(table)) !is.na(table$error) else
+    rep(FALSE, nrow(table))
+  unchecked <- .power_unchecked(table, row_failed)
 
   if ("power_type" %in% names(table)) {
-    table <- dplyr::filter(table, power_type != "none" & !row_failed)
+    # "none" is this schema's "no power analysis here"; mapped onto the known
+    # values like the structured path's answers, it becomes NA.
+    table <- .power_canonicalise(table)
+    table <- dplyr::filter(table, !is.na(power_type) & !row_failed)
   } else {
     table <- table[0, , drop = FALSE]
   }
@@ -484,8 +504,187 @@ power <- function(paper, seed = 8675309) {
     structured = FALSE,
     # every row of this call failed (not just "nothing found") -- used by the
     # caller to tell a real check failure apart from a genuine negative result
-    failed = nrow(potential_power) > 0 && nrow(table) == 0 && all(row_failed)
+    failed = nrow(potential_power) > 0 && nrow(table) == 0 && all(row_failed),
+    unchecked = unchecked
   )
+}
+
+# Paragraphs the LLM could not check, per paper (#475): a data frame of
+# paper_id and power_unchecked, one row per paper with at least one such
+# paragraph. `table` is llm()'s result (one row per checked paragraph when a
+# call failed) and `row_failed` marks those rows.
+.power_unchecked <- function(table, row_failed) {
+  ids <- if ("paper_id" %in% names(table)) table$paper_id else
+    rep(NA_character_, nrow(table))
+  ids <- ids[row_failed]
+  if (length(ids) == 0)
+    return(data.frame(paper_id = character(0), power_unchecked = integer(0)))
+  counts <- table(ids)
+  data.frame(paper_id = names(counts), power_unchecked = as.integer(counts))
+}
+
+# known values ----
+# The LLM answers the four category fields in free text (see
+# .power_type_spec()); these rules map each answer onto the values the module
+# reports. Each rule is a perl regular expression matched against the
+# lower-cased answer; the FIRST rule that matches decides, so a more specific
+# rule comes before a more general one (unpaired before paired, MANOVA before
+# ANOVA, partial eta squared before eta squared). An answer no rule matches
+# becomes "other" (power_type: "unknown"), with the answer kept in the
+# column's *_other companion; "none", "null" and "n/a" count as missing.
+
+.power_type_rules <- function() c(
+  apriori     = "a[- ]?priori|prospective",
+  sensitivity = "sensitivity|minim(al|um) detectable|smallest detectable",
+  posthoc     = "post[- ]?hoc|observed|retrospective|a[- ]?posteriori|achieved"
+)
+
+.power_test_rules <- function() {
+  t <- "(?=.*\\bt(?:[- ]?tests?)?\\b)"           # the answer names a t test
+  anova <- "(?=.*(anova|analysis of variance))"
+  c(
+    "unpaired t-test"   = paste0(t, "(?=.*(unpaired|independent|two[- ]?samples?|between[- ]?(subjects?|groups?)|welch))"),
+    "one-sample t-test" = paste0(t, "(?=.*(one|1|single)[- ]?sample)"),
+    "paired t-test"     = paste0(t, "(?=.*(paired|dependent|within[- ]?subjects?|repeated[- ]?measures?|matched))"),
+    "MANOVA"            = "\\bmanova\\b|multivariate analysis of variance",
+    "3-way ANOVA"       = paste0(anova, "(?=.*((3|three)[- ]?way|\\d+\\s*[x×]\\s*\\d+\\s*[x×]\\s*\\d+))"),
+    "2-way ANOVA"       = paste0(anova, "(?=.*((2|two)[- ]?way|\\d+\\s*[x×]\\s*\\d+))"),
+    "1-way ANOVA"       = paste0(anova, "(?=.*(1|one)[- ]?(way|factor))"),
+    "regression"        = "regression",
+    "chi-square"        = "chi[- ]?sq|χ",
+    "correlation"       = "correlat|pearson|spearman|kendall"
+  )
+}
+
+.power_es_rules <- function() c(
+  "partial eta squared" = "partial\\s*(eta|η)|η\\s*_?\\s*p\\b|\\beta[ _-]?p(\\b|[ _-]?sq)",
+  "eta squared"         = "\\beta[ _-]?(sq|\\^?2)|η",
+  "unstandardised"      = "unstandardi[sz]ed|\\braw\\b",
+  "Hedges' g"           = "hedges|^g$",
+  # The apostrophe may be the typographic one a PDF gives. d_z, d_av and d_rm
+  # are forms of Cohen's d. A "standardized mean difference" is not mapped:
+  # Hedges' g is one too, so it stays "other".
+  "Cohen's d"           = "cohen['’]?s?\\s*d([ _]?(z|av|rm))?(?![a-z])|^d([ _]?(z|av|rm))?$",
+  # Cohen's f squared is a different metric, so it stays "other"
+  "Cohen's f"           = "cohen['’]?s?\\s*f(?![a-z])(?!\\s*(\\^?2|²|sq))|^f$",
+  # a plain mean difference is raw, a standardized one is not
+  "unstandardised"      = "(?<!standardized |standardised )mean difference"
+)
+
+# Power analysis software. The R packages are those on CRAN whose title is
+# about power analysis or sample size (tools::CRAN_package_db(), 2026-10-17:
+# 121 packages, less five whose name is a common abbreviation or that are not
+# about planning studies: CP, RCT, abima, CAISEr, TrendInTrend), plus
+# widely-used packages whose title does not say so (MBESS, faux, simglm,
+# paramtest, BUCSS, pmsampsize, simsem, SampleSizeProportions, pwrFDR, ssanv)
+# and ones no longer on CRAN or from Bioconductor that papers still cite
+# (PowerUpR, powerlmm, mixedpower, powsimR, PROPER, RNASeqPower). Matched by
+# whole name, longest name first, so "pwrss" is not read as "pwr" and
+# "pass.lme" not as PASS.
+.power_software_packages <- function() c(
+  "anomo", "anovapowersim", "bayescount", "BayesianPower", "BayesPower", "BBMBC",
+  "BetaPASS", "bfpwr", "cochranSize", "CoRpower", "CRTSize", "DelayedEffect.Design",
+  "depower", "designsize", "easypower", "EBASS", "extraSuperpower", "FDRsamplesize2",
+  "findn", "fPASS", "GenTwoArmsTrialSize", "ggpower", "H2x2Factorial",
+  "ICC.Sample.Size", "InteractionPoweR", "intrinsicKappa", "irtpwr", "JMdesign",
+  "kappaSize", "longpower", "lrstat", "MedianaDesigner", "metapower", "MetSizeR",
+  "MIDN", "mixpower", "MKpower", "mlmpower", "mlpwr", "mpower", "MRMCsamplesize",
+  "mthapower", "NPHMC", "nphPower", "npsurvSS", "odr", "pamm", "pass.lme", "PASSED",
+  "peppwR", "phylosamp", "PICOTsize", "pmsesampling", "POSSA", "power.nb",
+  "power4mome", "powerbrmsINLA", "powerCompRisk", "powerEQTL", "powergrid",
+  "powerGWASinteraction", "powerHE", "powerLATE", "powerMediation", "powerNLSEM",
+  "powerpkg", "powerPLS", "powerSurvEpi", "powertools", "PowerTOST", "powRICLPM",
+  "PowRPriori", "presize", "PSpower", "pwr", "pwr2ppl", "pwr4exp", "pwrAB",
+  "pwranova", "pwrRasch", "pwrss", "rashnu", "RCMsize", "RDSsamplesize",
+  "rerandPower", "RMSTpowerBoost", "samplesize", "SampleSize4ClinicalTrials",
+  "samplesize4surveys", "samplesizeCMH", "samplesizelogisticcasecontrol",
+  "SampleSizeMeans", "SampleSizeR", "samplex", "semPower", "simpowa",
+  "simpr.interaction", "simr", "SimTOST", "smartsizer", "sparrpowR", "Spower",
+  "ssize.fdr", "ssizeRNA", "ssPilot", "SSRMST", "ssutil", "SteppedPower",
+  "stepwedgepower", "Superpower", "survSNP", "swdpwr", "TrialSize",
+  "twoCoprimary", "WebPower", "WMWssp",
+  # widely used, title does not mention power or sample size
+  "MBESS", "faux", "simglm", "paramtest", "BUCSS", "pmsampsize", "simsem",
+  "SampleSizeProportions", "pwrFDR", "ssanv",
+  # no longer on CRAN, or on Bioconductor, still cited
+  "PowerUpR", "powerlmm", "mixedpower", "powsimR", "PROPER", "RNASeqPower"
+)
+
+.power_software_rules <- function() {
+  pkgs <- .power_software_packages()
+  pkgs <- pkgs[order(-nchar(pkgs))]
+  by_name <- stats::setNames(
+    paste0("(?<![a-z0-9.])", gsub(".", "\\.", tolower(pkgs), fixed = TRUE),
+           "(?![a-z0-9])"),
+    pkgs)
+  c(
+    by_name,
+    # software that is not an R package, or written in other ways
+    "G*Power"        = "\\bg\\s*[*-]?\\s*power\\b",
+    "Superpower"     = "\\bsuper\\s+power\\b",
+    "Morepower"      = "\\bmore\\s*power\\b",
+    "Pangea"         = "\\bpangea\\b",
+    "POWSIM"         = "\\bpowsim\\b",
+    "PASS"           = "\\bpass\\b|\\bncss\\b",
+    "nQuery"         = "\\bnquery\\b",
+    "Optimal Design" = "\\boptimal\\s*design\\b",
+    "GLIMMPSE"       = "\\bglimmpse\\b",
+    "MLPowSim"       = "\\bmlpowsim\\b",
+    "PINT"           = "\\bpint\\b",
+    "jpower"         = "\\bjpower\\b",
+    "jamovi"         = "\\bjamovi\\b",
+    "JASP"           = "\\bjasp\\b",
+    "SAS"            = "\\bsas\\b|proc\\s+power",
+    "Stata"          = "\\bstata\\b",
+    "SPSS"           = "\\bspss\\b",
+    "stats"          = "\\bpower\\.(t|prop|anova)\\.test\\b",
+    # last: any named tool above is more specific than "a simulation"
+    "simulation"     = "simulat|monte\\s*carlo"
+  )
+}
+
+# The known value for each answer in `x`: the name of the first rule in
+# `rules` whose pattern matches, `other` for an answer no rule matches, NA
+# for a missing one.
+.power_canonical <- function(x, rules, other = "other") {
+  lc <- tolower(trimws(as.character(x)))
+  out <- rep(NA_character_, length(lc))
+  given <- !is.na(lc) & nzchar(lc) & !lc %in% c("none", "null", "na", "n/a")
+  out[given] <- other
+  todo <- given
+  for (i in seq_along(rules)) {
+    hit <- todo & grepl(rules[[i]], lc, perl = TRUE)
+    out[hit] <- names(rules)[[i]]
+    todo <- todo & !hit
+  }
+  out
+}
+
+# Map a power table's category columns onto the known values (see above).
+# For statistical_test, effect_size_metric and software, an answer that
+# became "other" is kept in the *_other column, so nothing the model wrote is
+# lost (the prompt-based path may already have filled *_other itself).
+.power_canonicalise <- function(table) {
+  fields <- list(
+    power_type         = list(rules = .power_type_rules(), other = "unknown"),
+    statistical_test   = list(rules = .power_test_rules(), other = "other"),
+    effect_size_metric = list(rules = .power_es_rules(), other = "other"),
+    software           = list(rules = .power_software_rules(), other = "other")
+  )
+  for (col in intersect(names(fields), names(table))) {
+    raw <- as.character(table[[col]])
+    canon <- .power_canonical(raw, fields[[col]]$rules, fields[[col]]$other)
+    if (col != "power_type") {
+      other_col <- paste0(col, "_other")
+      given <- if (other_col %in% names(table)) as.character(table[[other_col]]) else
+        rep(NA_character_, length(raw))
+      raw[tolower(trimws(raw)) %in% "other"] <- NA
+      table[[other_col]] <- ifelse(canon %in% "other", dplyr::coalesce(given, raw),
+                                   NA_character_)
+    }
+    table[[col]] <- canon
+  }
+  table
 }
 
 # schema ----
