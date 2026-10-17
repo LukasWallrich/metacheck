@@ -461,3 +461,35 @@ test_that("a paper without a title or DOI keeps the whole report header (#497)",
     if (type == "full") expect_true(any(grepl("embed-resources", txt, fixed = TRUE)))
   }
 })
+
+test_that("the brief report keeps a green module that asks to be shown (#504)", {
+  # reproducibility_check is green when the code ran, which is its main
+  # result; the brief report dropped every green module, so a successful run
+  # did not appear at all.
+  llm_use(FALSE)
+  base <- module_run(demopaper(), "marginal")
+  ran <- base
+  ran$module <- "reproducibility_check"
+  ran$title <- "Reproducibility Check"
+  ran$traffic_light <- "green"
+  ran$summary_text <- "1 of 1 script ran without error when executed."
+  ran$brief <- TRUE
+  quiet <- base
+  quiet$module <- "repo_check"
+  quiet$title <- "Repository Check"
+  quiet$traffic_light <- "green"
+  quiet$summary_text <- "Nothing to fix here."
+
+  prev <- report_type()
+  withr::defer(report_type(prev))
+  report_type("brief")
+  txt <- report_qmd(list(reproducibility_check = ran, repo_check = quiet), demopaper())
+  expect_match(txt, "Reproducibility Check", fixed = TRUE)
+  expect_match(txt, "1 of 1 script ran without error", fixed = TRUE)
+  expect_false(grepl("Nothing to fix here.", txt, fixed = TRUE))
+
+  # in the full report both appear, as before
+  report_type("full")
+  txt <- report_qmd(list(reproducibility_check = ran, repo_check = quiet), demopaper())
+  expect_match(txt, "Repository Check", fixed = TRUE)
+})

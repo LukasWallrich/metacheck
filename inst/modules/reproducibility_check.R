@@ -3166,6 +3166,12 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     traffic_light = tl,
     report = report,
     summary_text = summary_text,
+    # Kept in the brief report whatever the traffic light when code was run
+    # (#504): there a green light means "we ran your code and it worked",
+    # the main result, not "nothing to fix", and leaving it out read as if
+    # the code had not been checked at all. See report_qmd().
+    brief = isTRUE(execute) && "outcome" %in% names(run_results) &&
+      any(run_results$outcome %in% c("ran_ok", "errored", "timed_out")),
     run_results = run_results,
     install_results = install_results,
     # Extracted JASP/jamovi/R-console/Python-console statistical output:

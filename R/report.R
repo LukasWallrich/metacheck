@@ -668,10 +668,16 @@ report_qmd <- function(module_output, paper = list()) {
   # yellow, and fail (a module that errored is itself something to fix) --
   # dropping green/info/na entirely, since the point of brief is to get to
   # "what to improve" as fast as possible.
+  #
+  # A module can also ask to be kept whatever its light, with `brief = TRUE`
+  # in its output: reproducibility_check does when it ran code, since a green
+  # light there is the main result ("your code ran"), not "nothing to fix"
+  # (#504).
   brief <- .report_is_brief(report_type())
   summary_output <- if (brief) {
     flagged <- sapply(module_output, `[[`, "traffic_light") %in%
-      c("red", "yellow", "fail")
+      c("red", "yellow", "fail") |
+      vapply(module_output, \(x) isTRUE(x$brief), logical(1))
     module_output[flagged]
   } else {
     module_output
