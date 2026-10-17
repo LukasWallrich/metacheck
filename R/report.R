@@ -534,7 +534,12 @@ report_qmd <- function(module_output, paper = list()) {
   } else ""
   rt_head <- gsub("{{LOGO_DATA_URI}}", logo_data_uri, rt_head, fixed = TRUE)
 
-  subtitle <- gsub('"', '\\\\"', paper$info$title %||% "")
+  # A paper without a title (a converter that found none) has NA here, which
+  # %||% does not replace; an NA subtitle made the header fill below NA as a
+  # whole (#497).
+  title <- paper$info$title
+  if (length(title) == 0 || is.na(title[[1]])) title <- ""
+  subtitle <- gsub('"', '\\\\"', title[[1]])
   doi_text <- ifelse(is.na(paper$info$doi) |
                        (paper$info$doi %||% "") == "", "",
     sprintf("DOI: [%s](https://doi.org/%s)", paper$info$doi, paper$info$doi)
@@ -575,9 +580,17 @@ report_qmd <- function(module_output, paper = list()) {
   # percentages, e.g. `width: 100%`) needs no escaping here, unlike
   # sprintf()'s `%%` requirement, since each replacement only ever touches
   # the first remaining literal "%s" via fixed = TRUE matching.
+  #
+  # A missing value fills its placeholder with nothing: sub() with an NA
+  # replacement returns NA for the WHOLE header (the YAML with
+  # embed-resources, the CSS, the banner and the info box all became the
+  # word "NA"), and a zero-length one (a paper with no doi field at all makes
+  # doi_text logical(0)) stops with "invalid 'replacement' argument" (#497).
   qmd_header <- rt_head
   for (arg in header_args) {
-    qmd_header <- sub("%s", as.character(arg), qmd_header, fixed = TRUE)
+    arg <- as.character(arg)
+    if (length(arg) == 0 || is.na(arg[[1]])) arg <- ""
+    qmd_header <- sub("%s", arg[[1]], qmd_header, fixed = TRUE)
   }
 
   # Brief mode (see .report_is_brief()'s own comment) drops the template's

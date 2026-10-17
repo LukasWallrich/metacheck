@@ -202,8 +202,10 @@ test_that("report_table in simple mode returns a static table with no JS widget"
   table <- data.frame(a = 1:3, b = 4:6)
   obs <- report_table(table, colwidths = c(100, 0.5))
   txt <- as.character(obs)
-  expect_true(grepl('<col style="width:100px">', txt, fixed = TRUE))
-  expect_true(grepl('<col style="width:50%">', txt, fixed = TRUE))
+  # written self-closed: Pandoc reads a bare <col> as left open, which broke
+  # the simple report's page <div> (#497)
+  expect_true(grepl('<col style="width:100px"/>', txt, fixed = TRUE))
+  expect_true(grepl('<col style="width:50%"/>', txt, fixed = TRUE))
 
   # a table within maxrows renders with no scroll box at all
   small <- data.frame(x = 1:3)

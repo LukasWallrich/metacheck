@@ -253,6 +253,9 @@ test_that("render html report_type = 'simple' produces a static, email-safe file
   # Real content still made it through the render.
   expect_match(txt, "Exact", fixed = TRUE)
   expect_match(txt, "dt-static", fixed = TRUE)
+  # every <div> is closed exactly once: an unclosed <col> in a table made
+  # Pandoc lose the page <div> and add a stray </div> (#497)
+  expect_equal(lengths(gregexpr("<div\\b", txt)), lengths(gregexpr("</div>", txt)))
 })
 
 test_that("report pass args", {
@@ -434,4 +437,27 @@ test_that("report_qmd", {
 
   mi <- module_info(modules)
   expect_true(grepl(mi$title, report_text, fixed = TRUE))
+})
+
+test_that("a paper without a title or DOI keeps the whole report header (#497)", {
+  # sub() with an NA replacement returned NA for the whole header, so the
+  # YAML (embed-resources), CSS, banner and info box became the word "NA";
+  # a paper with no doi field stopped report() with "invalid 'replacement'
+  # argument".
+  llm_use(FALSE)
+  no_title <- demopaper()
+  no_title$info$title <- NA_character_
+  no_doi <- demopaper()
+  no_doi$info$doi <- NULL
+
+  for (type in c("full", "simple")) for (paper in list(no_title, no_doi)) {
+    output_file <- withr::local_tempfile(fileext = ".qmd")
+    report(paper, "marginal", output_file, "qmd", report_type = type)
+    txt <- readLines(output_file, warn = FALSE)
+    expect_equal(txt[[1]], "---")
+    expect_false(any(txt == "NA"))
+    expect_true(any(grepl("<style", txt, fixed = TRUE)))
+    # the full (Quarto) template is what makes the report self-contained
+    if (type == "full") expect_true(any(grepl("embed-resources", txt, fixed = TRUE)))
+  }
 })

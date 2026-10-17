@@ -1044,8 +1044,12 @@ report_table <- function(table, colwidths = "auto", maxrows = 2, escape = FALSE)
       if (is.numeric(x)) x <- if (x > 1) paste0(x, "px") else paste0(x * 100, "%")
       sprintf(' style="width:%s"', x)
     }, character(1))
+    # "<col .../>", not "<col ...>": Pandoc reads an unclosed <col> as an
+    # element left open, then no longer pairs the simple report's
+    # <div class="mc-page"> with its </div> ("Div ... unclosed ..., closing
+    # implicitly"), and the page ends with a stray </div>.
     colgroup <- paste0("<colgroup>",
-                       paste0("<col", widths, ">", collapse = ""),
+                       paste0("<col", widths, "/>", collapse = ""),
                        "</colgroup>")
     kbl <- sub("(<table[^>]*>)", paste0("\\1", colgroup), kbl)
   }
