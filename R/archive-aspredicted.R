@@ -107,7 +107,7 @@ aspredicted_info <- function(ap_url, id_col = 1, wait = 1) {
   #   httr2::req_perform()
   # resp <- .batch_query(ap_url, msg = NULL, accept = "text/html")[[1]]
 
-  resp <- httr2::request(ap_url) |>
+  resp <- .mc_request(ap_url) |>
     httr2::req_headers(
       Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
       `User-Agent` = paste(

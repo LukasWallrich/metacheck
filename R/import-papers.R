@@ -80,7 +80,7 @@ papers_load <- function(name,
   tmp <- tempfile(fileext = ".rds")
   on.exit(unlink(tmp), add = TRUE)
 
-  req <- httr2::request(entry$download_url[[1]]) |>
+  req <- .mc_request(entry$download_url[[1]]) |>
     httr2::req_error(is_error = \(r) FALSE)
   if (verbose()) req <- httr2::req_progress(req, type = "down")
 
@@ -160,7 +160,7 @@ papers_metadata <- function(name, repo = "scienceverse/papers") {
   )
 
   resp <- tryCatch(
-    httr2::request(url) |>
+    .mc_request(url) |>
       httr2::req_error(is_error = \(r) FALSE) |>
       httr2::req_perform(),
     error = \(e) stop("Could not reach GitHub: ", e$message, call. = FALSE)
@@ -206,7 +206,7 @@ papers_metadata <- function(name, repo = "scienceverse/papers") {
   url <- sprintf("https://api.github.com/repos/%s/releases", repo)
 
   resp <- tryCatch(
-    httr2::request(url) |>
+    .mc_request(url) |>
       httr2::req_headers(Accept = "application/vnd.github+json") |>
       httr2::req_error(is_error = \(r) FALSE) |>
       httr2::req_perform(),

@@ -59,7 +59,7 @@
       # .osf_headers() asks for application/vnd.api+json, which this endpoint
       # answers with HTTP 406, so the Accept header is overridden here while
       # the authorisation header it adds is kept.
-      resp <- httr2::request(url[[i]]) |>
+      resp <- .mc_request(url[[i]]) |>
         .osf_headers() |>
         httr2::req_headers(Accept = "text/markdown, text/plain, */*") |>
         httr2::req_error(is_error = \(r) FALSE) |>
@@ -174,7 +174,7 @@
   osf_api <- getOption("metacheck.osf.api")
   for (kind in c("nodes", "registrations")) {
     resp <- tryCatch(
-      httr2::request(sprintf("%s/%s/%s/%s", osf_api, kind, osf_id, query)) |>
+      .mc_request(sprintf("%s/%s/%s/%s", osf_api, kind, osf_id, query)) |>
         .osf_headers() |>
         httr2::req_error(is_error = \(r) FALSE) |>
         httr2::req_perform(),

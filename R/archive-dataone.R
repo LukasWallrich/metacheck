@@ -329,7 +329,7 @@ dataone_info <- function(dataone_url, id_col = 1, pb = NULL, cache = FALSE) {
 .dataone_object_size <- function(host, api_base, pid) {
   url <- paste0("https://", host, api_base, "object/", utils::URLencode(pid, reserved = TRUE))
   tryCatch({
-    resp <- httr2::request(url) |>
+    resp <- .mc_request(url) |>
       httr2::req_method("HEAD") |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_perform()

@@ -157,7 +157,7 @@ dryad_links <- function(paper) {
   token <- .dryad_share_token(url)
   if (is.na(token)) return(list(doi = NA_character_, error = NA_character_))
   resp <- tryCatch(
-    httr2::request(sprintf("https://datadryad.org/share/%s", token)) |>
+    .mc_request(sprintf("https://datadryad.org/share/%s", token)) |>
       httr2::req_headers(`User-Agent` = "metacheck") |>
       httr2::req_options(followlocation = FALSE) |>
       httr2::req_error(is_error = \(r) FALSE) |>

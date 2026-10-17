@@ -117,7 +117,7 @@ gitlab_repo <- function(repo) {
   }
 
   url <- paste0("https://gitlab.com/", path)
-  resp <- httr2::request(url) |>
+  resp <- .mc_request(url) |>
     httr2::req_method("HEAD") |>
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()
@@ -270,7 +270,7 @@ gitlab_tree_files <- function(repo) {
   # license=true is required to get the license object at all -- omitted, the
   # field is simply absent from the response (confirmed live).
   meta_resp <- tryCatch(
-    httr2::request(sprintf("https://gitlab.com/api/v4/projects/%s?license=true", proj_id)) |>
+    .mc_request(sprintf("https://gitlab.com/api/v4/projects/%s?license=true", proj_id)) |>
       .gitlab_config() |>
       httr2::req_error(is_error = \(r) FALSE) |>
       httr2::req_perform(),
@@ -301,7 +301,7 @@ gitlab_tree_files <- function(repo) {
     # percent-encoded proj_id and already avoids req_url_query() for this
     # reason.
     tree_resp <- tryCatch(
-      httr2::request(sprintf(
+      .mc_request(sprintf(
         "https://gitlab.com/api/v4/projects/%s/repository/tree?recursive=true&per_page=100&page=%d",
         proj_id, page)) |>
         .gitlab_config() |>
@@ -401,7 +401,7 @@ gitlab_tree_files <- function(repo) {
       paste(sprintf('"%s"', gsub('"', '\\\\"', batch)), collapse = ",")
     ))
     resp <- tryCatch(
-      httr2::request("https://gitlab.com/api/graphql") |>
+      .mc_request("https://gitlab.com/api/graphql") |>
         httr2::req_method("POST") |>
         httr2::req_body_json(body) |>
         .gitlab_config() |>

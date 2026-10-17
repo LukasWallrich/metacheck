@@ -425,7 +425,7 @@ osf_schema_labels <- function(info) {
   if (is.null(schema_url)) return(character(0))
 
   schema <- tryCatch(
-    httr2::request(schema_url) |>
+    .mc_request(schema_url) |>
       .osf_headers() |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_retry(

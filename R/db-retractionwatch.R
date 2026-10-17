@@ -68,7 +68,7 @@ rw_update <- function() {
   url <- paste0("https://api.labs.crossref.org/data/retractionwatch?", email())
   # utils::download.file(url, destfile = tmp)
 
-  httr2::request(url) |>
+  .mc_request(url) |>
     httr2::req_error(is_error = ~ FALSE) |>  # optional: don't auto-stop
     httr2::req_perform(path = tmp)
 

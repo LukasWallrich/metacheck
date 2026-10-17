@@ -442,7 +442,7 @@ psycharchives_info <- function(pa_url, id_col = 1, pb = NULL, cache = FALSE) {
 .psycharchives_rest <- function(path, host = "www.psycharchives.org") {
   url <- paste0("https://", host, "/rest", path)
   tryCatch({
-    resp <- httr2::request(url) |>
+    resp <- .mc_request(url) |>
       httr2::req_headers(Accept = "application/json") |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_perform()

@@ -366,7 +366,7 @@ regcheck_compare <- function(paper_text,
   repeat {
     Sys.sleep(poll_interval)
 
-    status <- httr2::request(status_url) |>
+    status <- .mc_request(status_url) |>
       httr2::req_headers(Authorization = paste("Bearer", api_token)) |>
       httr2::req_perform() |>
       httr2::resp_body_json(simplifyVector = FALSE)

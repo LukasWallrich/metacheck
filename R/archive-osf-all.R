@@ -32,7 +32,7 @@
   # The root's own title (nothing lists it as a child) and its project id, in
   # one request.
   root <- tryCatch({
-    resp <- httr2::request(sprintf("%s/nodes/%s/", osf_api, osf_id)) |>
+    resp <- .mc_request(sprintf("%s/nodes/%s/", osf_api, osf_id)) |>
       .osf_headers() |>
       httr2::req_error(is_error = \(r) FALSE) |>
       httr2::req_perform()

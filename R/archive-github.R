@@ -112,7 +112,7 @@ github_repo <- function(repo) {
   }
 
   url <- paste0("https://github.com/", simple_repo)
-  resp <- httr2::request(url) |>
+  resp <- .mc_request(url) |>
     httr2::req_method("HEAD") |>
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()
@@ -202,7 +202,7 @@ github_readme <- function(repo) {
     repo
   )
 
-  resp <- httr2::request(readme_url) |>
+  resp <- .mc_request(readme_url) |>
     .github_config() |>
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()
@@ -254,7 +254,7 @@ github_files <- function(repo, dir = "",
     dir
   ) |> utils::URLencode()
 
-  resp <- httr2::request(url) |>
+  resp <- .mc_request(url) |>
     .github_config() |>
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()
@@ -378,7 +378,7 @@ github_tree_files <- function(repo) {
 
   # ── 1. Repo metadata (size + default branch, 1 request) ─────────────────────
   meta_resp <- tryCatch(
-    httr2::request(sprintf("https://api.github.com/repos/%s", clean_repo)) |>
+    .mc_request(sprintf("https://api.github.com/repos/%s", clean_repo)) |>
       .github_config() |>
       httr2::req_error(is_error = \(r) FALSE) |>
       httr2::req_perform(),
@@ -410,7 +410,7 @@ github_tree_files <- function(repo) {
 
   # ── 2. Git tree (recursive, 1 request) ──────────────────────────────────────
   tree_resp <- tryCatch(
-    httr2::request(
+    .mc_request(
       sprintf("https://api.github.com/repos/%s/git/trees/%s?recursive=1",
               clean_repo, default_branch)) |>
       .github_config() |>
@@ -527,7 +527,7 @@ github_languages <- function(repo) {
     repo
   )
 
-  resp <- httr2::request(url) |>
+  resp <- .mc_request(url) |>
     .github_config() |>
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()

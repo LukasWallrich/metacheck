@@ -815,7 +815,7 @@ openalex_query <- function(title, source = NA, authors = NA, strict = TRUE) {
   )
 
   j <- tryCatch({
-    resp <- httr2::request(url) |>
+    resp <- .mc_request(url) |>
       httr2::req_headers(Accept = "application/json") |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_perform()

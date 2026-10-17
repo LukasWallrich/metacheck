@@ -1007,3 +1007,57 @@ test_that(".expand_zip and .expand_tar unpack only kept members within the limit
       expect_equal(attr(rows, "oversize")$file_size, file.size(file.path(src, "big.csv")))
   }
 })
+
+test_that("zip_peek asks for exactly the central directory a short first tail lacks (#473)", local({
+  # A first tail too short for the central directory used to be followed by a
+  # fixed 1 MB tail: too much on a slow host (Zenodo range requests at
+  # ~7 KB/s), too little for a directory over 1 MB. The end record in the
+  # first tail gives the size the directory needs.
+  d <- withr::local_tempdir()
+  files <- sprintf("file_with_a_fairly_long_name_%03d.csv", 1:60)
+  for (f in files) writeLines("x", file.path(d, f))
+  z <- file.path(d, "many.zip")
+  withr::with_dir(d, utils::zip(z, files, flags = "-q"))
+  skip_if_not(file.exists(z), "zip utility unavailable")
+  bytes <- readBin(z, "raw", file.size(z))
+  url <- "https://example.org/many-473.zip"
+  withr::defer(suppressWarnings(rm(list = url, envir = metacheck:::.zip_peek_cache)))
+
+  asked <- numeric(0)
+  testthat::local_mocked_bindings(
+    .http_range_tail = function(url, n, total = NULL, ...) {
+      asked <<- c(asked, n)
+      out <- utils::tail(bytes, n)
+      attr(out, "total") <- length(bytes)
+      out
+    })
+  cd <- metacheck:::zip_peek(url, tail_bytes = 1024, size = length(bytes))
+  expect_setequal(cd$name, files)
+  expect_length(asked, 2)
+  expect_equal(asked[[1]], 1024)
+  # far less than the old 1 MB retry, and enough
+  expect_lt(asked[[2]], 20000)
+  need <- metacheck:::.parse_zip_central_dir(utils::tail(bytes, 1024), need_only = TRUE)
+  expect_equal(asked[[2]], need + 1024)
+}))
+
+test_that("repository requests give up on a stalled connection (#473)", {
+  req <- metacheck:::.mc_request("https://example.org/x")
+  expect_equal(req$options$low_speed_limit, 1024L)
+  expect_equal(req$options$low_speed_time, 60L)
+  expect_equal(req$options$connecttimeout, 30L)
+  expect_equal(metacheck:::.mc_request("https://example.org/x", low_speed_time = 300)$options$low_speed_time,
+               300L)
+
+  # live: a server that sends 10 bytes over 60 s is given up on after the
+  # window (5 s here), instead of being waited for
+  skip_if_quick()
+  skip_if_offline("httpbin.org")
+  t0 <- Sys.time()
+  err <- tryCatch(
+    httr2::req_perform(metacheck:::.mc_request(
+      "https://httpbin.org/drip?duration=60&numbytes=10&delay=1", low_speed_time = 5)),
+    error = function(e) e)
+  expect_s3_class(err, "error")
+  expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 30)
+})

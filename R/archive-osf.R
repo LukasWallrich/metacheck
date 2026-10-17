@@ -23,7 +23,7 @@ osf_api_check <- function(osf_api = getOption("metacheck.osf.api"),
   status_code <- 0
   status <- tryCatch({
     if (!curl::has_internet()) return("no internet")
-    resp <- httr2::request(osf_api) |>
+    resp <- .mc_request(osf_api) |>
       .osf_headers() |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       # httr2::req_retry(
@@ -671,7 +671,7 @@ osf_get_all_pages <- function(url, page_end = Inf) {
 # remaining pages share identical error handling.
 .osf_get_one_page <- function(url) {
   tryCatch({
-    resp <- httr2::request(.osf_max_page_size(url)) |>
+    resp <- .mc_request(.osf_max_page_size(url)) |>
       .osf_headers() |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_retry(
@@ -701,7 +701,7 @@ osf_get_all_pages <- function(url, page_end = Inf) {
 # failure), so callers can treat the two interchangeably.
 .osf_get_pages_parallel <- function(urls) {
   reqs <- lapply(urls, \(url) {
-    httr2::request(.osf_max_page_size(url)) |>
+    .mc_request(.osf_max_page_size(url)) |>
       .osf_headers() |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_retry(max_tries = 3, is_transient = \(resp) httr2::resp_status(resp) == 429)

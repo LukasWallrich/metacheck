@@ -435,7 +435,7 @@ dspace7_links <- function(paper) {
 # address, for following a `_links.next` page link as given.
 .dspace7_rest <- function(path, host, url = paste0("https://", host, "/server/api", path)) {
   tryCatch({
-    resp <- httr2::request(url) |>
+    resp <- .mc_request(url) |>
       httr2::req_headers(Accept = "application/json") |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_perform()
@@ -457,7 +457,7 @@ dspace7_links <- function(paper) {
   url <- paste0("https://", host, "/server/api/pid/find?id=",
                 utils::URLencode(handle, reserved = TRUE))
   resp <- tryCatch(
-    httr2::request(url) |>
+    .mc_request(url) |>
       httr2::req_headers(Accept = "application/json") |>
       httr2::req_options(followlocation = FALSE) |>
       httr2::req_error(is_error = \(resp) FALSE) |>

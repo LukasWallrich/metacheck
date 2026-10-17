@@ -101,7 +101,7 @@
     # host already known to be rate-limited waits out the remaining time
     # before this request instead of rediscovering the same 429.
     if (!.wait_out_known_rate_limit(url, skip_on_api_limit)) return(NA_real_)
-    h <- httr2::request(url) |> httr2::req_method("HEAD") |>
+    h <- .mc_request(url) |> httr2::req_method("HEAD") |>
       .auth_for_url() |>
       httr2::req_retry(max_tries = 3, retry_on_failure = TRUE,
                        is_transient = .size_probe_is_transient_factory(skip_on_api_limit),
@@ -122,7 +122,7 @@
 .http_range_get <- function(url, range, skip_on_api_limit = FALSE) {
   if (!.wait_out_known_rate_limit(url, skip_on_api_limit))
     return(list(status = NA_integer_, total = NA_real_, body = NULL))
-  resp <- httr2::request(url) |>
+  resp <- .mc_request(url) |>
     httr2::req_headers(Range = range) |>
     .auth_for_url() |>
     httr2::req_retry(max_tries = 3, retry_on_failure = TRUE,
@@ -254,7 +254,7 @@
     if (total <= 0) return(NULL)
     start <- max(0, total - n)
     if (!.wait_out_known_rate_limit(url, skip_on_api_limit)) return(NULL)
-    r <- httr2::request(url) |>
+    r <- .mc_request(url) |>
       httr2::req_headers(Range = sprintf("bytes=%.0f-%.0f", start, total - 1)) |>
       .auth_for_url() |>
       httr2::req_retry(max_tries = 3, retry_on_failure = TRUE,
@@ -371,7 +371,7 @@
       if (!is.null(reason)) reason$msg <- "host is rate-limited (waiting skipped by skip_on_api_limit)"
       return(NULL)
     }
-    r <- httr2::request(url) |>
+    r <- .mc_request(url) |>
       httr2::req_headers(Range = sprintf("bytes=%.0f-%.0f", from, to)) |>
       .auth_for_url() |>
       httr2::req_retry(max_tries = 3, retry_on_failure = TRUE,
@@ -455,9 +455,15 @@
 # The result carries attr(, "cd_offset"): where the central directory starts
 # in the archive, i.e. where the last member's bytes must end. A member fetch
 # uses it to bound its request (see .zip_range_plan()).
-.parse_zip_central_dir <- function(raw) {
+#
+# With `need_only = TRUE` it returns instead how many bytes from the end of
+# the archive hold the whole central directory (as found from the end
+# record), or NA when the tail does not show it. zip_peek() uses that to ask
+# for exactly the bytes it lacks after a first tail that was too short
+# (#473), rather than a fixed 1 MB that may be too much or too little.
+.parse_zip_central_dir <- function(raw, need_only = FALSE) {
   n <- length(raw)
-  if (n < 22) return(NULL)
+  if (n < 22) return(if (need_only) NA_real_ else NULL)
   eocd_sig  <- as.raw(c(0x50, 0x4b, 0x05, 0x06))   # "PK\05\06"
   cd_sig    <- as.raw(c(0x50, 0x4b, 0x01, 0x02))   # "PK\01\02" central-dir header
   loc64_sig <- as.raw(c(0x50, 0x4b, 0x06, 0x07))   # "PK\06\07" Zip64 locator
@@ -472,7 +478,7 @@
     if (identical(raw[i:(i + 3)], eocd_sig)) { eocd <- i; break }
     if (i < n - 21 - 65536) break   # comment can't exceed 64KB; stop early
   }
-  if (is.na(eocd)) return(NULL)
+  if (is.na(eocd)) return(if (need_only) NA_real_ else NULL)
 
   # EOCD fields (offsets relative to the signature start):
   #   +10 (2) total entries, +12 (4) central-dir size, +16 (4) central-dir offset
@@ -504,7 +510,8 @@
       cd_offset <- .le_int(raw, rec + 48, 8)
       cd_end    <- rec
     } else if (n_entries == 65535 || cd_size == 4294967295) {
-      return(NULL)   # Zip64 end record not in the tail, and it is needed
+      # Zip64 end record not in the tail, and it is needed
+      return(if (need_only) NA_real_ else NULL)
     }
     # (Otherwise the four bytes that looked like a locator were part of the
     # last entry, and the ordinary end record's values stand.)
@@ -514,6 +521,8 @@
   # cd_size bytes long, so within our tail it starts at (cd_end - cd_size) when
   # fully present.
   cd_start <- cd_end - cd_size
+  # bytes from the central directory's start to the end of the archive
+  if (need_only) return(n - cd_start + 1)
   if (cd_start < 1) return(NULL)   # central directory not fully in the tail
 
   # Preallocated: growing six vectors with c() costs time proportional to the
@@ -714,7 +723,15 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   total <- if (length(known) == 1 && is.finite(known) && known > 0) known else
     .head_size(url, skip_on_api_limit = skip_on_api_limit)
 
-  for (nb in unique(c(tail_bytes, 1048576))) {   # retry once with 1 MB tail
+  # Two tries at most. When the first tail is too short for the central
+  # directory, its end record says how many bytes the directory needs, and
+  # the second request asks for exactly those (#473): for Zenodo's
+  # foxnet-v2.0.1.zip (a 292 KB directory, range requests at ~7 KB/s) that is
+  # 293 KB instead of 1 MB, and a directory over 1 MB, which a fixed 1 MB
+  # retry could never list, is read too (up to 64 MB, against a damaged end
+  # record). Without an end record in the tail, the retry is 1 MB as before.
+  nb <- tail_bytes
+  for (attempt in 1:2) {
     raw <- .http_range_tail(url, nb, total = total,
                             skip_on_api_limit = skip_on_api_limit)
     if (is.null(raw)) {
@@ -731,6 +748,10 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
       return(cd)
     }
     if (!is.null(total) && !is.na(total) && nb >= total) break  # whole file seen
+    need <- .parse_zip_central_dir(raw, need_only = TRUE)
+    nb_next <- if (isTRUE(need > length(raw))) min(need + 1024, 64 * 1048576) else 1048576
+    if (nb_next <= nb) break   # asking again for the same bytes cannot help
+    nb <- nb_next
   }
   assign(url, NULL, envir = .zip_peek_cache)
   if (isTRUE(cache)) .zip_peek_cache_put(url, NULL)

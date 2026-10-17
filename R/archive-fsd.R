@@ -283,7 +283,7 @@ fsd_info <- function(fsd_url, id_col = 1, pb = NULL, cache = FALSE) {
 .fsd_ddi_xml <- function(study_id) {
   url <- sprintf("%s/%s/DDI/%s_eng.xml", .FSD_DDI_BASE, study_id, study_id)
   tryCatch({
-    resp <- httr2::request(url) |>
+    resp <- .mc_request(url) |>
       httr2::req_error(is_error = \(resp) FALSE) |>
       httr2::req_perform()
     if (httr2::resp_status(resp) != 200) return(NULL)

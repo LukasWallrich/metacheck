@@ -181,7 +181,7 @@ rbox_info <- function(rb_url, id_col = 1, pb = NULL) {
   )
 
   # get website
-  resp <- httr2::request(rb_url) |>
+  resp <- .mc_request(rb_url) |>
     httr2::req_headers(!!!.rbox_headers()) |>
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()
@@ -194,7 +194,7 @@ rbox_info <- function(rb_url, id_col = 1, pb = NULL) {
       matches <- gregexpr(pattern, body_text, perl = TRUE)
       redirect_url <- regmatches(body_text, matches)
 
-      resp <- httr2::request(redirect_url[[1]]) |>
+      resp <- .mc_request(redirect_url[[1]]) |>
         httr2::req_headers(!!!.rbox_headers()) |>
         httr2::req_error(is_error = \(resp) FALSE) |>
         httr2::req_perform()
@@ -339,7 +339,7 @@ rbox_file_download <- function(rb_url, pb = NULL) {
       pb$tick(0, tokens = _)
 
     dl_status <- tryCatch({
-      resp <- httr2::request("https://researchbox.org/download_files.php") |>
+      resp <- .mc_request("https://researchbox.org/download_files.php", low_speed_time = 300) |>
         httr2::req_headers(!!!.rbox_headers()) |>
         httr2::req_body_json(list(
           files = as.numeric(file_ids),
