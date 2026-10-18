@@ -2,9 +2,9 @@ test_that("module_list", {
   expect_true(is.function(metacheck::module_list))
   expect_no_error(helplist <- help(module_list, metacheck))
 
-  builtin <- module_list()
+  builtin <- module_list(external = FALSE)
   expect_true(is.data.frame(builtin))
-  exp <- c("name", "title", "description", "section", "path")
+  exp <- c("name", "title", "description", "section", "path", "source")
   expect_equal(names(builtin), exp)
 
   # print format
@@ -213,7 +213,7 @@ test_that("get_prev_outputs", {
 })
 
 test_that("all builtin modules have essential components", {
-  modules <- module_list()$name
+  modules <- module_list(external = FALSE)$name
   section_levels <- c("general", "intro", "method", "results", "discussion", "reference")
 
   # expect some content in roxygen header

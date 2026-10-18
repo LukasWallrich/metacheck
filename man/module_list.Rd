@@ -4,13 +4,18 @@
 \alias{module_list}
 \title{List modules}
 \usage{
-module_list(module_dir = system.file("modules", package = "metacheck"))
+module_list(
+  module_dir = system.file("modules", package = "metacheck"),
+  external = TRUE
+)
 }
 \arguments{
 \item{module_dir}{the directory to search for modules (defaults to the built-in modules)}
+
+\item{external}{whether to also list the modules installed from GitHub with \code{\link[=module_install]{module_install()}}}
 }
 \value{
-a data frame of modules
+a data frame of modules; \code{source} is the GitHub repository of an installed module, or NA
 }
 \description{
 List modules

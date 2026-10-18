@@ -15,6 +15,7 @@
 module_run <- function(paper, module, ...) {
   module_path <- module_find(module)
   info <- module_info(module_path)
+  .module_check_version(info, module)
 
   # handle metacheck_module_output in pipeline
   .__mc__prev_outputs <- list()
@@ -181,7 +182,8 @@ module_find <- function(module) {
     pattern = "\\.R$",
     full.names = TRUE
   ) |>
-    unlist(use.names = FALSE)
+    unlist(use.names = FALSE) |>
+    c(.module_installed_files()) # modules installed with module_install()
 
   module_names <- basename(module_paths) |> sub("\\.R$", "", x = _)
 
@@ -204,17 +206,20 @@ module_find <- function(module) {
 #' List modules
 #'
 #' @param module_dir the directory to search for modules (defaults to the built-in modules)
+#' @param external whether to also list the modules installed from GitHub with [module_install()]
 #
-#' @return a data frame of modules
+#' @return a data frame of modules; `source` is the GitHub repository of an installed module, or NA
 #' @export
 #'
 #' @examples
 #' mods <- module_list()
-module_list <- function(module_dir = system.file("modules", package = "metacheck")) {
+module_list <- function(module_dir = system.file("modules", package = "metacheck"),
+                        external = TRUE) {
   files <- list.files(module_dir, "\\.R$",
     full.names = TRUE,
     recursive = TRUE
   )
+  if (external) files <- c(files, .module_installed_files())
   txt <- lapply(files, \(mod) tryCatch(
     module_info(mod),
     error = \(e) {}
@@ -231,7 +236,8 @@ module_list <- function(module_dir = system.file("modules", package = "metacheck
       sapply(\(x) x[[1]] %||% ""),
     section = sapply(txt, `[[`, "keywords") |>
       sapply(\(x) x[[1]] %||% "general"),
-    path = files[valid]
+    path = files[valid],
+    source = sapply(txt, \(x) x$source$repo %||% NA_character_)
   )
 
   section_levels <- c("general", "intro", "method", "results", "discussion", "reference")
@@ -290,6 +296,9 @@ module_info <- function(module) {
   match <- regexec(pattern, lines[funcs[1]])
   info$func_name <- regmatches(lines[funcs[1]], match)[[1]][2]
 
+  # the GitHub repository and commit of a module from module_install()
+  info$source <- .module_source(module_path)
+
   info
 }
 
@@ -335,7 +344,8 @@ print.metacheck_module_list <- function(x, ...) {
     if (nrow(sub) == 0) {
       return(NULL)
     }
-    items <- paste0("* ", sub$name, ": ", sub$description, "\n")
+    from <- ifelse(is.na(sub$source), "", paste0(" [from ", sub$source, "]"))
+    items <- paste0("* ", sub$name, ": ", sub$description, from, "\n")
     title <- sprintf("\n*** %s ***\n\n", toupper(s))
 
     c(title, items)

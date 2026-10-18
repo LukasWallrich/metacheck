@@ -41,6 +41,7 @@ test_that("OSF no files", {
   expect_equal(mod_output$traffic_light, "yellow")
   exp <- data.frame(paper_id = paper$paper_id,
                     repo_n = 1,
+                    repo_unchecked = 0L,
                     files_n = 0,
                     files_data = 0,
                     files_code = 0,
@@ -71,6 +72,7 @@ test_that("no code files", {
   # there while data_type is "code".
   exp <- data.frame(paper_id = paper$paper_id,
                     repo_n = 1,
+                    repo_unchecked = 0L,
                     files_n = 2,
                     files_data = 0,
                     files_code = 0,
@@ -96,6 +98,7 @@ test_that("OSF", {
   # (not a real mismatch, just an absence of roster evidence to compare).
   exp <- data.frame(paper_id = paper$paper_id,
                     repo_n = 1,
+                    repo_unchecked = 0L,
                     files_n = 4,
                     files_data = 1,
                     files_code = 2,
