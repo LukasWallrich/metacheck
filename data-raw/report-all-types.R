@@ -25,7 +25,7 @@ if (!rerun_modules && file.exists(cache_file)) {
   module_output <- readRDS(cache_file)
 } else {
   # psychds_check excluded: still under development
-  modules <- setdiff(module_list()$name, "psychds_check")
+  modules <- setdiff(module_list(external = FALSE)$name, "psychds_check")
   # cache = TRUE on every module that accepts it: an on-disk cache
   # (.metacheck_repo_cache/, see metacheck_cache_info()) of repository
   # listings/downloaded files, separate from this script's own

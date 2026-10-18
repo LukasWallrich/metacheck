@@ -676,10 +676,17 @@ code_check <- function(paper, local_path = NULL,
     code_abs_path         = "Absolute Paths",
     library_max_between   = "Code Between Libraries"
   )
-  cols <- c(names(col_labels), "file_url") |> intersect(names(code_files))
+  cols <- c(names(col_labels), "file_url", "file_path") |> intersect(names(code_files))
   report_table <- unique(code_files[, cols])
-  report_table$file_name <- link(report_table$file_url, report_table$file_name)
+  # A file without a web address (a local folder) is shown by its path in the
+  # folder: link() gives NA without an address, which left the column empty,
+  # and a path tells apart same-named files (__init__.py in every package).
+  shown <- report_table$file_path %||% report_table$file_name
+  shown[is.na(shown) | !nzchar(shown)] <- report_table$file_name[is.na(shown) | !nzchar(shown)]
+  url <- report_table$file_url %||% rep(NA_character_, nrow(report_table))
+  report_table$file_name <- dplyr::coalesce(link(url, report_table$file_name), shown)
   report_table$file_url <- NULL
+  report_table$file_path <- NULL
   # Unanalysed files (JASP) have no comment percentage; sprintf() would print a
   # literal "NA%" for them, so show an empty cell instead.
   if ("percentage_comment" %in% names(report_table)) {

@@ -355,6 +355,22 @@ test_that("data_classify_files recognizes additional corpus-confirmed formats (i
   expect_equal(data_classify_files("model.nlogo"), "code")
 })
 
+test_that("data_classify_files: licences, models, .vcd, .pgf and package lists", {
+  # a licence file without an extension is documentation, with the licence role
+  lic <- c("LICENSE", "LICENCE", "COPYING", "LICENSE.md")
+  expect_true(all(data_classify_files(lic) == "documentation"))
+  expect_true(all(.data_doc_role(lic) == "license"))
+  # computational models, signal recordings and LaTeX figures
+  expect_equal(data_classify_files(c("model.slx", "sim.mph", "trace.vcd", "plot.pgf")),
+               c("code", "code", "data", "output"))
+  # lists of the packages a program needs belong with the code
+  expect_equal(data_classify_files(c("requirements.txt", "requirements-dev.txt", "Pipfile")),
+               c("code", "code", "code"))
+  # names that only start the same way are unaffected
+  expect_equal(data_classify_files(c("licensing_notes.txt", "requirements_analysis.pdf", "notes.txt")),
+               rep("documentation", 3))
+})
+
 test_that("data_format separates tabular from raw", {
   expect_equal(data_format("csv"), "tabular")
   expect_equal(data_format("sav"), "tabular")
@@ -689,6 +705,59 @@ test_that("data_check tags demographic columns in its table", {
   # id column → identifier role, id concept.
   irow <- mo$table[mo$table$column_name == "id", ]
   expect_equal(irow$role, "identifier")
+})
+
+test_that(".data_source_keys", {
+  expect_true(is.function(metacheck:::.data_source_keys))
+  expect_error(.data_source_keys(bad_arg))
+
+  # unique names stay names
+  expect_equal(.data_source_keys(c("a.csv", "b.csv"), c("x/a.csv", "y/b.csv")),
+               c("a.csv", "b.csv"))
+  # a repeated name becomes the path, for every file that has it
+  expect_equal(.data_source_keys(c("log.csv", "log.csv", "b.csv"),
+                                 c("s1/log.csv", "s2/log.csv", "b.csv")),
+               c("s1/log.csv", "s2/log.csv", "b.csv"))
+  # Windows separators become "/"
+  expect_equal(.data_source_keys(c("log.csv", "log.csv"), c("s1\\log.csv", "s2\\log.csv")),
+               c("s1/log.csv", "s2/log.csv"))
+  # the same path in two repositories gets the repository in front
+  expect_equal(.data_source_keys(c("d.csv", "d.csv"), c("data/d.csv", "data/d.csv"),
+                                 c("repo1", "repo2")),
+               c("repo1: data/d.csv", "repo2: data/d.csv"))
+  # without paths or repositories, still unique
+  expect_equal(.data_source_keys(c("d.csv", "d.csv")), c("d.csv", "d.csv #1"))
+  expect_equal(.data_source_keys(character(0)), character(0))
+})
+
+test_that("data_check reads every file when several share a name", {
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "scan1"))
+  dir.create(file.path(d, "scan2"))
+  utils::write.csv(data.frame(t = 1:20, v = round(rnorm(20), 3)),
+                   file.path(d, "scan1", "log.csv"), row.names = FALSE)
+  utils::write.csv(data.frame(t = 1:20, email = sprintf("p%d@example.com", 1:20)),
+                   file.path(d, "scan2", "log.csv"), row.names = FALSE)
+  utils::write.csv(data.frame(x = 1:20, y = 20:1),
+                   file.path(d, "summary.csv"), row.names = FALSE)
+
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  # both log.csv files are read, under their paths; a unique name stays a name
+  expect_setequal(names(mo$previews), c("scan1/log.csv", "scan2/log.csv", "summary.csv"))
+  expect_setequal(unique(mo$table$source_file), c("scan1/log.csv", "scan2/log.csv", "summary.csv"))
+  expect_equal(mo$table$column_name[mo$table$source_file == "scan2/log.csv"], c("t", "email"))
+  # the personal data in the second log.csv is found
+  pii <- mo$findings[mo$findings$check == "Personal info (values)", ]
+  expect_equal(unique(pii$source_file), "scan2/log.csv")
+  # the file table carries the same name
+  st <- mo$structure
+  expect_equal(st$source_file[st$file_path == "scan1/log.csv"], "scan1/log.csv")
+  expect_equal(st$source_file[st$file_name == "summary.csv"], "summary.csv")
+
+  # codebook_check finds each table under the same name
+  cb <- module_run(mo, "codebook_check")
+  expect_setequal(unique(cb$table$source_file), c("scan1/log.csv", "scan2/log.csv", "summary.csv"))
 })
 
 # ── Qualtrics detection ───────────────────────────────────────────────────────

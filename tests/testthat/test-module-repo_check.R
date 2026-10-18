@@ -41,6 +41,7 @@ test_that("OSF no files", {
   expect_equal(mod_output$traffic_light, "yellow")
   exp <- data.frame(paper_id = paper$paper_id,
                     repo_n = 1,
+                    repo_unchecked = 0L,
                     files_n = 0,
                     files_data = 0,
                     files_code = 0,
@@ -71,6 +72,7 @@ test_that("no code files", {
   # there while data_type is "code".
   exp <- data.frame(paper_id = paper$paper_id,
                     repo_n = 1,
+                    repo_unchecked = 0L,
                     files_n = 2,
                     files_data = 0,
                     files_code = 0,
@@ -96,6 +98,7 @@ test_that("OSF", {
   # (not a real mismatch, just an absence of roster evidence to compare).
   exp <- data.frame(paper_id = paper$paper_id,
                     repo_n = 1,
+                    repo_unchecked = 0L,
                     files_n = 4,
                     files_data = 1,
                     files_code = 2,
@@ -383,20 +386,45 @@ test_that(".useless_file_kind recognises every kind of useless file", {
     "~$report.docx"                         = "open-document lock files",
     "data/~$scores.xlsx"                    = "open-document lock files",
     "slides/~$talk.pptx"                    = "open-document lock files",
-    "docs/.~lock.report.docx#"              = "open-document lock files"
+    "docs/.~lock.report.docx#"              = "open-document lock files",
+    "~$notes.txt"                           = "open-document lock files",
+    # the junk rules of TU/e's data managers (RAPS data manager check)
+    ".TemporaryItems/folders.501/x"         = os,
+    ".Rhistory"                             = "R history",
+    "code/.Rhistory"                        = "R history",
+    "analysis~"                             = "editor backups",
+    "analysis.R.bak"                        = "editor backups",
+    "code/.analysis.R.swp"                  = "editor backups",
+    "code/.analysis.R.swo"                  = "editor backups",
+    "notes.tmp"                             = "temporary files",
+    "export.TEMP"                           = "temporary files",
+    ".git/config"                           = "version control",
+    "sub/.git/objects/ab/cdef"              = "version control",
+    ".svn/entries"                          = "version control",
+    ".hg/store/data"                        = "version control",
+    ".idea/workspace.xml"                   = "editor settings",
+    ".vscode/settings.json"                 = "editor settings"
   )
   expect_equal(.useless_file_kind(names(expected)), unname(expected))
   expect_true(all(.is_useless_file(names(expected))))
 })
 
+test_that(".useless_file_severity", {
+  kinds <- c("operating system", "R history", "editor backups", "temporary files",
+             "open-document lock files", "version control", "editor settings", NA)
+  expect_equal(.useless_file_severity(kinds),
+               c(rep("problem", 5), "suggestion", "suggestion", NA))
+})
+
 test_that(".useless_file_kind keeps every file that may matter", {
   keep <- c("data.csv", "study/a_.csv", "MACOSX_notes.txt", "analysis.R",
             # may matter to someone, deliberately not treated as useless
-            ".RData", ".Rhistory", "analysis.R.bak", "notes.tmp", "analysis~",
-            "report_cache/html/chunk.rdb", "renv.lock", ".gitignore",
+            ".RData", "report_cache/html/chunk.rdb", "renv.lock", ".gitignore",
             # names that only look like useless files
             "my.Rproj", ".Rproj.user.txt", "pycache_notes.txt", "utils.py",
-            "~$notes.txt", "Thumbs.db.csv", "lock.docx")
+            "Thumbs.db.csv", "lock.docx", ".github/workflows/check.yml",
+            "git/notes.txt", "temperature.csv", "data.backup.csv",
+            "Rhistory_notes.txt", "tmp/data.csv")
   expect_true(all(is.na(.useless_file_kind(keep))))
   expect_false(any(.is_useless_file(keep)))
   expect_true(is.na(.useless_file_kind(NA_character_)))
@@ -430,6 +458,47 @@ test_that("repo_check leaves out and reports files that do not belong in a repos
   expect_match(report, "Thumbs.db", fixed = TRUE)
   # and they are not flagged for naming
   expect_false(any(grepl("Thumbs|pycache|~\\$", mo$naming_issues$file_name %||% character(0))))
+  # they are something to fix, and returned for other modules
+  expect_equal(mo$traffic_light, "red")
+  expect_equal(nrow(mo$useless_files), 4)
+  expect_true(all(c("repo_url", "file_path", "kind", "severity") %in% names(mo$useless_files)))
+  expect_true(all(mo$useless_files$severity == "problem"))
+})
+
+test_that("repo_check finds hidden useless files in a local folder", {
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "code"))
+  writeLines("a,b\n1,2", file.path(d, "data.csv"))
+  writeLines("x <- 1", file.path(d, "code", "analysis.R"))
+  writeLines("junk", file.path(d, ".DS_Store"))
+  writeLines("q()", file.path(d, "code", ".Rhistory"))
+  # a hidden file that is not useless stays out of the listing, as before
+  writeLines("data/", file.path(d, ".gitignore"))
+
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+
+  expect_setequal(mo$table$file_name, c("data.csv", "analysis.R"))
+  expect_setequal(mo$useless_files$kind, c("operating system", "R history"))
+  expect_equal(mo$traffic_light, "red")
+  expect_match(mo$summary_text, "left out 2 files that do not belong", fixed = TRUE)
+})
+
+test_that("repo_check: version control and editor settings are suggestions", {
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, ".git"))
+  dir.create(file.path(d, ".vscode"))
+  writeLines("a,b\n1,2", file.path(d, "data.csv"))
+  writeLines("[core]", file.path(d, ".git", "config"))
+  writeLines("{}", file.path(d, ".vscode", "settings.json"))
+
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+
+  expect_equal(mo$table$file_name, "data.csv")
+  expect_equal(sort(mo$useless_files$kind), c("editor settings", "version control"))
+  expect_true(all(mo$useless_files$severity == "suggestion"))
+  expect_equal(mo$traffic_light, "yellow")
+  expect_match(mo$summary_text, "Keep them only if you mean to share them", fixed = TRUE)
+  expect_no_match(mo$summary_text, "Remove", fixed = TRUE)
 })
 
 test_that("repo_check reports nothing when there are no useless files", {
@@ -438,6 +507,8 @@ test_that("repo_check reports nothing when there are no useless files", {
   mo <- module_run(test_paper(), "repo_check", local_path = d)
   expect_no_match(mo$summary_text, "do not belong", fixed = TRUE)
   expect_no_match(paste(mo$report, collapse = "\n"), "do not belong", fixed = TRUE)
+  expect_equal(nrow(mo$useless_files), 0)
+  expect_true(mo$traffic_light != "red")
 })
 
 test_that("data_check leaves useless files out of a zip it unpacks", {

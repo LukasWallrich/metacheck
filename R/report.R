@@ -1020,9 +1020,21 @@ module_report <- function(module_output,
       # remove validation section
       details <- gsub("\\s*<validation>.*</validation>\\s*", "", info$details)
 
-      chapter_link <- .module_chapter_link(module_output$module)
+      # a module from module_install() names its repository and commit, and
+      # has no chapter in the metacheck manual
+      if (is.null(info$source)) {
+        source_note <- NULL
+        chapter_link <- .module_chapter_link(module_output$module)
+      } else {
+        source_note <- sprintf(
+          "This module was installed from [%s](https://github.com/%s/tree/%s) (commit %s).",
+          info$source$repo, info$source$repo, info$source$sha,
+          substr(info$source$sha, 1, 7)
+        )
+        chapter_link <- NULL
+      }
 
-      c(info$description, details, author_ack, chapter_link) |>
+      c(info$description, details, author_ack, source_note, chapter_link) |>
         collapse_section("How It Works", callout = "note")
     },
     error = \(e) {

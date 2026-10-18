@@ -1,0 +1,257 @@
+{
+    "sha": "35033be8313994ab55cc6aece1cc49499552708d",
+    "node_id": "C_kwDON0DEsNoAKDM1MDMzYmU4MzEzOTk0YWI1NWNjNmFlY2UxY2M0OTQ5OTU1MjcwOGQ",
+    "commit": {
+        "author": {
+            "name": "Lakens",
+            "email": "D.Lakens@tue.nl",
+            "date": "2026-09-20T09:04:18Z"
+        },
+        "committer": {
+            "name": "Lakens",
+            "email": "D.Lakens@tue.nl",
+            "date": "2026-09-20T09:04:18Z"
+        },
+        "message": "Revert \"Merge pull request #413 from LukasWallrich/fix/module-bugs-from-review\"\n\nThis reverts commit bb448c3d502169e5eac7ee29a52d5ff82762852d, reversing\nchanges made to 4ea669a413e59937ed4b449a743ec16bd4434bd3.",
+        "tree": {
+            "sha": "f14e85013d372a1f11866c72fdb0c2da68013815",
+            "url": "https://api.github.com/repos/scienceverse/metacheck/git/trees/f14e85013d372a1f11866c72fdb0c2da68013815"
+        },
+        "url": "https://api.github.com/repos/scienceverse/metacheck/git/commits/35033be8313994ab55cc6aece1cc49499552708d",
+        "comment_count": 0,
+        "verification": {
+            "verified": false,
+            "reason": "unsigned",
+            "signature": null,
+            "payload": null,
+            "verified_at": null
+        }
+    },
+    "url": "https://api.github.com/repos/scienceverse/metacheck/commits/35033be8313994ab55cc6aece1cc49499552708d",
+    "html_url": "https://github.com/scienceverse/metacheck/commit/35033be8313994ab55cc6aece1cc49499552708d",
+    "comments_url": "https://api.github.com/repos/scienceverse/metacheck/commits/35033be8313994ab55cc6aece1cc49499552708d/comments",
+    "author": {
+        "login": "Lakens",
+        "id": 6490081,
+        "node_id": "MDQ6VXNlcjY0OTAwODE=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/6490081?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Lakens",
+        "html_url": "https://github.com/Lakens",
+        "followers_url": "https://api.github.com/users/Lakens/followers",
+        "following_url": "https://api.github.com/users/Lakens/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Lakens/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Lakens/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Lakens/subscriptions",
+        "organizations_url": "https://api.github.com/users/Lakens/orgs",
+        "repos_url": "https://api.github.com/users/Lakens/repos",
+        "events_url": "https://api.github.com/users/Lakens/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Lakens/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+    },
+    "committer": {
+        "login": "Lakens",
+        "id": 6490081,
+        "node_id": "MDQ6VXNlcjY0OTAwODE=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/6490081?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/Lakens",
+        "html_url": "https://github.com/Lakens",
+        "followers_url": "https://api.github.com/users/Lakens/followers",
+        "following_url": "https://api.github.com/users/Lakens/following{/other_user}",
+        "gists_url": "https://api.github.com/users/Lakens/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/Lakens/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/Lakens/subscriptions",
+        "organizations_url": "https://api.github.com/users/Lakens/orgs",
+        "repos_url": "https://api.github.com/users/Lakens/repos",
+        "events_url": "https://api.github.com/users/Lakens/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/Lakens/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+    },
+    "parents": [
+        {
+            "sha": "bb448c3d502169e5eac7ee29a52d5ff82762852d",
+            "url": "https://api.github.com/repos/scienceverse/metacheck/commits/bb448c3d502169e5eac7ee29a52d5ff82762852d",
+            "html_url": "https://github.com/scienceverse/metacheck/commit/bb448c3d502169e5eac7ee29a52d5ff82762852d"
+        }
+    ],
+    "stats": {
+        "total": 101,
+        "additions": 21,
+        "deletions": 80
+    },
+    "files": [
+        {
+            "sha": "f72156891620e11d4f8f582eded7dbe8b5aed9d4",
+            "filename": "NEWS.md",
+            "status": "modified",
+            "additions": 0,
+            "deletions": 10,
+            "changes": 10,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/NEWS.md",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/NEWS.md",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/NEWS.md?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -1,13 +1,3 @@\n-# metacheck (development version)\n-\n-* `extract_p_values()` now also detects upper-case \"P = .04\" (affects \"all_p_values\", \"stat_p_exact\" and \"stat_p_nonsig\")\n-* \"stat_p_nonsig\" treats \"≤\" like \"<\", so \"p ≤ .01\" is no longer listed as non-significant\n-* \"code_check\" can now return a green traffic light, and the parse-error table is shown when more than one file was checked\n-* \"causal_claims\" no longer excludes every sentence containing the word \"random\" (e.g., \"random assignment to conditions\"); only \"pseudorandom\" is excluded\n-* \"open_practices\" no longer counts \"available on request\" as open sharing in the summary table\n-* \"ref_miscitation\" reports all matched papers, not just the last one\n-* \"ref_retraction\" report text no longer refers to replication studies\n-\n # metacheck 0.1.0\n \n * Actual beta release with proper number and Zenodo citation!"
+        },
+        {
+            "sha": "c4ff76337009d79cd1ca2567b0517d2415349f6a",
+            "filename": "R/text-extractors.R",
+            "status": "modified",
+            "additions": 1,
+            "deletions": 1,
+            "changes": 2,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/R%2Ftext-extractors.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/R%2Ftext-extractors.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/R%2Ftext-extractors.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -51,7 +51,7 @@ extract_p_values <- function(paper) {\n   ) |> paste(collapse = \"\")\n \n   pattern <- paste0(\n-    \"\\\\b[pP]-?(value)?\\\\s*\", # ways to write p (or P)\n+    \"\\\\bp-?(value)?\\\\s*\", # ways to write p\n     \"[\", operators, \"]{1,2}\\\\s*\", # 1-2 operators\n     \"(n\\\\.?s\\\\.?|\\\\d?\\\\.\\\\d+)\", # ns or valid numbers\n     \"\\\\s*(e\\\\s*-\\\\d+)?\", # also match scientific notation"
+        },
+        {
+            "sha": "68663db553aef4e5cf5bd4a1af7a239a4ea5169a",
+            "filename": "inst/modules/causal_claims.R",
+            "status": "modified",
+            "additions": 2,
+            "deletions": 2,
+            "changes": 4,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fcausal_claims.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fcausal_claims.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/inst%2Fmodules%2Fcausal_claims.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -52,7 +52,7 @@ causal_claims <- function(paper) {\n   | \\\\brandom\\\\s+jitter(?:ed|ing)?\\\\b\n   | \\\\brandom\\\\s+noise\\\\b\n   | \\\\brandom\\\\s+pixels?\\\\b|\\\\brandom\\\\-pixel\\\\b\n-  | \\\\bpseudo\\\\-?random(?:ly|i[sz]ed)?\\\\b\n+  | \\\\b(?:pseudo)?random\\\\b\n \n   # sampling / lotteries / non-arm selection\n   | \\\\brandom\\\\s+digit\\\\-?dial(?:ing)?\\\\b\n@@ -119,7 +119,7 @@ causal_claims <- function(paper) {\n     summary_text_title <- \"Causal claims were detected in the title.\"\n     report_causal_title <- c(\n       summary_text_title,\n-      scroll_table(causal_title[, c(\"sentence\", \"cause\", \"effect\")], 1)\n+      scroll_table(causal_title[, c(\"sentence\", \"cause\", \"effect\")]), 1\n     )\n   }\n "
+        },
+        {
+            "sha": "a560125d8bd92ae8fb8761a18ef3f058f3e4da59",
+            "filename": "inst/modules/code_check.R",
+            "status": "modified",
+            "additions": 2,
+            "deletions": 2,
+            "changes": 4,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fcode_check.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fcode_check.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/inst%2Fmodules%2Fcode_check.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -280,7 +280,7 @@ code_check <- function(paper, file_limit = 20, local_path = NULL, local_only = F\n     )\n     summary_parse <- \"Parsing issues of R-type files were found.\"\n     cols <- c(\"file_name\", \"parse_error_msg\")\n-    report_table_parse <- code_files[code_files$parse_error %in% TRUE, cols]\n+    report_table_parse <- code_files[isTRUE(code_files$parse_error), cols]\n     colnames(report_table_parse) <- c(\"File name\", \"Error Message\")\n   }\n \n@@ -308,7 +308,7 @@ code_check <- function(paper, file_limit = 20, local_path = NULL, local_only = F\n       length(comment_issue) == 0 &&\n       length(absolute_issues) == 0 &&\n       length(library_issue) == 0 &&\n-      parse_issues == 0) {\n+      length(parse_issues) == 0) {\n     tl <- \"green\"\n   } else {\n     tl <- \"yellow\""
+        },
+        {
+            "sha": "43ec6b2caee708a8b71d49061a2968604922ce6e",
+            "filename": "inst/modules/open_practices.R",
+            "status": "modified",
+            "additions": 6,
+            "deletions": 13,
+            "changes": 19,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fopen_practices.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fopen_practices.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/inst%2Fmodules%2Fopen_practices.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -113,17 +113,10 @@ open_practices <- function(paper) {\n   table$paper_id <- as.character(table$paper_id)\n \n   # summary_table ----\n-  # sentences that only matched repo_words because of \"on request\"\n-  # are flagged in the table, but do not count as open sharing\n-  in_repo <- setdiff(repo_words, on_request) |>\n-    paste(collapse = \"|\") |>\n-    grepl(table$text, ignore.case = TRUE)\n-\n   summary_table <- table |>\n-    dplyr::mutate(.in_repo = in_repo) |>\n-    summarise(data_open = any(data & .in_repo),\n-              code_open = any(code & .in_repo),\n-              materials_open = any(materials & .in_repo),\n+    summarise(data_open = any(data),\n+              code_open = any(code),\n+              materials_open = any(materials),\n               prereg_open = any(prereg),\n               on_request = any(on_request),\n               data_statements = list(unique(text[data])),\n@@ -175,7 +168,7 @@ open_practices <- function(paper) {\n     }\n \n     if (summary_table$on_request) {\n-      summary_text <- gsub(\"\\\\.$\", \"; some sharing is only on request.\", summary_text)\n+      summary_text <- gsub(\"\\\\.$\", \", but on request.\", summary_text)\n       tl <- \"red\"\n     }\n   }\n@@ -192,7 +185,7 @@ open_practices <- function(paper) {\n     } else {\n       data_report <- sprintf(\n         \"Data was openly shared for this article, based on the following text:\\n\\n> %s\",\n-        paste(table$text[table$data & in_repo], collapse = \"\\n\\n> \")\n+        paste(table$text[table$data], collapse = \"\\n\\n> \")\n       )\n     }\n \n@@ -202,7 +195,7 @@ open_practices <- function(paper) {\n     } else {\n       code_report <- sprintf(\n         \"Code was openly shared for this article, based on the following text:\\n\\n> %s\",\n-        paste(table$text[table$code & in_repo], collapse = \"\\n\\n> \")\n+        paste(table$text[table$code], collapse = \"\\n\\n> \")\n       )\n     }\n "
+        },
+        {
+            "sha": "b88b2f5047a181caa2eec8abb03cdcde2ff87d37",
+            "filename": "inst/modules/ref_miscitation.R",
+            "status": "modified",
+            "additions": 1,
+            "deletions": 2,
+            "changes": 3,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fref_miscitation.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fref_miscitation.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/inst%2Fmodules%2Fref_miscitation.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -62,7 +62,6 @@ ref_miscitation <- function(paper, db = readRDS(system.file(\"databases/miscite.R\n \n     summary_text <- sprintf(\"We found %d citation%s to papers that are commonly miscited.\", nrow(table), plural(nrow(table)))\n \n-    report <- character(0)\n     for (i in seq_along(to_warn$doi)) {\n       warn_doi <- to_warn$doi[[i]]\n       all_instances <- xrefs$citation[xrefs$doi == warn_doi]\n@@ -75,7 +74,7 @@ ref_miscitation <- function(paper, db = readRDS(system.file(\"databases/miscite.R\n         sprintf(\"%i\", n_head)\n       )\n \n-      report[[i]] <- sprintf(\n+      report <- sprintf(\n         \"**%s**\\n\\n%s\\n\\n%s\\n\\n*%s Instance%s:*\\n\\n%s\",\n         warn_doi,\n         to_warn$reftext[[i]],"
+        },
+        {
+            "sha": "04ce198c5097b785939a6db57ddea8035e8eae62",
+            "filename": "inst/modules/ref_retraction.R",
+            "status": "modified",
+            "additions": 1,
+            "deletions": 1,
+            "changes": 2,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fref_retraction.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fref_retraction.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/inst%2Fmodules%2Fref_retraction.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -70,7 +70,7 @@ ref_retraction <- function(paper) {\n     ## report_text ----\n     n_doi <- sum(!is.na(bib$doi))\n     report_text <- sprintf(\n-      \"We checked %d reference%s with DOIs. %s\\n\\nCheck if you are aware of the retraction, correction, or expression of concern for each reference, and consider whether it still supports your claims.\",\n+      \"We checked %d reference%s with DOIs. %s\\n\\nCheck if you are aware of the replication studies, and cite them where appropriate.\",\n       n_doi, plural(n_doi), summary_text\n     )\n "
+        },
+        {
+            "sha": "af760f2435be957d28ebe36635e3a6d3a01fcf92",
+            "filename": "inst/modules/stat_p_exact.R",
+            "status": "modified",
+            "additions": 1,
+            "deletions": 1,
+            "changes": 2,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fstat_p_exact.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fstat_p_exact.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/inst%2Fmodules%2Fstat_p_exact.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -37,7 +37,7 @@ stat_p_exact <- function(paper) {\n   p$imprecise <- p$imprecise | is.na(p$p_value)\n \n   # remove false positive \"*p < .05\"\n-  star_pattern <- \"\\\\*\\\\s*[pP]\\\\s*<\\\\s*0?\\\\.0+[15]\"\n+  star_pattern <- \"\\\\*\\\\s*p\\\\s*<\\\\s*0?\\\\.0+[15]\"\n   stars <- grepl(star_pattern, p$expanded)\n   p$imprecise <- p$imprecise & !stars\n "
+        },
+        {
+            "sha": "fdee661a0d866d4cdfeb6f819c9a9c7e478b3a84",
+            "filename": "inst/modules/stat_p_nonsig.R",
+            "status": "modified",
+            "additions": 1,
+            "deletions": 1,
+            "changes": 2,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fstat_p_nonsig.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/inst%2Fmodules%2Fstat_p_nonsig.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/inst%2Fmodules%2Fstat_p_nonsig.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -32,7 +32,7 @@ stat_p_nonsig <- function(paper) {\n   cond <- !is.na(table$p_value) &\n     table$p_value <= 0.05 &\n     !is.na(table$p_comp) &\n-    table$p_comp %in% c(\"<\", \"=\", \"\\u2264\", \"<=\", \"=<\")\n+    table$p_comp %in% c(\"<\", \"=\")\n \n   table$significance <- ifelse(cond, \"significant\", \"nonsignificant\")\n   table <- subset(table, significance == \"nonsignificant\")"
+        },
+        {
+            "sha": "006edacaadc223626f1587de3ba1a2bd0d14f0b4",
+            "filename": "tests/testthat/test-module-code_check.R",
+            "status": "modified",
+            "additions": 0,
+            "deletions": 13,
+            "changes": 13,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-code_check.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-code_check.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/tests%2Ftestthat%2Ftest-module-code_check.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -332,16 +332,3 @@ test_that(\"parse errors\", {\n })\n \n \n-\n-test_that(\"code_check local_path: green light and parse errors\", {\n-  tmp <- withr::local_tempdir()\n-  writeLines(c(\"# comment\", \"x <- 1\"), file.path(tmp, \"good.R\"))\n-  mo <- module_run(test_paper(), \"code_check\", local_path = tmp)\n-  expect_equal(mo$traffic_light, \"green\")\n-\n-  # parse errors are reported when more than one file is checked\n-  writeLines(\"x <- (1\", file.path(tmp, \"bad.R\"))\n-  mo <- module_run(test_paper(), \"code_check\", local_path = tmp)\n-  expect_equal(mo$traffic_light, \"yellow\")\n-  expect_true(any(grepl(\"bad.R\", mo$report, fixed = TRUE)))\n-})"
+        },
+        {
+            "sha": "ccb94d6a80993e8c12db6cc74ea3e224210d0948",
+            "filename": "tests/testthat/test-module-open-practices.R",
+            "status": "modified",
+            "additions": 0,
+            "deletions": 10,
+            "changes": 10,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-open-practices.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-open-practices.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/tests%2Ftestthat%2Ftest-module-open-practices.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -27,16 +27,6 @@ test_that(\"open_practices paperlist\", {\n   expect_equal(mo$table$data, c(F, T))\n   expect_equal(mo$table$code, c(T, F))\n   expect_equal(mo$table$on_request, c(F, T))\n-\n-  # on request is flagged, but is not open sharing\n-  expect_equal(mo$summary_table$data_open, c(F, F))\n-  expect_equal(mo$summary_table$on_request, c(F, T))\n-\n-  # unless the same sentence also names a repository\n-  paper <- test_paper(\"Data are available at https://osf.io/hk4yq/; raw data on request.\")\n-  mo <- module_run(paper, module)\n-  expect_equal(mo$summary_table$data_open, TRUE)\n-  expect_equal(mo$traffic_light, \"red\")\n })\n \n "
+        },
+        {
+            "sha": "d47f434fbc793950549f0716990098d8edabf9de",
+            "filename": "tests/testthat/test-module-ref.R",
+            "status": "modified",
+            "additions": 0,
+            "deletions": 9,
+            "changes": 9,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-ref.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-ref.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/tests%2Ftestthat%2Ftest-module-ref.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -39,15 +39,6 @@ test_that(\"ref_miscitation\", {\n   expect_equal(mod_output$table$doi[[1]], test_doi)\n   expect_equal(mod_output$summary_table$`miscite_10.1037/0003-066x.54.6.408`,\n                1)\n-\n-  ## all matched papers are reported\n-  db <- data.frame(\n-    doi = unique(na.omit(paper$bib$doi))[1:2],\n-    reftext = c(\"Reference A\", \"Reference B\"),\n-    warning = c(\"Warning A\", \"Warning B\")\n-  )\n-  mod_output <- module_run(paper, module, db = db)\n-  expect_length(mod_output$report, 2)\n })\n \n "
+        },
+        {
+            "sha": "031270547261083554a776ce04a302f1c50a656b",
+            "filename": "tests/testthat/test-module-stat.R",
+            "status": "modified",
+            "additions": 1,
+            "deletions": 9,
+            "changes": 10,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-stat.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-module-stat.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/tests%2Ftestthat%2Ftest-module-stat.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -17,15 +17,13 @@ test_that(\"stat_p_exact\", {\n     \"Bad p-value example (p > .1)\",\n     \"Bad p-value example (p = n.s.)\",\n     \"Bad p-value example; p=ns\",\n-    \"Bad p-value example; p \\u2264 .001\",\n     \"OK p-value example; p < .001\",\n     \"OK p-value example; p < .0005\"\n   ))\n \n   mod_output <- module_run(paper, module)\n   expect_equal(mod_output$traffic_light, \"red\")\n-  expect_equal(nrow(mod_output$table), 12)\n-  expect_equal(sum(mod_output$table$imprecise), 10)\n+  expect_equal(nrow(mod_output$table), 11)\n \n   # zero p-values\n   paper <- test_paper(c(\n@@ -134,9 +132,3 @@ test_that(\"stat_check\", {\n })\n \n \n-\n-test_that(\"stat_p_nonsig\", {\n-  paper <- test_paper(c(\"Significant; p \\u2264 .01\", \"Nonsignificant; p = .20\"))\n-  mod_output <- module_run(paper, \"stat_p_nonsig\")\n-  expect_equal(mod_output$table$text, \"p = .20\")\n-})"
+        },
+        {
+            "sha": "db6e51ad92b807de47be496bfea6ee3da63ad978",
+            "filename": "tests/testthat/test-text-extractors.R",
+            "status": "modified",
+            "additions": 5,
+            "deletions": 6,
+            "changes": 11,
+            "blob_url": "https://github.com/scienceverse/metacheck/blob/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-text-extractors.R",
+            "raw_url": "https://github.com/scienceverse/metacheck/raw/35033be8313994ab55cc6aece1cc49499552708d/tests%2Ftestthat%2Ftest-text-extractors.R",
+            "contents_url": "https://api.github.com/repos/scienceverse/metacheck/contents/tests%2Ftestthat%2Ftest-text-extractors.R?ref=35033be8313994ab55cc6aece1cc49499552708d",
+            "patch": "@@ -46,14 +46,13 @@ test_that(\"extract_p_values\", {\n     \"t = 2.23, p = 0.005.\",\n     \"(p = 0.152)\",\n     \"peta = 2.3; p > .05, ppp = 2\",\n-    \"2 = p\",\n-    \"MAP = .5, P = .04\"\n+    \"2 = p\"\n   ))\n   p <- extract_p_values(paper)\n-  expect_equal(nrow(p), 4)\n-  expect_equal(p$text, c(\"p = 0.005\", \"p = 0.152\", \"p > .05\", \"P = .04\"))\n-  expect_equal(p$p_value, c(0.005, 0.152, 0.050, 0.04))\n-  expect_equal(p$p_comp, c(\"=\", \"=\", \">\", \"=\"))\n+  expect_equal(nrow(p), 3)\n+  expect_equal(p$text, c(\"p = 0.005\", \"p = 0.152\", \"p > .05\"))\n+  expect_equal(p$p_value, c(0.005, 0.152, 0.050))\n+  expect_equal(p$p_comp, c(\"=\", \"=\", \">\"))\n \n   # iteration: text modules need no special adaptation\n   paper <- psychsci"
+        }
+    ]
+}

@@ -70,6 +70,23 @@
   }, character(1))
 }
 
+# A request with a stall guard (#473): curl gives up when the connection
+# moves less than 1 KB/s for `low_speed_time` seconds, or cannot connect
+# within 30 s. Without one, a connection that stalled without closing (a
+# Zenodo range request that slowed to ~7 KB/s and then stopped) kept
+# repo_check waiting, with no output and no CPU, for 40+ minutes. It is not a
+# limit on total time, so a large download that keeps moving is never cut
+# off. Not for requests where the server works before it answers (LLM calls,
+# GROBID and bibr conversions, uploads): those send nothing for a long time
+# on purpose and have timeouts of their own. A stall is an ordinary request
+# error, so callers that retry or record failures do so for a stall too.
+.mc_request <- function(url, low_speed_time = 60) {
+  httr2::request(url) |>
+    httr2::req_options(low_speed_limit = 1024L,
+                       low_speed_time = as.integer(low_speed_time),
+                       connecttimeout = 30L)
+}
+
 #' Batch query
 #'
 #' @param urls A vector of URLs
@@ -97,23 +114,6 @@
 #'
 #' @returns a list of responses
 #' @keywords internal
-# A request with a stall guard (#473): curl gives up when the connection
-# moves less than 1 KB/s for `low_speed_time` seconds, or cannot connect
-# within 30 s. Without one, a connection that stalled without closing (a
-# Zenodo range request that slowed to ~7 KB/s and then stopped) kept
-# repo_check waiting, with no output and no CPU, for 40+ minutes. It is not a
-# limit on total time, so a large download that keeps moving is never cut
-# off. Not for requests where the server works before it answers (LLM calls,
-# GROBID and bibr conversions, uploads): those send nothing for a long time
-# on purpose and have timeouts of their own. A stall is an ordinary request
-# error, so callers that retry or record failures do so for a stall too.
-.mc_request <- function(url, low_speed_time = 60) {
-  httr2::request(url) |>
-    httr2::req_options(low_speed_limit = 1024L,
-                       low_speed_time = as.integer(low_speed_time),
-                       connecttimeout = 30L)
-}
-
 .batch_query <- function(urls,
                          batch_size = 5,
                          msg = "Batch Query",

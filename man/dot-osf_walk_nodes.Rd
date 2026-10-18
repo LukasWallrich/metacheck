@@ -15,7 +15,7 @@
 a data frame with \code{osf_id} and \code{title} for each node
 }
 \description{
-Every node under \code{osf_id}, including the project itself, breadth-first.
+Every node under \code{osf_id}, including the project itself (the project first).
 Only the tree is walked -- no file listings -- because the archive endpoint
 needs a node ID and nothing else.
 }
