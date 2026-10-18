@@ -240,9 +240,10 @@ test_that("convert_bibr scivrs sends page params in request", {
 })
 
 test_that("convert_bibr auto-detects backend", {
-  withr::local_envvar(SCIVRS_API_KEY = "")
+  withr::local_envvar(SCIVRS_API_KEY = "", BIBR_API_URL = "", SURF_API_URL = "")
 
   # match the default URLs resolved inside convert_bibr()
+  surf_url <- "https://metacheckserve.src-training-01.src.surf-hosted.nl/api"
   scivrs_url <- "https://platform.metacheck.app"
   selfhosted_url <- "http://localhost:8000"
 
@@ -260,9 +261,28 @@ test_that("convert_bibr auto-detects backend", {
   file_path <- demofile("pdf")
   save_path <- withr::local_tempdir()
 
-  # no key set -> selfhosted (no auth needed)
+  # no key or bibr address set -> surf
+  tryCatch(convert_bibr(file_path, save_path), error = function(e) NULL)
+  expect_equal(captured_url, paste0(surf_url, "/convert"))
+
+  # SURF_API_URL set -> surf at that address
+  withr::local_envvar(SURF_API_URL = "https://surf.example.org/api")
+  captured_url <- NULL
+  tryCatch(convert_bibr(file_path, save_path), error = function(e) NULL)
+  expect_equal(captured_url, "https://surf.example.org/api/convert")
+
+  # BIBR_API_URL set -> selfhosted (no auth needed)
+  withr::local_envvar(BIBR_API_URL = selfhosted_url)
+  captured_url <- NULL
   tryCatch(convert_bibr(file_path, save_path), error = function(e) NULL)
   expect_true(startsWith(captured_url, selfhosted_url))
+
+  # explicit api_url -> selfhosted, as convert() passes for a local bibr
+  withr::local_envvar(BIBR_API_URL = "")
+  captured_url <- NULL
+  tryCatch(convert_bibr(file_path, save_path, api_url = "http://localhost:8001"),
+           error = function(e) NULL)
+  expect_true(startsWith(captured_url, "http://localhost:8001/papers/extract"))
 
   # SCIVRS_API_KEY set -> scivrs
   withr::local_envvar(SCIVRS_API_KEY = "sv_test")
@@ -278,6 +298,88 @@ test_that("convert_bibr auto-detects backend", {
     error = function(e) NULL
   )
   expect_true(startsWith(captured_url, scivrs_url))
+})
+
+test_that("convert_bibr surf backend sends the PDF to /convert", {
+  file_path <- demofile("pdf")
+  save_path <- withr::local_tempdir()
+
+  captured <- NULL
+  httr2::local_mocked_responses(function(req) {
+    captured <<- req
+    httr2::response(
+      status_code = 200,
+      headers = list(`Content-Type` = "application/json"),
+      body = charToRaw('{"paper_id":"abc","source":{"file_name":"input.pdf"},"metadata":{"title":"T"}}')
+    )
+  })
+
+  json_path <- convert_bibr(file_path, save_path, backend = "surf",
+                            api_url = "https://surf.example.org/api")
+  expect_equal(captured$url, "https://surf.example.org/api/convert")
+  expect_equal(httr2::req_get_method(captured), "POST")
+  expect_named(captured$body$data, "file")
+  # no key is sent
+  expect_null(captured$headers$Authorization)
+
+  # saved under the PDF's name, with the PDF's own name in the JSON
+  # (the server calls every upload input.pdf)
+  expect_equal(json_path, file.path(save_path, "to_err_is_human.json"))
+  json <- jsonlite::read_json(json_path)
+  expect_equal(json$source$file_name, "to_err_is_human.pdf")
+  expect_equal(json$metadata$title, "T")
+
+  # page and figure settings are not used, and say so
+  expect_warning(
+    convert_bibr(file_path, save_path, backend = "surf", start_page = 2),
+    "not used"
+  )
+  expect_warning(
+    convert_bibr(file_path, save_path, backend = "surf", include_figures = TRUE),
+    "not used"
+  )
+})
+
+test_that("convert_bibr surf backend errors", {
+  save_path <- withr::local_tempdir()
+
+  # only PDFs, refused before anything is sent
+  httr2::local_mocked_responses(function(req) stop("nothing should be sent"))
+  expect_error(convert_bibr(demofile("docx"), save_path, backend = "surf"),
+               "converts only PDF files")
+
+  # the server's reason is passed on
+  httr2::local_mocked_responses(function(req) {
+    httr2::response(
+      status_code = 422,
+      headers = list(`Content-Type` = "application/json"),
+      body = charToRaw('{"error":"bibr could not read the PDF"}')
+    )
+  })
+  expect_error(convert_bibr(demofile("pdf"), save_path, backend = "surf"),
+               "HTTP 422.*bibr could not read the PDF")
+
+  # an answer without JSON gives the HTTP status
+  httr2::local_mocked_responses(function(req) {
+    httr2::response(status_code = 503)
+  })
+  expect_error(convert_bibr(demofile("pdf"), save_path, backend = "surf"),
+               "HTTP 503")
+})
+
+test_that("convert_bibr surf backend converts", {
+  surf_url <- "https://metacheckserve.src-training-01.src.surf-hosted.nl/api"
+  skip_api(paste0(surf_url, "/health"))
+  skip_if_quick()
+
+  file_path <- demofile("pdf")
+  save_path <- withr::local_tempdir()
+  json_path <- convert_bibr(file_path, save_path, backend = "surf")
+  expect_match(json_path, "to_err_is_human\\.json")
+  expect_true(file.exists(json_path))
+  pdf <- .read_bibr(json_path)
+  expect_equal(pdf$info$file_name, basename(file_path))
+  expect_match(pdf$paper_id, "^[a-f0-9]{16}$")
 })
 
 test_that(".bibr_isalive", {
@@ -402,4 +504,33 @@ test_that(".bibr_isalive accepts a self-hosted bibr /ready answer (#491)", {
                                      checks = list(bibr = "error")))
   })
   expect_false(.bibr_isalive("http://localhost:8000", NULL, error = FALSE))
+})
+
+test_that(".surf_isalive", {
+  expect_true(is.function(metacheck:::.surf_isalive))
+  api_url <- "https://surf.example.org/api"
+
+  # ready
+  httr2::local_mocked_responses(function(req) {
+    httr2::response_json(body = list(status = "ok", bibr = TRUE))
+  })
+  expect_true(.surf_isalive(api_url))
+
+  # up, but its bibr is not ready
+  httr2::local_mocked_responses(function(req) {
+    httr2::response_json(body = list(status = "ok", bibr = FALSE))
+  })
+  expect_false(.surf_isalive(api_url, error = FALSE))
+  expect_error(.surf_isalive(api_url), "bibr is not ready")
+
+  # an error status
+  httr2::local_mocked_responses(function(req) {
+    httr2::response(status_code = 502)
+  })
+  expect_false(.surf_isalive(api_url, error = FALSE))
+  expect_error(.surf_isalive(api_url), "HTTP 502")
+
+  # not a url
+  expect_false(.surf_isalive("surf", error = FALSE))
+  expect_error(.surf_isalive("surf"), "Connection to the SURF API failed")
 })

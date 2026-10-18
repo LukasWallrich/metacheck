@@ -1,13 +1,24 @@
 #' Convert documents using bibr
 #'
 #' Converts document files (PDF, DOC, DOCX) to structured JSON using the bibr
-#' extraction service. Supports two backends: the Scienceverse platform
-#' (\code{"scivrs"}) which uses a job queue with load balancing, and a
-#' self-hosted bibr instance (\code{"selfhosted"}) for direct API access.
+#' extraction service. Supports three backends: metacheck's API on SURF
+#' Research Cloud (\code{"surf"}), which converts PDF files and needs no API
+#' key; the Scienceverse platform (\code{"scivrs"}) which uses a job queue
+#' with load balancing; and a self-hosted bibr instance (\code{"selfhosted"})
+#' for direct API access.
 #'
 #' When \code{backend = "auto"} (the default), the \code{"scivrs"} backend is
 #' used if \code{api_key} is provided or the \code{SCIVRS_API_KEY} environment
-#' variable is set. Otherwise, \code{"selfhosted"} is used.
+#' variable is set, and \code{"selfhosted"} if \code{api_url} is provided or
+#' the \code{BIBR_API_URL} environment variable is set. Otherwise,
+#' \code{"surf"} is used.
+#'
+#' The \code{"surf"} backend sends the PDF to the \code{/convert} endpoint of
+#' metacheck's API on SURF Research Cloud, whose address can be set with the
+#' \code{SURF_API_URL} environment variable. It converts only PDF files (at
+#' most 50 MB), always whole and without figures, so \code{include_figures},
+#' \code{start_page} and \code{end_page} do not apply. The server deletes the
+#' upload once it is converted, and the result an hour later.
 #'
 #' A self-hosted bibr server that requires authentication (\code{bibr serve}
 #' with \code{AUTH_API_KEY} set, as on a SURF Research Cloud workspace) gets
@@ -17,19 +28,25 @@
 #' @param file_path Path to the document file, or a directory of documents
 #' @param save_path Path to a directory in which to save the JSON file
 #' @param backend Which backend to use: \code{"auto"} (default) detects from
-#'   the available API key, \code{"scivrs"} uses the Scienceverse platform,
-#'   \code{"selfhosted"} uses a direct bibr API instance.
+#'   the available API key and URL (see Details), \code{"surf"} uses
+#'   metacheck's API on SURF Research Cloud, \code{"scivrs"} uses the
+#'   Scienceverse platform, \code{"selfhosted"} uses a direct bibr API
+#'   instance.
 #' @param api_key API key. For the scivrs backend, a Bearer token starting
 #'   with \code{sv_}, defaulting to the \code{SCIVRS_API_KEY} env var. For the
 #'   selfhosted backend, the server's bearer token if it requires one,
 #'   defaulting to the \code{BIBR_API_KEY} env var (none if unset).
 #' @param api_url Base URL of the API. Defaults to the appropriate URL for
-#'   the selected backend (for selfhosted, the \code{BIBR_API_URL} env var or
+#'   the selected backend (for surf, the \code{SURF_API_URL} env var or
+#'   \code{https://metacheckserve.src-training-01.src.surf-hosted.nl/api};
+#'   for selfhosted, the \code{BIBR_API_URL} env var or
 #'   \code{http://localhost:8000}).
 #' @param include_figures Whether to include base64-encoded figure images
-#'   in the output (default FALSE)
-#' @param start_page First page of the file to extract (default 1)
-#' @param end_page Last page of the file to extract (default Inf for all pages)
+#'   in the output (default FALSE; not for the surf backend)
+#' @param start_page First page of the file to extract (default 1; not for
+#'   the surf backend)
+#' @param end_page Last page of the file to extract (default Inf for all
+#'   pages; not for the surf backend)
 #' @param poll_interval Seconds between status polls, scivrs backend only
 #'   (default 2)
 #' @param timeout Maximum seconds to wait for processing (default 600)
@@ -42,6 +59,9 @@
 #' # Auto-detect backend from environment variables
 #' pdf <- demofile("pdf")
 #' convert_bibr(pdf)
+#'
+#' # Explicitly use metacheck's API on SURF Research Cloud
+#' convert_bibr(pdf, backend = "surf")
 #'
 #' # Explicitly use Scienceverse platform
 #' convert_bibr(pdf, backend = "scivrs")
@@ -58,7 +78,7 @@
 #' }
 convert_bibr <- function(file_path,
                          save_path = ".",
-                         backend = c("auto", "scivrs", "selfhosted"),
+                         backend = c("auto", "surf", "scivrs", "selfhosted"),
                          api_key = NULL,
                          api_url = NULL,
                          include_figures = FALSE,
@@ -69,12 +89,23 @@ convert_bibr <- function(file_path,
   backend <- match.arg(backend)
 
   # auto-detect backend ----
+  # (a key means the Scienceverse platform, a bibr address a self-hosted
+  # bibr, as convert() passes for a local bibr; otherwise SURF)
   if (backend == "auto") {
     if (!is.null(api_key) || nchar(Sys.getenv("SCIVRS_API_KEY")) > 0) {
       backend <- "scivrs"
-    } else {
+    } else if (!is.null(api_url) || nchar(Sys.getenv("BIBR_API_URL")) > 0) {
       backend <- "selfhosted"
+    } else {
+      backend <- "surf"
     }
+  }
+
+  if (backend == "surf" &&
+      (isTRUE(include_figures) || start_page > 1 || is.finite(end_page))) {
+    warning("The SURF API converts whole PDFs without figures; ",
+            "include_figures, start_page and end_page are not used.",
+            call. = FALSE)
   }
 
   # resolve API key (scivrs only) ----
@@ -96,6 +127,7 @@ convert_bibr <- function(file_path,
   # resolve API URL ----
   if (is.null(api_url)) {
     api_url <- switch(backend,
+      surf = .surf_api_url(),
       scivrs = "https://platform.metacheck.app",
       selfhosted = Sys.getenv("BIBR_API_URL", "http://localhost:8000")
     )
@@ -139,6 +171,7 @@ convert_bibr <- function(file_path,
 
   # dispatch to backend ----
   contents <- switch(backend,
+    surf = .bibr_request_surf(file_path, api_url, timeout),
     scivrs = .bibr_request_scivrs(
       file_path, api_url, api_key, include_figures,
       zb_start_page, zb_end_page, poll_interval, timeout
@@ -371,6 +404,98 @@ format_bib_authors <- function(authors) {
   }
 
   httr2::resp_body_raw(result_resp)
+}
+
+
+#' The address of metacheck's API on SURF Research Cloud
+#' @noRd
+.surf_api_url <- function() {
+  Sys.getenv("SURF_API_URL", "https://metacheckserve.src-training-01.src.surf-hosted.nl/api")
+}
+
+#' Check that metacheck's API on SURF Research Cloud can convert PDFs
+#'
+#' Its /health endpoint answers with `status` "ok" and `bibr` TRUE when the
+#' server's bibr is ready.
+#'
+#' @param api_url the URL of the API
+#' @param error whether to generate an error on failure
+#'
+#' @returns boolean
+#' @keywords internal
+.surf_isalive <- function(api_url = .surf_api_url(), error = TRUE) {
+  resp <- tryCatch(
+    {
+      httr2::request(api_url) |>
+        httr2::req_url_path_append("health") |>
+        httr2::req_timeout(15) |>
+        httr2::req_error(is_error = \(resp) FALSE) |>
+        # absorb a one-off connection blip (see .bibr_isalive())
+        httr2::req_retry(max_tries = 3, retry_on_failure = TRUE) |>
+        httr2::req_perform()
+    },
+    error = function(e) {
+      if (error) {
+        stop("Connection to the SURF API failed. ",
+             "Please check your connection or the URL: ", api_url,
+             " (", conditionMessage(e), ")",
+             call. = FALSE)
+      }
+    }
+  )
+
+  if (is.null(resp)) return(FALSE)
+
+  status <- httr2::resp_status(resp)
+  body <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
+  ready <- status == 200 && identical(body$status, "ok") && isTRUE(body$bibr)
+  if (!ready && error) {
+    stop("The SURF API on ", api_url, " cannot convert PDFs at the moment",
+         if (status != 200) paste0(" (HTTP ", status, ")")
+         else if (!isTRUE(body$bibr)) " (its bibr is not ready)",
+         call. = FALSE)
+  }
+
+  ready
+}
+
+#' Convert a PDF with metacheck's API on SURF Research Cloud
+#'
+#' One call to /convert, which answers once bibr is done (the server's proxy
+#' waits up to 30 minutes). A refused or failed conversion answers with JSON
+#' holding the reason in `error` (400 bad upload, 413 too large, 422 bibr
+#' failed, 429 too many requests, 503 queue full).
+#' @noRd
+.bibr_request_surf <- function(file_path, api_url, timeout = 600) {
+  if (!grepl("\\.pdf$", file_path, ignore.case = TRUE)) {
+    stop("The SURF API converts only PDF files, not ", basename(file_path),
+         "; use backend = \"scivrs\" or \"selfhosted\" for DOC and DOCX files.",
+         call. = FALSE)
+  }
+
+  resp <- httr2::request(api_url) |>
+    httr2::req_url_path_append("convert") |>
+    httr2::req_body_multipart(file = curl::form_file(file_path)) |>
+    httr2::req_error(is_error = \(resp) FALSE) |>
+    httr2::req_timeout(timeout) |>
+    httr2::req_perform()
+
+  status <- httr2::resp_status(resp)
+  if (status != 200) {
+    msg <- tryCatch(httr2::resp_body_json(resp)$error, error = \(e) NULL) %||%
+      httr2::resp_status_desc(resp)
+    logger("convert_bibr", list(file = basename(file_path), error = msg))
+    stop("The SURF API could not convert ", basename(file_path),
+         " (HTTP ", status, "): ", msg, call. = FALSE)
+  }
+
+  # the server saves every upload as input.pdf, so bibr reports that name;
+  # put the real one back
+  json <- rawToChar(httr2::resp_body_raw(resp))
+  real_name <- jsonlite::toJSON(enc2utf8(basename(file_path)), auto_unbox = TRUE)
+  json <- sub("\"file_name\":\"input.pdf\"", paste0("\"file_name\":", real_name),
+              json, fixed = TRUE, useBytes = TRUE)
+  charToRaw(json)
 }
 
 

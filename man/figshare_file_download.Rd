@@ -51,7 +51,7 @@ Returns (invisibly) a data frame with file info.
 }
 \details{
 Files are downloaded one by one, each from its own \code{download_url}. Figshare
-does document a whole-article zip (\verb{GET /v2/articles/\{id\}/download}, which
+does document a whole-article zip (\code{GET /v2/articles/{id}/download}, which
 redirects to \verb{ndownloader.figshare.com/articles/<id>/versions/<v>} and
 serves \code{application/zip} with a \code{Content-Length}, verified 2026-10-13), but
 it is not used here: it always contains every file, so it cannot honour the

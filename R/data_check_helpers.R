@@ -823,6 +823,38 @@ data_classify_files <- function(file_name, file_path = NULL) {
   is_pkg_member
 }
 
+#' A name for each file that is unique within one data_check run
+#'
+#' `data_check` keeps every table it reads, and every column and finding of
+#' it, under this name (`source_file`), and `codebook_check` looks the tables
+#' up by it. The file name alone is not unique: a measurement repository can
+#' hold a `log.csv` in every scan folder, and keyed by name only one of them
+#' was kept and checked. The name is the file name when no other file has it,
+#' so nothing changes for most repositories; else the file's path in the
+#' repository; and where even that repeats (the same path in two
+#' repositories), the repository's name in front.
+#'
+#' @param file_name a character vector of file names (basenames)
+#' @param file_path a character vector of paths in the repository, or NULL
+#' @param repo a character vector naming each file's repository, or NULL
+#'
+#' @returns a character vector of unique names, as long as `file_name`
+#' @keywords internal
+.data_source_keys <- function(file_name, file_path = NULL, repo = NULL) {
+  key <- as.character(file_name)
+  repeated <- function(x) x %in% x[duplicated(x)]
+  if (!is.null(file_path)) {
+    path <- gsub("\\\\", "/", as.character(file_path))
+    use <- repeated(key) & !is.na(path) & nzchar(path)
+    key[use] <- path[use]
+  }
+  if (!is.null(repo)) {
+    use <- repeated(key) & !is.na(repo) & nzchar(repo)
+    key[use] <- paste0(repo[use], ": ", key[use])
+  }
+  make.unique(key, sep = " #")
+}
+
 #' Classify a documentation file's fine-grained role
 #'
 #' Within `data_classify_files()`'s coarse `"documentation"` type, distinguish

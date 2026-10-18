@@ -34,4 +34,6 @@ Uses grobid or bibr to convert a file to paper format.
 }
 \details{
 Both bibr and grobid can handle PDF files. Only bibr can convert doc or docx files. Already-converted grobid XML files can be converted to bibr format (set crossref_lookup=TRUE to add a bib_match table). If the file_path is a directory, the method will be xml if any XML files are present, and bibr if only doc or docx files are present.
+
+With method "auto" or "bibr", PDF files are converted with bibr on metacheck's API on SURF Research Cloud (see \code{\link{convert_bibr}}) when it is available, unless \code{api_url}, \code{api_key} or \code{backend} is given, or there are doc or docx files. Otherwise the method "auto" uses a local grobid (\code{http://localhost:8070}), then a local bibr (\code{http://localhost:8000}), then the first available server in the online list at \url{https://www.scienceverse.org/metacheck/convert.json}.
 }

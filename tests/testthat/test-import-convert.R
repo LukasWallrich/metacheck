@@ -176,3 +176,75 @@ test_that("convert(method = 'bibr') passes its arguments to convert_bibr (#489)"
                        api_url = "http://localhost:8000")
   expect_true(file.exists(json_path))
 })
+
+test_that("convert uses the SURF API first", {
+  withr::local_envvar(SURF_API_URL = "https://surf.example.org/api")
+  urls <- character(0)
+  httr2::local_mocked_responses(function(req) {
+    urls <<- c(urls, req$url)
+    if (grepl("/health$", req$url)) {
+      httr2::response_json(body = list(status = "ok", bibr = TRUE))
+    } else {
+      httr2::response_json(body = list(paper_id = "abc",
+                                       source = list(file_name = "input.pdf")))
+    }
+  })
+  save_path <- withr::local_tempdir()
+
+  # auto and bibr: SURF
+  for (method in c("auto", "bibr")) {
+    urls <- character(0)
+    expect_message(
+      json_path <- convert(demofile("pdf"), save_path, method = method),
+      "Using the SURF API"
+    )
+    expect_equal(urls, c("https://surf.example.org/api/health",
+                         "https://surf.example.org/api/convert"))
+    expect_true(file.exists(json_path))
+  }
+
+  # a given server, key or backend, or a DOCX file: SURF is not asked
+  urls <- character(0)
+  convert(demofile("pdf"), save_path, method = "bibr",
+          backend = "selfhosted", api_url = "http://localhost:8000")
+  expect_false(any(grepl("surf.example.org", urls)))
+
+  urls <- character(0)
+  convert(demofile("pdf"), save_path, method = "bibr",
+          api_url = "http://localhost:8000")
+  expect_false(any(grepl("surf.example.org", urls)))
+
+  urls <- character(0)
+  convert(demofile("docx"), save_path, method = "bibr",
+          backend = "selfhosted", api_url = "http://localhost:8000")
+  expect_false(any(grepl("surf.example.org", urls)))
+
+  # grobid: SURF is not asked (the mocked answer is no grobid XML, so the
+  # conversion itself fails with a warning)
+  urls <- character(0)
+  suppressWarnings(convert(demofile("pdf"), save_path, method = "grobid",
+                           api_url = "http://localhost:8070"))
+  expect_false(any(grepl("surf.example.org", urls)))
+})
+
+test_that("convert passes over the SURF API when it cannot convert", {
+  withr::local_envvar(SURF_API_URL = "https://surf.example.org/api")
+  urls <- character(0)
+  httr2::local_mocked_responses(function(req) {
+    urls <<- c(urls, req$url)
+    if (grepl("/health$", req$url)) {
+      httr2::response_json(body = list(status = "ok", bibr = FALSE))
+    } else {
+      httr2::response_json(body = list(paper_id = "abc"))
+    }
+  })
+  save_path <- withr::local_tempdir()
+
+  # bibr not ready: the given backend is used instead
+  expect_no_message(
+    convert(demofile("pdf"), save_path, method = "bibr",
+            backend = "selfhosted", api_url = "http://localhost:8000"),
+    message = "SURF"
+  )
+  expect_false(any(grepl("surf.example.org/api/convert", urls)))
+})

@@ -7,7 +7,7 @@
 convert_bibr(
   file_path,
   save_path = ".",
-  backend = c("auto", "scivrs", "selfhosted"),
+  backend = c("auto", "surf", "scivrs", "selfhosted"),
   api_key = NULL,
   api_url = NULL,
   include_figures = FALSE,
@@ -23,8 +23,10 @@ convert_bibr(
 \item{save_path}{Path to a directory in which to save the JSON file}
 
 \item{backend}{Which backend to use: \code{"auto"} (default) detects from
-the available API key, \code{"scivrs"} uses the Scienceverse platform,
-\code{"selfhosted"} uses a direct bibr API instance.}
+the available API key and URL (see Details), \code{"surf"} uses
+metacheck's API on SURF Research Cloud, \code{"scivrs"} uses the
+Scienceverse platform, \code{"selfhosted"} uses a direct bibr API
+instance.}
 
 \item{api_key}{API key. For the scivrs backend, a Bearer token starting
 with \code{sv_}, defaulting to the \code{SCIVRS_API_KEY} env var. For the
@@ -32,15 +34,19 @@ selfhosted backend, the server's bearer token if it requires one,
 defaulting to the \code{BIBR_API_KEY} env var (none if unset).}
 
 \item{api_url}{Base URL of the API. Defaults to the appropriate URL for
-the selected backend (for selfhosted, the \code{BIBR_API_URL} env var or
+the selected backend (for surf, the \code{SURF_API_URL} env var or
+\code{https://metacheckserve.src-training-01.src.surf-hosted.nl/api};
+for selfhosted, the \code{BIBR_API_URL} env var or
 \code{http://localhost:8000}).}
 
 \item{include_figures}{Whether to include base64-encoded figure images
-in the output (default FALSE)}
+in the output (default FALSE; not for the surf backend)}
 
-\item{start_page}{First page of the file to extract (default 1)}
+\item{start_page}{First page of the file to extract (default 1; not for
+the surf backend)}
 
-\item{end_page}{Last page of the file to extract (default Inf for all pages)}
+\item{end_page}{Last page of the file to extract (default Inf for all
+pages; not for the surf backend)}
 
 \item{poll_interval}{Seconds between status polls, scivrs backend only
 (default 2)}
@@ -52,14 +58,25 @@ Path(s) to the saved JSON file(s)
 }
 \description{
 Converts document files (PDF, DOC, DOCX) to structured JSON using the bibr
-extraction service. Supports two backends: the Scienceverse platform
-(\code{"scivrs"}) which uses a job queue with load balancing, and a
-self-hosted bibr instance (\code{"selfhosted"}) for direct API access.
+extraction service. Supports three backends: metacheck's API on SURF
+Research Cloud (\code{"surf"}), which converts PDF files and needs no API
+key; the Scienceverse platform (\code{"scivrs"}) which uses a job queue
+with load balancing; and a self-hosted bibr instance (\code{"selfhosted"})
+for direct API access.
 }
 \details{
 When \code{backend = "auto"} (the default), the \code{"scivrs"} backend is
 used if \code{api_key} is provided or the \code{SCIVRS_API_KEY} environment
-variable is set. Otherwise, \code{"selfhosted"} is used.
+variable is set, and \code{"selfhosted"} if \code{api_url} is provided or
+the \code{BIBR_API_URL} environment variable is set. Otherwise,
+\code{"surf"} is used.
+
+The \code{"surf"} backend sends the PDF to the \code{/convert} endpoint of
+metacheck's API on SURF Research Cloud, whose address can be set with the
+\code{SURF_API_URL} environment variable. It converts only PDF files (at
+most 50 MB), always whole and without figures, so \code{include_figures},
+\code{start_page} and \code{end_page} do not apply. The server deletes the
+upload once it is converted, and the result an hour later.
 
 A self-hosted bibr server that requires authentication (\code{bibr serve}
 with \code{AUTH_API_KEY} set, as on a SURF Research Cloud workspace) gets
@@ -71,6 +88,9 @@ environment variable; its address can be set with \code{BIBR_API_URL}.
 # Auto-detect backend from environment variables
 pdf <- demofile("pdf")
 convert_bibr(pdf)
+
+# Explicitly use metacheck's API on SURF Research Cloud
+convert_bibr(pdf, backend = "surf")
 
 # Explicitly use Scienceverse platform
 convert_bibr(pdf, backend = "scivrs")

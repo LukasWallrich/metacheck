@@ -206,6 +206,18 @@ test_that("code_check local_path finds code files", {
                     "stata_latin1.do", "stata_utf16.do") %in% mo$table$file_name))
 })
 
+test_that("code_check local_path names the files in its report table", {
+  # A local file has no web address; its name was turned into a link to that
+  # missing address, which left the File Name column empty (NA).
+  local_path <- test_path("fixtures", "code_files")
+  mo <- module_run(test_paper(), "code_check", local_path = local_path)
+  tbl <- paste(mo$report, collapse = "\n")
+  expect_false(grepl("\"File Name\" = c(NA", tbl, fixed = TRUE))
+  # shown by the path in the folder
+  expect_true(grepl("subdir/helper.R", tbl, fixed = TRUE))
+  expect_true(grepl("analysis_no_comments.R", tbl, fixed = TRUE))
+})
+
 test_that("code_check local_path: present files are not flagged missing", {
   local_path <- test_path("fixtures", "code_files")
   mo <- module_run(test_paper(), "code_check", local_path = local_path)

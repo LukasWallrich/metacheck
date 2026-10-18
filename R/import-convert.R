@@ -4,6 +4,8 @@
 #'
 #' Both bibr and grobid can handle PDF files. Only bibr can convert doc or docx files. Already-converted grobid XML files can be converted to bibr format (set crossref_lookup=TRUE to add a bib_match table). If the file_path is a directory, the method will be xml if any XML files are present, and bibr if only doc or docx files are present.
 #'
+#' With method "auto" or "bibr", PDF files are converted with bibr on metacheck's API on SURF Research Cloud (see \code{\link{convert_bibr}}) when it is available, unless \code{api_url}, \code{api_key} or \code{backend} is given, or there are doc or docx files. Otherwise the method "auto" uses a local grobid (\code{http://localhost:8070}), then a local bibr (\code{http://localhost:8000}), then the first available server in the online list at \url{https://www.scienceverse.org/metacheck/convert.json}.
+#'
 #' @param file_path Path to the document file, or a directory of documents
 #' @param save_path Path to a directory in which to save the JSON file
 #' @param method whether to use bibr, grobid, or xml (grobid_to_bibr) to convert a file (see Details)
@@ -42,8 +44,20 @@ convert <- function(file_path,
   }
 
   # auto-detect method ----
-  # (local grobid > local bibr > online priority list)
+  # (SURF API > local grobid > local bibr > online priority list)
   method <- match.arg(method)
+
+  # metacheck's API on SURF Research Cloud first, unless a server, key or
+  # backend was given, or there are DOC or DOCX files, which it cannot convert
+  surf <- method %in% c("auto", "bibr") && !docs &&
+    is.null(args$api_url) && is.null(args$api_key) && is.null(args$backend) &&
+    .surf_isalive(error = FALSE)
+  if (surf) {
+    message("Using the SURF API")
+    method <- "bibr"
+    args$backend <- "surf"
+  }
+
   if (method == "auto") {
     grobid_local_url <- "http://localhost:8070"
     bibr_local_url <- "http://localhost:8000"
@@ -63,7 +77,7 @@ convert <- function(file_path,
   }
 
   # check server priority list ----
-  if (method == "auto" || is.null(args$api_url)) {
+  if (!surf && (method == "auto" || is.null(args$api_url))) {
     servers_url <- "https://www.scienceverse.org/metacheck/convert.json"
 
     if (!online(servers_url)) {

@@ -669,6 +669,14 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     }
   }
 
+  # Every table, column and finding below is kept under `source_file`, a name
+  # unique within this run: the file name, or its path where several files
+  # share a name (a log.csv in every scan folder), so no same-named file is
+  # silently dropped (see .data_source_keys()).
+  all_files$source_file <- .data_source_keys(
+    all_files$file_name, all_files$file_path,
+    all_files$repo_name %||% all_files$repo_url)
+
   # ── 3. Select tabular data files that are available locally ──────────────────
   is_tabular_data <- all_files$data_type == "data" &
     !is.na(all_files$data_format) & all_files$data_format == "tabular"
@@ -728,7 +736,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # ── 4. Extract columns + stats from each local tabular data file ─────────────
   columns_df <- NULL
   # Keep each read data frame so the report can preview the raw data without
-  # re-reading. Keyed by source file name.
+  # re-reading. Keyed by `source_file` (the file name, or its path where
+  # several files share a name).
   file_previews <- list()
   if (nrow(data_files) > 0) {
     pb_cols <- pb(nrow(data_files), ":what [:bar] :current/:total")
@@ -743,16 +752,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         # An .RData/.rda that yielded no data frame is an analysis workspace,
         # not reusable shared data — record it for a sharing recommendation.
         if (tolower(tools::file_ext(f$file_name)) %in% c("rdata", "rda"))
-          workspace_files <<- c(workspace_files, f$file_name)
+          workspace_files <<- c(workspace_files, f$source_file)
         return(NULL)
       }
 
       # Skip a file manifest / table-of-contents disguised as tabular data:
       # its cells name other files in the repository (see data_is_manifest()).
       # Compare against every other file in the repo, not itself.
-      other_files <- all_files$file_name[all_files$file_name != f$file_name]
+      other_files <- all_files$file_name[all_files$source_file != f$source_file]
       if (data_is_manifest(df, other_files)) {
-        manifest_files <<- c(manifest_files, f$file_name)
+        manifest_files <<- c(manifest_files, f$source_file)
         return(NULL)
       }
 
@@ -814,11 +823,11 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         }
       }
       if (!isTRUE(usable$usable)) {
-        non_tabular_files[[f$file_name]] <<- usable$reason
+        non_tabular_files[[f$source_file]] <<- usable$reason
         return(NULL)
       }
 
-      file_previews[[f$file_name]] <<- df
+      file_previews[[f$source_file]] <<- df
 
       getf <- function(field) vapply(cls, function(c) {
         v <- c[[field]]; if (is.null(v) || is.na(v)) NA_character_ else v
@@ -866,7 +875,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       data.frame(
         paper_id          = f$paper_id %||% .pid(all_files),
         repo_url          = f$repo_url,
-        source_file       = f$file_name,
+        source_file       = f$source_file,
         group             = f$group %||% NA_character_,
         column_name       = names(df),
         representation    = getf("representation"),
@@ -905,7 +914,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     # and refresh the tabular flags/counts so they are reported as
     # documentation, not data.
     if (length(manifest_files) > 0) {
-      mrows <- all_files$file_name %in% manifest_files
+      mrows <- all_files$source_file %in% manifest_files
       all_files$data_type[mrows]   <- "documentation"
       all_files$doc_role[mrows]    <- "supplemental"
       all_files$data_format[mrows] <- NA_character_
@@ -1031,14 +1040,14 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # modules can react: data_validate's spreadsheet-formatting checks still
   # inspect these for formatting but add a "not a rectangular dataset" note.
   # The column always exists (default TRUE) so consumers can rely on it.
-  # non_tabular_files is name -> reason.
+  # non_tabular_files is source_file -> reason.
   all_files$tabular_usable <- TRUE
   all_files$non_tabular_reason <- NA_character_
   if (length(non_tabular_files) > 0) {
-    nt <- all_files$file_name %in% names(non_tabular_files)
+    nt <- all_files$source_file %in% names(non_tabular_files)
     all_files$tabular_usable[nt] <- FALSE
     all_files$non_tabular_reason[nt] <-
-      unlist(non_tabular_files[all_files$file_name[nt]], use.names = FALSE)
+      unlist(non_tabular_files[all_files$source_file[nt]], use.names = FALSE)
   }
 
   # ── 5. Reporting ─────────────────────────────────────────────────────────────
@@ -1369,7 +1378,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # Per-paper spreadsheet counts, for both the early return (empty(), below)
   # and the main return's dv_summary_table.
   spreadsheet_file_to_paper <- if (!is.null(structure_df) && nrow(structure_df) > 0) {
-    stats::setNames(structure_df$paper_id, structure_df$file_name)
+    stats::setNames(structure_df$paper_id, structure_df$source_file %||% structure_df$file_name)
   } else {
     character(0)
   }
@@ -2678,7 +2687,7 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
   hit <- which(is_csv)[vapply(loc[is_csv], .csv_is_space_separated, logical(1))]
   if (!length(hit)) return(empty_findings)
   data.frame(
-    source_file = structure_df$file_name[hit], column = NA_character_,
+    source_file = (structure_df$source_file %||% structure_df$file_name)[hit], column = NA_character_,
     label = NA_character_, check = "Space-separated .csv",
     detail = paste(
       # No "." before the first full stop: .dv_issue_cell() shows the text up
@@ -2726,9 +2735,9 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
   findings <- list()
 
   for (i in seq_len(n_files)) {
-    fname <- xl_rows$file_name[i]
+    fname <- (xl_rows$source_file %||% xl_rows$file_name)[i]
     path  <- xl_rows$file_location[i]
-    ext   <- tolower(tools::file_ext(fname))
+    ext   <- tolower(tools::file_ext(xl_rows$file_name[i]))
 
     # data_check flagged this file as not a usable rectangular dataset (a coding
     # worksheet: mostly free text and/or almost all empty). It is still inspected
