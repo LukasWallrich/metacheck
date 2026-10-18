@@ -240,6 +240,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # for the "Naming issue" column in the file tree below. repo_check computes
   # these from file_name/file_path/data_type, so re-fetch rather than recompute.
   tree_naming_issues <- get_prev_outputs("repo_check", "naming_issues")
+  # Files that do not belong in a repository, which repo_check leaves out of
+  # its table; the file tree marks them (junk: remove / keep only on purpose).
+  tree_useless <- get_prev_outputs("repo_check", "useless_files")
   if (is.null(all_files)) {
     # cache forwarded from this call's own `cache` argument: without it,
     # repo_check() falls back to its own default (cache = FALSE) regardless
@@ -267,6 +270,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     )
     listing_gated <- mo$gated_repos
     tree_naming_issues <- mo$naming_issues
+    tree_useless <- mo$useless_files
   }
 
   # ── 2. Classify every file into a data_check semantic type ───────────────────
@@ -1161,7 +1165,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # The data tree replaces the former "File Types" count table: it lists every
   # file with the same classification, so a separate per-type tally was a less
   # informative view of information already shown here.
-  tree_block <- .file_tree_block(all_files, tree_naming_issues)
+  tree_block <- .file_tree_block(all_files, tree_naming_issues, tree_useless)
   if (!is.null(tree_block)) {
     report <- c(report, tree_block)
   }

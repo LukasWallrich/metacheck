@@ -134,6 +134,11 @@
     # suggested fix grouping it with the data-extension gaps below it came in
     # with.
     r("nlogo","code", readable = FALSE, code_lang = "NetLogo"),
+    # Computational models saved by their modelling software: Simulink (.slx)
+    # and COMSOL Multiphysics (.mph). TU/e's archiving guidelines list
+    # "Code, Script, Computational model" as one component.
+    r("slx",  "code", readable = FALSE),
+    r("mph",  "code", readable = FALSE),
     # Julia source. Previously recognised as "code" only via metacheck::file_types'
     # coarse crosswalk (used by data_classify_files()), with no row at all
     # here -- so code_lang() returned NA and code_check() never treated a
@@ -230,6 +235,10 @@
     r("feather","data",readable = FALSE),
     r("parquet","data",readable = FALSE),
     r("textgrid","data",readable = FALSE),
+    # Value Change Dump: signals recorded over time by a logic analyser or a
+    # circuit simulation (21 such files of measurements in a TU/e physics data
+    # package were "unknown").
+    r("vcd",  "data", readable = FALSE),
     # Genomic sequence formats. Confirmed against real corpus files
     # (data_availability validation) that these were falling through to
     # "unknown" -- e.g. a paper whose only listed files were compressed
@@ -445,6 +454,9 @@
     r("spv",  "output", readable = FALSE),
     r("smcl", "output", readable = FALSE),
     r("fig",  "output", readable = FALSE),
+    # A .pgf is a figure written for LaTeX (matplotlib's PGF backend), the
+    # figures of a paper as the code produced them.
+    r("pgf",  "output", readable = FALSE),
     # A .out is Mplus's rendered output. Unlike .spv/.smcl (unambiguously
     # SPSS/Stata-specific), ".out" is a generic extension also used for
     # compiled Unix binaries and unrelated tool logs, so a false positive
@@ -659,6 +671,16 @@ data_classify_files <- function(file_name, file_path = NULL) {
   # extension would crosswalk to "code"/"data" via the coarse file_types table.
   type[grepl("^ro-crate-metadata\\.json$", tolower(basename(file_name)))] <- "documentation"
 
+  # A licence file without an extension (LICENSE, LICENCE, COPYING) is the
+  # deposit's licence, like LICENSE.md; with no extension nothing above
+  # recognised it, and it was "unknown".
+  base_lc <- tolower(basename(file_name))
+  type[grepl("^(licen[sc]e|copying)$", base_lc)] <- "documentation"
+  # A list of the packages a program needs (requirements.txt, Pipfile) belongs
+  # with the code that uses it; as a .txt it was classified as documentation.
+  type[grepl("^(requirements|constraints)([_.-][a-z0-9]+)*\\.(txt|in)$|^pipfile(\\.lock)?$",
+             base_lc)] <- "code"
+
   type[is.na(type)] <- "unknown"
   type
 }
@@ -840,7 +862,7 @@ data_classify_files <- function(file_name, file_path = NULL) {
     # A LICENSE file is collection-level, like the readme (one licence for the
     # whole deposit, not per-study), so it gets the same root placement in
     # convert_psychds()'s target_of() -- see psychds_check.R.
-    grepl("^licen[sc]e($|\\.)", tolower(base)) ~ "license",
+    grepl("^(licen[sc]e|copying)($|\\.)", tolower(base)) ~ "license",
     cat_raw == "codebook" ~ "codebook",
     ext == "qsf" ~ "codebook",
     is_doc ~ "supplemental",

@@ -355,6 +355,22 @@ test_that("data_classify_files recognizes additional corpus-confirmed formats (i
   expect_equal(data_classify_files("model.nlogo"), "code")
 })
 
+test_that("data_classify_files: licences, models, .vcd, .pgf and package lists", {
+  # a licence file without an extension is documentation, with the licence role
+  lic <- c("LICENSE", "LICENCE", "COPYING", "LICENSE.md")
+  expect_true(all(data_classify_files(lic) == "documentation"))
+  expect_true(all(.data_doc_role(lic) == "license"))
+  # computational models, signal recordings and LaTeX figures
+  expect_equal(data_classify_files(c("model.slx", "sim.mph", "trace.vcd", "plot.pgf")),
+               c("code", "code", "data", "output"))
+  # lists of the packages a program needs belong with the code
+  expect_equal(data_classify_files(c("requirements.txt", "requirements-dev.txt", "Pipfile")),
+               c("code", "code", "code"))
+  # names that only start the same way are unaffected
+  expect_equal(data_classify_files(c("licensing_notes.txt", "requirements_analysis.pdf", "notes.txt")),
+               rep("documentation", 3))
+})
+
 test_that("data_format separates tabular from raw", {
   expect_equal(data_format("csv"), "tabular")
   expect_equal(data_format("sav"), "tabular")

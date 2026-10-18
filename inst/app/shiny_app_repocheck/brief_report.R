@@ -1,8 +1,7 @@
 ## brief_report.R -----------------------------------------------------------
 ## The report the repository apps show: metacheck's "brief" report (only the
 ## checks that flagged something, each with what to fix), plus the
-## repository's file tree in a section that stays folded until the reader
-## opens it.
+## repository's file tree, shown open.
 ##
 ## metacheck::report(report_type = "brief") has no file tree and no way to add
 ## a section, so this does report()'s steps itself -- run the modules, build the
@@ -17,11 +16,13 @@
 ## Needs ensure_quarto() from render_report.R. Kept identical in every app
 ## folder that uses it (like render_report.R).
 
-# The file tree as a folded Quarto callout, or NULL when there is no tree.
+# The file tree as an open Quarto callout, or NULL when there is no tree.
+# The tree itself sits in a scroll box (see metacheck's .file_tree_block()),
+# so a large repository does not make the report endless.
 .brief_file_tree <- function(module_output) {
   body <- metacheck:::.file_tree(module_output)
   if (is.null(body)) return(NULL)
-  sprintf('::: {.callout-note collapse="true" title="Files in the repository"}\n\n%s\n\n:::',
+  sprintf('::: {.callout-note title="Files in the repository"}\n\n%s\n\n:::',
           paste(body, collapse = "\n\n"))
 }
 
@@ -42,7 +43,7 @@
   paste(report_text, section, sep = "\n\n")
 }
 
-#' Render the brief report, with a folded file tree, to an HTML file
+#' Render the brief report, with the file tree, to an HTML file
 #'
 #' @param paper a metacheck paper object.
 #' @param modules character vector of module names to run.
