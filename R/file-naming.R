@@ -39,11 +39,15 @@
 # naming, and the "._" copies of .csv files were read as (unreadable) data: in
 # one LDbase zip they were 993 of 1,826 listed files.
 #
-# Only files that are useless whatever the study: patterns from GitHub's
-# ignore-file templates (github.com/github/gitignore: Global/macOS, Windows,
-# Linux, MicrosoftOffice, LibreOffice, Python, R, Jupyter), each also seen in
-# real repositories (metacheck's corpus cache, 2026-10-15). Files that may
-# matter to someone (.RData, .Rhistory, backups, *.tmp, knitr caches) are
+# The list follows GitHub's ignore-file templates (github.com/github/gitignore:
+# Global/macOS, Windows, Linux, MicrosoftOffice, LibreOffice, Python, R,
+# Jupyter), each also seen in real repositories (metacheck's corpus cache,
+# 2026-10-15), and the junk rules TU/e's data managers check before a package
+# is archived (the RAPS data manager check, as in pytacheck's files_junk.json):
+# editor backups, temporary files and .Rhistory (which can hold file paths and
+# passwords) are on it for that reason. Version-control folders and editor
+# settings are "suggestions" (see .useless_file_severity()): they can be kept
+# on purpose. Files that may matter to someone (.RData, knitr caches) are
 # deliberately not included.
 #
 # Returns, per path, the kind of useless file, or NA for any other file.
@@ -64,8 +68,16 @@
                          "ehthumbs.db", "ehthumbs_vista.db", "desktop.ini",
                          ".directory") |
     in_dir("\\.AppleDouble") | in_dir("\\.Spotlight-V100") | in_dir("\\.Trashes") |
-    in_dir("\\.fseventsd") | in_dir("\\$RECYCLE\\.BIN") | in_dir("\\.Trash-[0-9]+")
+    in_dir("\\.fseventsd") | in_dir("\\.TemporaryItems") | in_dir("\\$RECYCLE\\.BIN") |
+    in_dir("\\.Trash-[0-9]+")
   kind[os] <- "operating system"
+  # The history of a project kept by Git, Subversion or Mercurial: it can hold
+  # earlier versions of files, including data that was later removed.
+  kind[is.na(kind) & (in_dir("\\.git") | in_dir("\\.svn") | in_dir("\\.hg"))] <-
+    "version control"
+  # Editor settings (JetBrains, Visual Studio Code), which can hold paths on
+  # the author's own computer.
+  kind[is.na(kind) & (in_dir("\\.idea") | in_dir("\\.vscode"))] <- "editor settings"
   # RStudio's per-user session state (open tabs, unsaved edits).
   kind[is.na(kind) & in_dir("\\.Rproj\\.user")] <- "RStudio session files"
   # Jupyter's automatic duplicate copies of notebooks.
@@ -75,10 +87,27 @@
     "compiled Python files"
   # Lock files Word, Excel, PowerPoint and LibreOffice leave while a document
   # is open.
-  kind[is.na(kind) & (grepl("^~\\$.*\\.(doc|dot|xls|ppt)", base, ignore.case = TRUE) |
-                        grepl("^\\.~lock\\..*#$", base))] <- "open-document lock files"
+  kind[is.na(kind) & (startsWith(base, "~$") | grepl("^\\.~lock\\..*#$", base))] <-
+    "open-document lock files"
+  # The commands typed in an R session: they can hold file paths and passwords.
+  kind[is.na(kind) & base == ".Rhistory"] <- "R history"
+  # Copies an editor makes by itself: "file~", .bak, and Vim's swap files.
+  kind[is.na(kind) & grepl("(~|\\.bak|\\.swp|\\.swo)$", base, ignore.case = TRUE)] <-
+    "editor backups"
+  # Temporary files a program forgot to remove.
+  kind[is.na(kind) & grepl("\\.(tmp|temp)$", base, ignore.case = TRUE)] <-
+    "temporary files"
   kind[is.na(p)] <- NA_character_
   kind
+}
+
+# How serious each kind of useless file is: "problem" (remove it; repo_check's
+# light turns red) or "suggestion" (version control and editor settings, which
+# can be kept on purpose; the light turns yellow). NA for NA.
+.useless_file_severity <- function(kind) {
+  ifelse(is.na(kind), NA_character_,
+         ifelse(kind %in% c("version control", "editor settings"),
+                "suggestion", "problem"))
 }
 
 .is_useless_file <- function(path) !is.na(.useless_file_kind(path))

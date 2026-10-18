@@ -1764,44 +1764,70 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # Files software creates by itself, never the authors, which hold nothing a
   # reader can use (see .useless_file_kind(): operating-system files such as
   # __MACOSX/ and .DS_Store, RStudio's .Rproj.user/, Jupyter checkpoints,
-  # compiled Python files, open-document lock files). Left out here, after
-  # zips are opened, so they are never counted, classified or flagged for
-  # naming; listed in the report so the authors can remove them.
+  # compiled Python files, open-document lock files, editor backups, temporary
+  # files, .Rhistory, and as suggestions version-control folders and editor
+  # settings). Left out here, after zips are opened, so they are never counted,
+  # classified or flagged for naming; listed in the report and returned as
+  # `useless_files` so the authors can remove them. A "problem" kind turns the
+  # light red, as TU/e's data managers require these files removed before a
+  # package is archived; a "suggestion" kind turns it yellow.
   useless_files <- if (nrow(all_files) > 0) {
     kind <- .useless_file_kind(dplyr::coalesce(all_files$file_path, all_files$file_name))
-    useless <- all_files[!is.na(kind), c("repo_url", "file_path"), drop = FALSE]
+    cols <- intersect(c("paper_id", "repo_url", "file_path"), names(all_files))
+    useless <- all_files[!is.na(kind), cols, drop = FALSE]
     useless$kind <- kind[!is.na(kind)]
+    useless$severity <- .useless_file_severity(useless$kind)
     all_files <- all_files[is.na(kind), , drop = FALSE]
     useless
-  } else data.frame(repo_url = character(0), file_path = character(0), kind = character(0))
+  } else data.frame(repo_url = character(0), file_path = character(0),
+                    kind = character(0), severity = character(0))
   n_useless <- nrow(useless_files)
-  useless_kinds <- if (n_useless > 0) {
-    k <- table(useless_files$kind)
+  is_problem <- useless_files$severity == "problem"
+  n_useless_problem <- sum(is_problem)
+  n_useless_suggestion <- n_useless - n_useless_problem
+  kinds_of <- function(kind) {
+    k <- table(kind)
     paste(sprintf("%s (%d)", names(k), as.integer(k)), collapse = ", ")
-  } else NULL
-  summary_useless <- if (n_useless > 0) sprintf(
-    "We left out %d file%s that do%s not belong in a repository: %s. Remove %s from the repository.",
-    n_useless, plural(n_useless), if (n_useless == 1) "es" else "",
-    useless_kinds, plural(n_useless, "it", "them")) else NULL
+  }
+  summary_useless <- c(
+    if (n_useless_problem > 0) sprintf(
+      "We left out %d file%s that do%s not belong in a repository: %s. Remove %s from the repository.",
+      n_useless_problem, plural(n_useless_problem), if (n_useless_problem == 1) "es" else "",
+      kinds_of(useless_files$kind[is_problem]), plural(n_useless_problem, "it", "them")),
+    if (n_useless_suggestion > 0) sprintf(
+      "We left out %d file%s of %s. Keep %s only if you mean to share %s.",
+      n_useless_suggestion, plural(n_useless_suggestion),
+      kinds_of(useless_files$kind[!is_problem]),
+      plural(n_useless_suggestion, "it", "them"), plural(n_useless_suggestion, "it", "them"))
+  )
   report_useless <- if (n_useless > 0) c(
     "#### Files that do not belong in the repository",
     sprintf(paste(
       "We left out %d file%s that software creates by itself, not the",
       "authors: %s. They hold nothing a reader can use, but they clutter the",
       "repository, and software can mistake them for real files (for example",
-      "a `._` copy of a `.csv` for data). Remove them from the repository."),
-      n_useless, plural(n_useless), useless_kinds),
+      "a `._` copy of a `.csv` for data)."),
+      n_useless, plural(n_useless), kinds_of(useless_files$kind)),
     paste(
-      "*Operating system:* macOS adds a `__MACOSX` folder and a `._` copy of",
+      "*Remove these:*",
+      "*Operating system* files: macOS adds a `__MACOSX` folder and a `._` copy of",
       "every file it puts in a zip, and `.DS_Store` files to folders; Windows",
       "adds `Thumbs.db` and `desktop.ini`. On a Mac, create zips from the",
       "command line with `zip -r -X`, or remove them afterwards with",
       "`zip -d archive.zip \"__MACOSX/*\" \"*.DS_Store\"`.",
       "*RStudio session files* (`.Rproj.user/`) hold open tabs and unsaved",
-      "edits; *Jupyter checkpoints* (`.ipynb_checkpoints/`) are automatic",
-      "copies of notebooks; *compiled Python files* (`__pycache__/`, `.pyc`)",
-      "are recreated when the code runs; *open-document lock files*",
-      "(`~$...docx`, `.~lock...#`) are left while a document is open.",
+      "edits; *R history* (`.Rhistory`) lists the commands typed in a session",
+      "and can hold file paths and passwords; *Jupyter checkpoints*",
+      "(`.ipynb_checkpoints/`) are automatic copies of notebooks; *compiled",
+      "Python files* (`__pycache__/`, `.pyc`) are recreated when the code runs;",
+      "*open-document lock files* (`~$...docx`, `.~lock...#`) are left while a",
+      "document is open; *editor backups* (`file~`, `.bak`, `.swp`) and",
+      "*temporary files* (`.tmp`, `.temp`) are copies a program made by itself."),
+    paste(
+      "*Keep only on purpose:* *version control* folders (`.git`, `.svn`, `.hg`)",
+      "hold the project's history, which can include earlier versions of files",
+      "and data that was later removed; *editor settings* (`.idea`, `.vscode`)",
+      "can hold paths on your own computer.",
       "A `.gitignore` based on GitHub's templates",
       "(https://github.com/github/gitignore) keeps them out of a repository."),
     scroll_table(data.frame(Repository = useless_files$repo_url,
@@ -2324,10 +2350,15 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # A repository where metacheck cannot tell how many studies exist, has files
   # it cannot classify at all, or has real (non-suggestion) naming problems is
   # exactly the kind of ambiguity this traffic light exists to flag, alongside
-  # the existing zip/README criteria.
-  if (zip_n == 0 && repo_no_readme == 0 && n_unknown == 0 &&
+  # the existing zip/README criteria. Files that do not belong in a repository
+  # (useless_files above) are something to fix: red for a "problem" kind,
+  # yellow for a "suggestion" kind.
+  if (n_useless_problem > 0) {
+    tl <- "red"
+  } else if (zip_n == 0 && repo_no_readme == 0 && n_unknown == 0 &&
       is.null(report_roster) && n_naming_bad == 0 &&
-      length(closed_reg_unreachable) == 0 && !any(unchecked)) {
+      length(closed_reg_unreachable) == 0 && !any(unchecked) &&
+      n_useless_suggestion == 0) {
     tl <- "green"
   } else {
     tl <- "yellow"
@@ -2394,6 +2425,9 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     repo_metadata = repo_metadata,
     roster_check = roster_check,
     group_no_evidence = group_no_evidence,
+    # Files that do not belong in a repository, left out of `table`: paper_id,
+    # repo_url, file_path, kind and severity ("problem" or "suggestion").
+    useless_files = useless_files,
     na_replace = 0,
     traffic_light = tl,
     report = report,

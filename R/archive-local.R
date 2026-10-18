@@ -26,6 +26,15 @@ local_files <- function(path, recursive = FALSE) {
   # handle files and directories
   if (dir.exists(path)) {
     all_paths <- list.files(path, full.names = TRUE, recursive = recursive)
+    # Hidden files are listed only when they do not belong in a repository
+    # (.DS_Store, .Rhistory, .git/, .Rproj.user/, ...; see .useless_file_kind()),
+    # so repo_check can report them; other hidden files stay out, as before.
+    rel_visible <- list.files(path, recursive = recursive)
+    rel_hidden <- setdiff(list.files(path, recursive = recursive,
+                                     all.files = TRUE, no.. = TRUE),
+                          rel_visible)
+    rel_hidden <- rel_hidden[.is_useless_file(rel_hidden)]
+    all_paths <- c(all_paths, file.path(path, rel_hidden))
     all_paths <- all_paths[!dir.exists(all_paths)]
   } else if (file.exists(path)) {
     all_paths <- path
