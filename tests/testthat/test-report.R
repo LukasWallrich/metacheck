@@ -51,6 +51,34 @@ test_that("rendering error", {
   # browseURL(report_file)
 })
 
+test_that(".report_move", {
+  expect_true(is.function(metacheck:::.report_move))
+  expect_error(.report_move(bad_arg))
+
+  dir <- withr::local_tempdir()
+  from <- file.path(dir, "rendered.html")
+  to <- file.path(dir, "out", "report.html")
+  dir.create(dirname(to))
+
+  # a normal rename
+  writeLines("<html>report</html>", from)
+  .report_move(from, to)
+  expect_equal(readLines(to), "<html>report</html>")
+  expect_false(file.exists(from))
+
+  # to another disk file.rename() returns FALSE: the report is copied over the
+  # "test" placeholder report() wrote, and the temporary file removed
+  writeLines("test", to)
+  writeLines("<html>new report</html>", from)
+  .report_move(from, to, rename = function(from, to) FALSE)
+  expect_equal(readLines(to), "<html>new report</html>")
+  expect_false(file.exists(from))
+
+  # nothing rendered: an error, not the placeholder
+  expect_error(.report_move(from, to, rename = function(from, to) FALSE),
+               "rendered report was not found")
+})
+
 test_that("report return list", {
   paper <- demopaper()
   modules <- c("stat_p_exact", "marginal")

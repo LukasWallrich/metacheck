@@ -1,3 +1,21 @@
+# Moves the rendered report from R's temporary folder to `to`. file.rename()
+# cannot move a file to another disk: it returns FALSE without an error, so on
+# a server whose output folders are on a storage volume (metacheck's API on
+# SURF) report() left the "test" it writes to check the path as the report.
+# When renaming fails the file is copied instead, and an error says so when
+# that fails too. `rename` is file.rename(), replaceable in tests.
+.report_move <- function(from, to, rename = file.rename) {
+  if (isTRUE(suppressWarnings(rename(from, to)))) return(invisible(TRUE))
+  if (!file.exists(from)) {
+    stop("The rendered report was not found (", from, ").", call. = FALSE)
+  }
+  if (!isTRUE(file.copy(from, to, overwrite = TRUE))) {
+    stop("The report could not be saved as ", to, ".", call. = FALSE)
+  }
+  unlink(from)
+  invisible(TRUE)
+}
+
 # Directory holding a Pandoc binary rmarkdown::render() can use, for the
 # report_type("simple") render path (see report_qmd()'s own comment for why
 # that path avoids quarto::quarto_render()). rmarkdown::pandoc_available()
@@ -205,7 +223,7 @@ report <- function(paper,
           quiet = TRUE,
           envir = new.env(parent = globalenv())
         )
-        file.rename(temp_output, output_file)
+        .report_move(temp_output, output_file)
         output_file
       },
       error = function(e) {
@@ -249,7 +267,7 @@ report <- function(paper,
           quiet = TRUE,
           output_format = output_format
         )
-        file.rename(temp_output, output_file)
+        .report_move(temp_output, output_file)
         output_file
       },
       error = function(e) {
