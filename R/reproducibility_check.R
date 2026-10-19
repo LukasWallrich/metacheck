@@ -1670,7 +1670,9 @@ repro_missing_inputs <- function(refs, plan, structure_df, skipped = NULL) {
 #' is copied to `<root>/<target_path>`. Nothing outside `root` is written, and
 #' `root` is the caller's to delete.
 #'
-#' @param plan the `psychds_check` table (`file_name`, `target_path`)
+#' @param plan the `psychds_check` table (`file_name`, `target_path`), or the
+#'   package layout's plan ([.repro_package_plan()]), whose `source` column
+#'   names each row's own file
 #' @param structure_df the `data_check` structure table (`file_name`,
 #'   `file_location`)
 #' @param root the temp directory to build into (created if absent)
@@ -1715,9 +1717,14 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   }
 
   has_target <- !is.na(plan$target_path) & nzchar(plan$target_path %||% "")
+  # A plan that names each row's own source file (the package layout, see
+  # .repro_package_plan()) is copied from there: looked up by name, the 20
+  # log.csv files of 20 scan folders all got the first one's content.
+  own_source <- if ("source" %in% names(plan)) plan$source else rep(NA_character_, nrow(plan))
   rows <- lapply(which(has_target), function(i) {
     tgt <- plan$target_path[i]
-    src <- find_source(plan$file_name[i])
+    src <- own_source[i]
+    if (is.na(src) || !nzchar(src) || !file.exists(src)) src <- find_source(plan$file_name[i])
     if (is.na(src))
       return(data.frame(target_path = tgt, source = NA_character_, ok = FALSE))
     dest <- file.path(root, tgt)
@@ -1755,6 +1762,121 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 
   done <- if (length(rows)) dplyr::bind_rows(rows) else done
   invisible(structure(root, materialised = done))
+}
+
+#' The package layout's plan: every file in its own place
+#'
+#' The Psych-DS layout ([psychds_file_plan()]) gives the code only the data
+#' files it recognised, renamed and moved into Psych-DS folders, with the
+#' code's paths rewritten to match. That suits a study whose scripts read a
+#' few tables, but code that reads folders of images or scan files, or imports
+#' its own helper modules from a subfolder, then fails for files that are in
+#' the package (`raw_data/scan1/img.tif` became `data/img.tif`;
+#' `code/utils/helpers.py` became `analysis/helpers.py`, so `from utils import
+#' helpers` failed). The package layout copies every file the run has (every
+#' file of a local folder) to its own path in the package, so a path that
+#' works in the package works in the sandbox; [repro_rewrite_paths()] still
+#' rewrites a reference that does not (an absolute path on the author's
+#' computer, a file in another folder) to where that file is.
+#'
+#' @param structure_df the `data_check` structure table (`file_name`,
+#'   `file_path`, `file_location`)
+#' @returns a plan with `file_name`, `current_path`, `target_path` (the file's
+#'   own path in the package) and `source` (its file on disk), one row per
+#'   path
+#' @keywords internal
+.repro_package_plan <- function(structure_df) {
+  empty <- data.frame(file_name = character(0), current_path = character(0),
+                      target_path = character(0), source = character(0))
+  if (is.null(structure_df) || !nrow(structure_df) || !"file_name" %in% names(structure_df))
+    return(empty)
+  path <- if ("file_path" %in% names(structure_df)) structure_df$file_path else structure_df$file_name
+  path[is.na(path) | !nzchar(path)] <- structure_df$file_name[is.na(path) | !nzchar(path)]
+  path <- sub("^(\\./|/)+", "", gsub("\\\\", "/", path))
+  source <- if ("file_location" %in% names(structure_df)) structure_df$file_location else NA_character_
+  plan <- data.frame(file_name = structure_df$file_name, current_path = path,
+                     target_path = path, source = source)
+  plan <- plan[!is.na(plan$target_path) & nzchar(plan$target_path) &
+                 !grepl("(^|/)\\.\\.(/|$)", plan$target_path) &
+                 !duplicated(plan$target_path), , drop = FALSE]
+  rownames(plan) <- NULL
+  plan
+}
+
+#' Leave a reference that works as written as it is (package layout)
+#'
+#' In the package layout every file is at its own path, so a reference that
+#' already names that path (`"raw_data/scan1/log.csv"`) works without a
+#' rewrite. Such a reference is marked `as_written` and keeps its text; it
+#' is not counted as rewritten, and it is not ambiguous although other files
+#' share its name (20 scan folders each with a `log.csv`).
+#'
+#' @param rw a [repro_rewrite_paths()] result for one script
+#' @param plan the package layout's plan ([.repro_package_plan()])
+#' @returns `rw` with a logical `as_written` column
+#' @keywords internal
+.repro_keep_working_refs <- function(rw, plan) {
+  rw$as_written <- rep(FALSE, nrow(rw))
+  if (!nrow(rw) || is.null(plan) || !nrow(plan)) return(rw)
+  is_call <- if ("is_call" %in% names(rw)) rw$is_call %in% TRUE else rep(FALSE, nrow(rw))
+  ref <- sub("^\\./+", "", gsub("\\\\", "/", rw$ref))
+  works <- !is_call & ref %in% plan$target_path
+  rw$as_written <- works
+  rw$matched[works] <- TRUE
+  rw$ambiguous[works] <- FALSE
+  rw$target[works] <- rw$ref[works]
+  rw
+}
+
+#' Python files that other files of the run import
+#'
+#' A module such as `utils/data_handling.py` is not a script: it defines
+#' functions for the scripts that import it, and run on its own it does
+#' nothing, or fails on code meant to run only when imported. Like an R
+#' script another script `source()`s, such a file is not run on its own. A
+#' file with an `if __name__ == "__main__":` block is a script too, and still
+#' runs.
+#'
+#' @param code_text_list named list of the Python files' code (names are
+#'   file names)
+#' @param paths the files' paths in the package (same order), for dotted
+#'   imports (`from utils.data_handling import x`); `NULL` uses the names
+#' @returns a named list: for each imported file, the files that import it
+#' @keywords internal
+.repro_py_imported <- function(code_text_list, paths = NULL) {
+  fns <- names(code_text_list)
+  if (!length(fns)) return(list())
+  if (is.null(paths)) paths <- fns
+  paths <- gsub("\\\\", "/", ifelse(is.na(paths) | !nzchar(paths), fns, paths))
+  stem <- tools::file_path_sans_ext(basename(paths))
+  # a package's __init__.py is imported by the package's (its folder's) name
+  is_init <- stem == "__init__"
+  stem[is_init] <- basename(dirname(paths[is_init]))
+  # the module names each file imports: "a.b.c" gives a, b and c; "from . import
+  # x" gives x
+  imports <- lapply(code_text_list, function(txt) {
+    txt <- txt[!grepl("^\\s*#", txt)]
+    m1 <- regmatches(txt, regexec("^\\s*import\\s+([A-Za-z0-9_., ]+)", txt))
+    m2 <- regmatches(txt, regexec("^\\s*from\\s+([A-Za-z0-9_.]+)\\s+import\\s+([A-Za-z0-9_, ()*]+)", txt))
+    names1 <- unlist(lapply(m1, function(m) if (length(m) > 1) trimws(sub("\\s+as\\s+.*$", "", strsplit(m[[2]], ",")[[1]])) else NULL))
+    names2 <- unlist(lapply(m2, function(m) {
+      if (length(m) < 3) return(NULL)
+      c(m[[2]], paste0(m[[2]], ".", trimws(sub("\\s+as\\s+.*$", "", strsplit(gsub("[()]", "", m[[3]]), ",")[[1]]))))
+    }))
+    found <- as.character(c(names1, names2))
+    if (!length(found)) return(character(0))
+    unique(unlist(strsplit(found, ".", fixed = TRUE)))
+  })
+  is_main <- vapply(code_text_list, function(txt) {
+    any(grepl("^\\s*if\\s+__name__\\s*==\\s*['\"]__main__['\"]", txt))
+  }, logical(1))
+  out <- list()
+  for (i in seq_along(fns)) {
+    if (is_main[[i]] || stem[[i]] %in% c("", ".")) next
+    by <- fns[vapply(seq_along(fns), function(j) j != i && stem[[i]] %in% imports[[j]], logical(1))]
+    if (length(by)) out[[fns[[i]]]] <- unique(by)
+  }
+  out
 }
 
 #' Write path-rewritten scripts into the materialised layout
@@ -1814,6 +1936,11 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'   `rcParams`/`plt.rc()`/`fontdict=` spellings would be solving a failure
 #'   mode Python's own ecosystem does not have here.
 #'
+#' @param script_paths optional character vector, one per element of
+#'   `code_text_list`: the path (relative to `root`) to write that script to,
+#'   as the package layout ([.repro_package_plan()]) needs. `NULL` (default),
+#'   or an `NA` element, places the script by its basename in `plan`, as
+#'   before.
 #' @returns a data frame with `file_name`, `script_path` (absolute path written),
 #'   `run_dir` (the working directory a run should use — always `root`),
 #'   `setwd_removed` (count of `setwd()`/`os.chdir()` calls replaced with a
@@ -1827,14 +1954,19 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'   via `inject_libs` for that file, comma-joined, or `NA` when none was).
 #' @export
 repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
-                                inject_libs = NULL, lang = "R") {
+                                inject_libs = NULL, lang = "R",
+                                script_paths = NULL) {
   fnames <- names(code_text_list)
   plan_base <- if (!is.null(plan) && "file_name" %in% names(plan))
     tolower(basename(plan$file_name)) else character(0)
   lang_for <- if (length(lang) == 1) stats::setNames(rep(lang, length(fnames)), fnames)
     else lang[fnames]
 
-  script_target <- function(fn) {
+  script_target <- function(fn, i) {
+    # The package layout gives each script its own path, so two scripts with
+    # the same name (two __init__.py) do not land on one place.
+    own <- if (!is.null(script_paths)) script_paths[[i]] else NA_character_
+    if (!is.na(own) && nzchar(own)) return(own)
     # A script's own place in the tree: match its basename in the plan; else put
     # it at the tree root under its basename so it is still runnable.
     if (length(plan_base)) {
@@ -1982,7 +2114,7 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     if (length(injected_pkg))
       txt <- c(sprintf("library(%s)  # [reproducibility_check injected]", injected_pkg), txt)
 
-    tgt  <- script_target(fn)
+    tgt  <- script_target(fn, i)
     dest <- file.path(root, tgt)
     dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
     writeLines(txt, dest)

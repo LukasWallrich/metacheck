@@ -10,7 +10,8 @@ repro_write_scripts(
   plan,
   root,
   inject_libs = NULL,
-  lang = "R"
+  lang = "R",
+  script_paths = NULL
 )
 }
 \arguments{
@@ -50,6 +51,12 @@ fallback, not the hard "invalid font type" failure
 reason this transform exists for R) — rewriting Python's many
 \code{rcParams}/\code{plt.rc()}/\verb{fontdict=} spellings would be solving a failure
 mode Python's own ecosystem does not have here.}
+
+\item{script_paths}{optional character vector, one per element of
+\code{code_text_list}: the path (relative to \code{root}) to write that script to,
+as the package layout (\code{\link[=.repro_package_plan]{.repro_package_plan()}}) needs. \code{NULL} (default),
+or an \code{NA} element, places the script by its basename in \code{plan}, as
+before.}
 }
 \value{
 a data frame with \code{file_name}, \code{script_path} (absolute path written),
