@@ -11,7 +11,8 @@ repro_write_scripts(
   root,
   inject_libs = NULL,
   lang = "R",
-  script_paths = NULL
+  script_paths = NULL,
+  writes_in_place = FALSE
 )
 }
 \arguments{
@@ -57,6 +58,11 @@ mode Python's own ecosystem does not have here.}
 as the package layout (\code{\link[=.repro_package_plan]{.repro_package_plan()}}) needs. \code{NULL} (default),
 or an \code{NA} element, places the script by its basename in \code{plan}, as
 before.}
+
+\item{writes_in_place}{if \code{TRUE} (the package layout), a write stays where
+the code puts it, so a later script finds the file where it expects it;
+only a write to an absolute path or out of the package is redirected to
+\verb{output/}. \code{FALSE} (default) redirects every write, as before.}
 }
 \value{
 a data frame with \code{file_name}, \code{script_path} (absolute path written),

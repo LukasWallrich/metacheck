@@ -2,23 +2,40 @@
 % Please edit documentation in R/reproducibility_check.R
 \name{.repro_keep_working_refs}
 \alias{.repro_keep_working_refs}
-\title{Leave a reference that works as written as it is (package layout)}
+\title{Rewrite only the references that cannot work as written (package layout)}
 \usage{
-.repro_keep_working_refs(rw, plan)
+.repro_keep_working_refs(rw, plan, script_path = NA_character_)
 }
 \arguments{
 \item{rw}{a \code{\link[=repro_rewrite_paths]{repro_rewrite_paths()}} result for one script}
 
 \item{plan}{the package layout's plan (\code{\link[=.repro_package_plan]{.repro_package_plan()}})}
+
+\item{script_path}{the script's own path in the package}
 }
 \value{
 \code{rw} with a logical \code{as_written} column
 }
 \description{
-In the package layout every file is at its own path, so a reference that
-already names that path (\code{"raw_data/scan1/log.csv"}) works without a
-rewrite. Such a reference is marked \code{as_written} and keeps its text; it
-is not counted as rewritten, and it is not ambiguous although other files
-share its name (20 scan folders each with a \code{log.csv}).
+Every script runs from the top of the package, with every file at its own
+path. A reference is then:
+\itemize{
+\item left as written when it names a file's path from the top
+(\code{"raw_data/scan1/log.csv"}), also when other files share the name (20
+scan folders each with a \code{log.csv}), and when it is a relative path that
+names no file from the top or from the script's folder: the code
+probably joins it with a folder of its own (\code{os.path.join(base, "fig7/x.csv")}), and rewriting it to the full path gave
+\code{processed_data/fig7/processed_data/fig7/x.csv};
+\item rewritten to the file's path from the top when it names a file relative
+to the script's own folder (\code{source("helpers.R")},
+\code{"../raw_data/scores.csv"}), since the script does not run from there;
+\item rewritten as \code{\link[=repro_rewrite_paths]{repro_rewrite_paths()}} found, by the file's name, when it
+is an absolute path (\verb{Z:/Strontium/...} on the author's computer) or
+goes up out of the package.
+}
+}
+\details{
+A reference left as written is marked \code{as_written}; it is not counted as
+rewritten, and not as a missing input.
 }
 \keyword{internal}

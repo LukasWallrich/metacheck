@@ -1268,7 +1268,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                        structure_df = structure_df))
   names(rewrite_list) <- r_files$file_name
   # the package layout leaves a reference that works as written as it is
-  if (layout == "package") rewrite_list <- lapply(rewrite_list, .repro_keep_working_refs, plan = plan)
+  if (layout == "package") rewrite_list <- stats::setNames(lapply(seq_along(rewrite_list), function(i)
+    .repro_keep_working_refs(rewrite_list[[i]], plan, r_files$file_path[i])), names(rewrite_list))
 
   # Per-file rewrite counts + unresolved reads (referenced, not matched in plan).
   rewrites_n  <- vapply(rewrite_list, function(d)
@@ -1483,7 +1484,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
          nrow(attr(ml, "materialised") %||% data.frame()), " files.")
     .dbg("writing ", n_code, " rewritten script(s) into the layout ...")
     run_tbl <- repro_write_scripts(code_text_list, rewrite_list, plan, sandbox_root,
-                                   script_paths = if (layout == "package") r_files$file_path)
+                                   script_paths = if (layout == "package") r_files$file_path,
+                                   writes_in_place = layout == "package")
     .dbg("  wrote ", nrow(run_tbl), " script(s).")
 
     # 2. Optionally install dependencies. sandbox = "process": CRAN sources
@@ -1672,7 +1674,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
         run_tbl2 <- if (length(library_injections) > 0)
           repro_write_scripts(code_text_list, rewrite_list, plan, sandbox_root,
                               inject_libs = library_injections,
-                              script_paths = if (layout == "package") r_files$file_path) else run_tbl
+                              script_paths = if (layout == "package") r_files$file_path,
+                              writes_in_place = layout == "package") else run_tbl
         .dbg("re-running ", length(run_order2), " script(s) in corrected order",
              if (length(library_injections) > 0) sprintf(
                " (with %d library() injection(s): %s)",
@@ -2512,7 +2515,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     repro_rewrite_paths(py_code_text_list[[i]], py_files$file_name[i], plan, "Python",
                        structure_df = structure_df))
   names(py_rewrite_list) <- py_files$file_name
-  if (layout == "package") py_rewrite_list <- lapply(py_rewrite_list, .repro_keep_working_refs, plan = plan)
+  if (layout == "package") py_rewrite_list <- stats::setNames(lapply(seq_along(py_rewrite_list), function(i)
+    .repro_keep_working_refs(py_rewrite_list[[i]], plan, py_files$file_path[i])), names(py_rewrite_list))
 
   py_rewrites_n <- vapply(py_rewrite_list, function(d)
     if (nrow(d)) sum(d$matched & !d$ambiguous & !(d$as_written %||% FALSE)) else 0L, integer(1))
@@ -2609,7 +2613,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     .dbg("[repro/py] writing ", n_py_code, " rewritten script(s) into the layout ...")
     py_run_tbl <- repro_write_scripts(py_code_text_list, py_rewrite_list, plan,
                                       sandbox_root, lang = "Python",
-                                      script_paths = if (layout == "package") py_files$file_path)
+                                      script_paths = if (layout == "package") py_files$file_path,
+                                      writes_in_place = layout == "package")
     .dbg("[repro/py]   wrote ", nrow(py_run_tbl), " script(s).")
 
     # The process sandbox needs a Python interpreter on this computer (looked

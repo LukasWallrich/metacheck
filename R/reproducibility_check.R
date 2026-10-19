@@ -1730,6 +1730,11 @@ repro_materialize_layout <- function(plan, structure_df, root) {
     dest <- file.path(root, tgt)
     dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
     ok <- isTRUE(file.copy(src, dest, overwrite = TRUE))
+    # The copy is the code's to change: in the Docker sandbox the code runs
+    # as another user, and a script that saves over a file the package holds
+    # (raw_data/fig9/histogramroi_counts_matrix.npy, written by the author's
+    # own run) failed with "Permission denied".
+    if (ok) Sys.chmod(dest, "0666", use_umask = FALSE)
     data.frame(target_path = tgt, source = src, ok = ok)
   })
 
@@ -1761,6 +1766,8 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   }
 
   done <- if (length(rows)) dplyr::bind_rows(rows) else done
+  # and its folders, so a script can save a new file next to the data
+  Sys.chmod(list.dirs(root, recursive = TRUE), "0777", use_umask = FALSE)
   invisible(structure(root, materialised = done))
 }
 
@@ -1803,29 +1810,75 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   plan
 }
 
-#' Leave a reference that works as written as it is (package layout)
+#' Rewrite only the references that cannot work as written (package layout)
 #'
-#' In the package layout every file is at its own path, so a reference that
-#' already names that path (`"raw_data/scan1/log.csv"`) works without a
-#' rewrite. Such a reference is marked `as_written` and keeps its text; it
-#' is not counted as rewritten, and it is not ambiguous although other files
-#' share its name (20 scan folders each with a `log.csv`).
+#' Every script runs from the top of the package, with every file at its own
+#' path. A reference is then:
+#' * left as written when it names a file's path from the top
+#'   (`"raw_data/scan1/log.csv"`), also when other files share the name (20
+#'   scan folders each with a `log.csv`), and when it is a relative path that
+#'   names no file from the top or from the script's folder: the code
+#'   probably joins it with a folder of its own (`os.path.join(base,
+#'   "fig7/x.csv")`), and rewriting it to the full path gave
+#'   `processed_data/fig7/processed_data/fig7/x.csv`;
+#' * rewritten to the file's path from the top when it names a file relative
+#'   to the script's own folder (`source("helpers.R")`,
+#'   `"../raw_data/scores.csv"`), since the script does not run from there;
+#' * rewritten as [repro_rewrite_paths()] found, by the file's name, when it
+#'   is an absolute path (`Z:/Strontium/...` on the author's computer) or
+#'   goes up out of the package.
+#'
+#' A reference left as written is marked `as_written`; it is not counted as
+#' rewritten, and not as a missing input.
 #'
 #' @param rw a [repro_rewrite_paths()] result for one script
 #' @param plan the package layout's plan ([.repro_package_plan()])
+#' @param script_path the script's own path in the package
 #' @returns `rw` with a logical `as_written` column
 #' @keywords internal
-.repro_keep_working_refs <- function(rw, plan) {
+.repro_keep_working_refs <- function(rw, plan, script_path = NA_character_) {
   rw$as_written <- rep(FALSE, nrow(rw))
   if (!nrow(rw) || is.null(plan) || !nrow(plan)) return(rw)
   is_call <- if ("is_call" %in% names(rw)) rw$is_call %in% TRUE else rep(FALSE, nrow(rw))
-  ref <- sub("^\\./+", "", gsub("\\\\", "/", rw$ref))
-  works <- !is_call & ref %in% plan$target_path
-  rw$as_written <- works
-  rw$matched[works] <- TRUE
-  rw$ambiguous[works] <- FALSE
-  rw$target[works] <- rw$ref[works]
+  ref <- sub("^(\\./)+", "", gsub("\\\\", "/", rw$ref))
+  absolute <- grepl("^([A-Za-z]:/|/|~)", ref)
+  # the path from the top, when the reference names a file relative to the
+  # script's own folder
+  script_dir <- if (!is.na(script_path) && nzchar(script_path)) dirname(gsub("\\\\", "/", script_path)) else "."
+  from_script <- vapply(ref, function(r) {
+    if (grepl("^([A-Za-z]:/|/|~)", r)) return(NA_character_)
+    p <- .repro_norm_rel(if (script_dir %in% c(".", "")) r else file.path(script_dir, r))
+    if (!is.na(p) && p %in% plan$target_path) p else NA_character_
+  }, character(1), USE.NAMES = FALSE)
+  in_place <- !is_call & ref %in% plan$target_path
+  relocate <- !in_place & !is_call & !is.na(from_script)
+  up <- grepl("(^|/)\\.\\.(/|$)", ref)
+  # a path built by sprintf()/file.path() is kept unless it holds an absolute path
+  absolute_call <- is_call & grepl("[\"']([A-Za-z]:[/\\\\]|/|~)", rw$ref, perl = TRUE)
+  keep <- in_place | (!relocate & ((is_call & !absolute_call) | (!is_call & !absolute & !up)))
+
+  rw$matched[relocate] <- TRUE
+  rw$ambiguous[relocate] <- FALSE
+  rw$target[relocate] <- from_script[relocate]
+  rw$as_written <- keep
+  rw$matched[keep] <- TRUE
+  rw$ambiguous[keep] <- FALSE
+  rw$target[keep] <- rw$ref[keep]
   rw
+}
+
+# A relative path with "." and ".." resolved ("code/../raw_data/x.csv" ->
+# "raw_data/x.csv"); NA when it goes above the top.
+.repro_norm_rel <- function(path) {
+  out <- character(0)
+  for (part in strsplit(gsub("\\\\", "/", path), "/", fixed = TRUE)[[1]]) {
+    if (part %in% c("", ".")) next
+    if (part == "..") {
+      if (!length(out)) return(NA_character_)
+      out <- out[-length(out)]
+    } else out <- c(out, part)
+  }
+  paste(out, collapse = "/")
 }
 
 #' Python files that other files of the run import
@@ -1941,6 +1994,10 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'   as the package layout ([.repro_package_plan()]) needs. `NULL` (default),
 #'   or an `NA` element, places the script by its basename in `plan`, as
 #'   before.
+#' @param writes_in_place if `TRUE` (the package layout), a write stays where
+#'   the code puts it, so a later script finds the file where it expects it;
+#'   only a write to an absolute path or out of the package is redirected to
+#'   `output/`. `FALSE` (default) redirects every write, as before.
 #' @returns a data frame with `file_name`, `script_path` (absolute path written),
 #'   `run_dir` (the working directory a run should use — always `root`),
 #'   `setwd_removed` (count of `setwd()`/`os.chdir()` calls replaced with a
@@ -1955,7 +2012,7 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #' @export
 repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
                                 inject_libs = NULL, lang = "R",
-                                script_paths = NULL) {
+                                script_paths = NULL, writes_in_place = FALSE) {
   fnames <- names(code_text_list)
   plan_base <- if (!is.null(plan) && "file_name" %in% names(plan))
     tolower(basename(plan$file_name)) else character(0)
@@ -2037,6 +2094,13 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     # are neutralised below), which is also what the rewritten READ paths
     # (plan target paths, relative to the root) already rely on.
     wr <- .repro_redirect_writes(txt, lang = fn_lang)
+    # In the package layout a write stays where the code puts it, so a later
+    # script reads the file where it expects it; only a write to an absolute
+    # path (the author's computer) or out of the package goes to output/.
+    if (isTRUE(writes_in_place) && nrow(wr) > 0) {
+      outside <- grepl("[\"']([A-Za-z]:[/\\\\]|/|~|\\.\\.[/\\\\])", wr$call_text, perl = TRUE)
+      wr <- wr[outside, , drop = FALSE]
+    }
     if (nrow(wr) > 0) {
       joined_txt <- paste(txt, collapse = "\n")
       for (k in seq_len(nrow(wr))) {

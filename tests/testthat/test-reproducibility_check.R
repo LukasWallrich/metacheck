@@ -1340,3 +1340,53 @@ test_that("the package layout runs code that reads folders and imports its own m
   oc <- stats::setNames(mo$run_results$outcome, mo$run_results$file_name)
   expect_equal(oc[["main.py"]], "errored")
 })
+
+test_that(".repro_keep_working_refs rewrites only what cannot work as written", {
+  plan <- data.frame(file_name = c("x.csv", "helpers.R", "scores.csv"),
+                     target_path = c("processed_data/fig7/x.csv", "code/helpers.R",
+                                     "raw_data/scores.csv"))
+  code <- c("a <- read.csv(file.path(base, 'fig7/x.csv'))",
+            "source('helpers.R')",
+            "d <- read.csv('../raw_data/scores.csv')")
+  rw <- repro_rewrite_paths(code, "analysis.R", plan, "R")
+  rw <- .repro_keep_working_refs(rw, plan, "code/analysis.R")
+  # a partial path the code joins with a folder: left as written (rewriting
+  # it gave processed_data/fig7/processed_data/fig7/x.csv)
+  part <- rw[rw$ref == "fig7/x.csv", ]
+  expect_true(part$as_written)
+  expect_equal(part$target, "fig7/x.csv")
+  # relative to the script's own folder: the path from the top
+  expect_equal(rw$target[rw$ref == "helpers.R"], "code/helpers.R")
+  expect_equal(rw$target[rw$ref == "../raw_data/scores.csv"], "raw_data/scores.csv")
+  expect_false(any(rw$as_written[rw$ref %in% c("helpers.R", "../raw_data/scores.csv")]))
+})
+
+test_that(".repro_norm_rel resolves . and ..", {
+  expect_equal(.repro_norm_rel("code/../raw_data/./x.csv"), "raw_data/x.csv")
+  expect_equal(.repro_norm_rel("code\\x.R"), "code/x.R")
+  expect_true(is.na(.repro_norm_rel("../x.csv")))
+})
+
+test_that("repro_write_scripts leaves writes in place in the package layout", {
+  root <- withr::local_tempdir()
+  code <- list(a.R = c("write.csv(d, 'raw_data/made.csv')",
+                       "write.csv(d, 'C:/Users/author/out.csv')"))
+  rw <- list(a.R = repro_rewrite_paths(code$a.R, "a.R", NULL))
+  repro_write_scripts(code, rw, NULL, root, writes_in_place = TRUE)
+  txt <- readLines(file.path(root, "a.R"))
+  expect_match(txt[1], "'raw_data/made.csv'", fixed = TRUE)
+  expect_false(grepl("C:/Users/author", txt[2], fixed = TRUE))
+  expect_match(txt[2], "output/", fixed = TRUE)
+})
+
+test_that("repro_materialize_layout makes the copy writable", {
+  skip_on_os("windows")   # file modes
+  d <- withr::local_tempdir()
+  writeLines("x", file.path(d, "a.csv"))
+  Sys.chmod(file.path(d, "a.csv"), "0444")
+  structure_df <- data.frame(file_name = "a.csv", file_path = "raw_data/a.csv",
+                             file_location = file.path(d, "a.csv"))
+  root <- withr::local_tempdir()
+  repro_materialize_layout(.repro_package_plan(structure_df), structure_df, root)
+  expect_equal(as.character(file.mode(file.path(root, "raw_data/a.csv"))), "666")
+})
