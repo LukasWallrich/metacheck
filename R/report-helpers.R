@@ -21,9 +21,31 @@
 #' setting themselves, since they build their markdown/HTML while a module
 #' runs -- before [report()] ever selects a template.
 #'
-#' @param report_type if one of `"full"`, `"brief"`, `"simple"`, or
-#'   `"simple_brief"`, sets the report type; `NULL` (the default) returns the
-#'   current setting without changing it
+#' A fifth value, `"checklist"`, lays the report out by check instead of by
+#' module: every check of every module is sorted into to fix, to improve,
+#' decide by hand, for information, fine and not applicable, and each check
+#' that needs work says what was found and what to do on separate lines. It is
+#' rendered like `"simple"` (static, no JavaScript), in the colours and font
+#' of metacheck's website. A module gives its checks as a `checks` data frame
+#' in its output, one row per check, with the columns:
+#' * `status`: `"fix"`, `"improve"`, `"decide"` (decide by hand), `"info"`,
+#'   `"fine"` or `"na"` (not applicable)
+#' * `title`: the name of the check
+#' * `found`: what was found (markdown)
+#' * `todo`: what to do (markdown)
+#' * and optionally `why` and `note` (markdown), `section` (a label shown
+#'   next to the title), and `details` (markdown, for example a
+#'   [scroll_table()]) with `details_title` (the line that unfolds it)
+#'
+#' A module without `checks` is shown as one check: its traffic light gives
+#' the result (red: to fix, yellow: to improve, green: fine), its summary text
+#' what was found, and its report the folded details. A module can also give
+#' `intro` (a paragraph shown at the top) and `logo` (the path of an image
+#' shown next to metacheck's logo).
+#'
+#' @param report_type if one of `"full"`, `"brief"`, `"simple"`,
+#'   `"simple_brief"` or `"checklist"`, sets the report type; `NULL` (the
+#'   default) returns the current setting without changing it
 #'
 #' @returns the current option value
 #' @export
@@ -33,6 +55,7 @@
 #' report_type("simple")
 #' report_type("brief")
 #' report_type("simple_brief")
+#' report_type("checklist")
 #' report_type("full")
 report_type <- function(report_type = NULL) {
   if (is.null(report_type)) {
@@ -40,8 +63,8 @@ report_type <- function(report_type = NULL) {
   }
 
   report_type <- tolower(report_type[[1]])
-  if (!report_type %in% c("full", "brief", "simple", "simple_brief")) {
-    stop("Set report_type with 'full', 'brief', 'simple', or 'simple_brief'",
+  if (!report_type %in% c("full", "brief", "simple", "simple_brief", "checklist")) {
+    stop("Set report_type with 'full', 'brief', 'simple', 'simple_brief', or 'checklist'",
       call. = FALSE)
   }
 
@@ -50,9 +73,10 @@ report_type <- function(report_type = NULL) {
 }
 
 # Whether a report_type value uses static, JS-free rendering (plain Pandoc via
-# rmarkdown::render(), not Quarto) -- true for "simple" and "simple_brief".
+# rmarkdown::render(), not Quarto) -- true for "simple", "simple_brief" and
+# "checklist".
 .report_is_static <- function(report_type) {
-  report_type %in% c("simple", "simple_brief")
+  report_type %in% c("simple", "simple_brief", "checklist")
 }
 
 # Whether a report_type value shows only flagged modules (red/yellow/fail)
@@ -930,8 +954,8 @@ metacheck::report_table(table, %s, %s, %s)
 #'
 #' A function to display tables in reports.
 #'
-#' When [report_type()] is `"simple"` or `"simple_brief"`, this renders a
-#' plain static HTML table (via `knitr::kable()`) in a CSS-only scrollable
+#' When [report_type()] is `"simple"`, `"simple_brief"` or `"checklist"`,
+#' this renders a plain static HTML table (via `knitr::kable()`) in a CSS-only scrollable
 #' box instead of a
 #' `DT::datatable()` widget -- no JavaScript at all, so the report stays safe
 #' to email. Every row is kept and reachable by scrolling (just like the full
@@ -1024,6 +1048,18 @@ report_table <- function(table, colwidths = "auto", maxrows = 2, escape = FALSE)
 # since kable() itself has no per-column width option.
 .report_table_static <- function(table, colwidths = "auto", maxrows = 2,
                                  escape = FALSE) {
+  # Pandoc reads the cells of this raw HTML table as markdown, so a cell
+  # starting like a list item ("1. General information", "- a", "* b") became
+  # a list left open inside the table, and the rest of the report was nested
+  # in it (confirmed: tue_datamanager_check's README sections table). The
+  # marker is escaped so it shows as written.
+  for (col in names(table)) {
+    if (is.character(table[[col]])) {
+      table[[col]] <- sub("^(\\s*[0-9]+)([.)]\\s)", "\\1\\\\\\2", table[[col]])
+      table[[col]] <- sub("^(\\s*)([-*+]\\s)", "\\1\\\\\\2", table[[col]])
+    }
+  }
+
   n_total <- nrow(table)
   truncated <- n_total > .report_table_simple_max_rows
   if (truncated) {
@@ -1091,6 +1127,8 @@ report_table <- function(table, colwidths = "auto", maxrows = 2, escape = FALSE)
 #' HTML attribute rather than rendering it as content, and
 #' expanding/collapsing needs Bootstrap's collapse JavaScript, which a simple
 #' report never includes. The content is always shown inline, uncollapsed.
+#' In a `"checklist"` report it is a `<details>` box instead, which folds
+#' without JavaScript.
 #'
 #' @param text The text to put in the collapsible section; vectors will be collapse with line breaks between (e.g., into paragraphs)
 #' @param title The title of the collapse header
@@ -1108,6 +1146,11 @@ collapse_section <- function(text, title = "Learn More",
                              collapse = TRUE) {
   callout <- match.arg(callout)
   body <- paste0(text, collapse = "\n\n")
+
+  if (report_type() == "checklist") {
+    fmt <- '<details><summary>%s</summary>\n\n%s\n\n</details>\n'
+    return(sprintf(fmt, title, body))
+  }
 
   if (.report_is_static(report_type())) {
     fmt <- '::: {.callout-%s}\n\n**%s**\n\n%s\n\n:::\n'

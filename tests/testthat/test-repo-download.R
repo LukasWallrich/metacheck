@@ -1126,3 +1126,50 @@ test_that("the Dryad bulk download is used for every Dryad DOI form", {
     expect_true(all(!is.na(dl$file_location)))
   }
 })
+
+# #508: the OSF moved its storage to Oracle, which refuses a pre-signed address
+# that also carries an Authorization header (HTTP 400). The token used to
+# follow every redirect (unrestricted_auth); now the first redirect, to the
+# OSF's own file server, is asked for with the token, and the download goes
+# there directly, so curl drops the token when it leaves the OSF.
+test_that(".osf_file_server_url follows only the redirect to an OSF file server (#508)", local({
+  seen <- list()
+  answer <- "https://files.de-1.osf.io/v1/resources/m4nbv/providers/osfstorage/696a"
+  httr2::local_mocked_responses(function(req) {
+    seen[[length(seen) + 1]] <<- req
+    httr2::response(status_code = 302, headers = list(Location = answer))
+  })
+  url <- "https://osf.io/download/6v3pt/"
+  expect_equal(.osf_file_server_url(url, "tok"), answer)
+  # asked with the token, without following the redirect
+  expect_equal(httr2::req_get_headers(seen[[1]], "reveal")$Authorization, "Bearer tok")
+  expect_false(seen[[1]]$options$followlocation)
+
+  # a redirect that leaves the OSF is not followed
+  answer <- "https://x.compat.objectstorage.us-ashburn-1.oraclecloud.com/p/signed"
+  expect_equal(.osf_file_server_url(url, "tok"), url)
+
+  # an address that is not on osf.io itself is not asked for at all
+  n <- length(seen)
+  expect_equal(.osf_file_server_url("https://files.osf.io/v1/resources/abc/?zip=", "tok"),
+               "https://files.osf.io/v1/resources/abc/?zip=")
+  expect_equal(.osf_file_server_url("https://api.osf.io/v2/nodes/abc/", "tok"),
+               "https://api.osf.io/v2/nodes/abc/")
+  expect_length(seen, n)
+}))
+
+test_that(".auth_for_url never sends a token to every redirect (#508)", local({
+  local_mocked_bindings(osf_pat = function(...) "tok", zenodo_pat = function(...) "ztok")
+  httr2::local_mocked_responses(function(req) {
+    httr2::response(status_code = 302,
+                    headers = list(Location = "https://files.osf.io/v1/resources/m4nbv/providers/osfstorage/696a"))
+  })
+  req <- .auth_for_url(httr2::request("https://osf.io/download/6v3pt/"))
+  expect_equal(req$url, "https://files.osf.io/v1/resources/m4nbv/providers/osfstorage/696a")
+  expect_equal(httr2::req_get_headers(req, "reveal")$Authorization, "Bearer tok")
+  expect_null(req$options$unrestricted_auth)
+
+  req <- .auth_for_url(httr2::request("https://zenodo.org/records/1/files/a.csv"))
+  expect_equal(httr2::req_get_headers(req, "reveal")$Authorization, "Bearer ztok")
+  expect_null(req$options$unrestricted_auth)
+}))

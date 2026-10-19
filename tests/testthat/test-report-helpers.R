@@ -48,6 +48,7 @@ test_that(".report_is_static and .report_is_brief", {
   expect_false(.report_is_static("brief"))
   expect_true(.report_is_static("simple"))
   expect_true(.report_is_static("simple_brief"))
+  expect_true(.report_is_static("checklist"))
 
   expect_false(.report_is_brief("full"))
   expect_true(.report_is_brief("brief"))

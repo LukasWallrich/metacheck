@@ -338,11 +338,16 @@ rbox_file_download <- function(rb_url, pb = NULL) {
       list(what = _) |>
       pb$tick(0, tokens = _)
 
+    # ResearchBox's file ids are tokens now ("XG08oROE0t..."), sent as text,
+    # as its own download_files.js does; as.numeric() made every one NA, so
+    # nothing was downloaded. Numeric ids (older pages) are still sent as
+    # numbers. A JSON array even for one file (I()).
+    ids <- if (all(grepl("^[0-9]+$", file_ids))) as.numeric(file_ids) else as.character(file_ids)
     dl_status <- tryCatch({
       resp <- .mc_request("https://researchbox.org/download_files.php", low_speed_time = 300) |>
         httr2::req_headers(!!!.rbox_headers()) |>
         httr2::req_body_json(list(
-          files = as.numeric(file_ids),
+          files = I(ids),
           box_id = info$box_id,
           reference = info$reference
         )) |>
@@ -361,7 +366,13 @@ rbox_file_download <- function(rb_url, pb = NULL) {
     paste0("Unzipping into: ", out_dir) |>
       list(what = _) |>
       pb$tick(0, tokens = _)
-    utils::unzip(zip_path, exdir = out_dir)
+    # a box with one file may get that file itself, not a zip
+    is_zip <- identical(readBin(zip_path, "raw", 2), charToRaw("PK"))
+    if (!is_zip && length(file_ids) == 1) {
+      file.copy(zip_path, file.path(out_dir, basename(info$files[[1]]$name[[1]])))
+    } else {
+      utils::unzip(zip_path, exdir = out_dir)
+    }
   }
 
   unzipped_files <- list.files(out_dir, recursive = TRUE, full.names = TRUE)

@@ -1932,6 +1932,11 @@ code_packages <- function(packages) {
 #'   `renv_packages` (data frame `file_name`, `package`, `version`, `source`
 #'      — one row per locked package, across all `renv.lock` files found),
 #'   `sessioninfo_files` (character vector of matched file_names),
+#'   `python_files` (character vector of the file_names of Python package
+#'      lists: `requirements*.txt`, `environment.yml`, `Pipfile(.lock)`,
+#'      `poetry.lock`, `uv.lock`, `pyproject.toml`),
+#'   `python_pinned` (logical, TRUE if any Python package list was found;
+#'      `pinned` stays about R only),
 #'   `file_location` (named character vector, file_name -> resolved local
 #'      path, for every candidate file this call downloaded — a caller
 #'      re-checking a SUBSET of `all_files` per paper can splice these back
@@ -1949,6 +1954,7 @@ code_packages <- function(packages) {
                                         version = character(0),
                                         source = character(0)),
              sessioninfo_files = character(0),
+             python_files = character(0), python_pinned = FALSE,
              file_location = character(0))
   if (is.null(all_files) || nrow(all_files) == 0) return(out)
 
@@ -2094,10 +2100,37 @@ code_packages <- function(packages) {
   if (has_gh) out$mechanisms <- c(out$mechanisms, "groundhog")
   if (has_cp) out$mechanisms <- c(out$mechanisms, "checkpoint")
 
+  # ── Python package lists ────────────────────────────────────────────────
+  # By file name only: the files pip, conda, pipenv, poetry and uv write.
+  py_re <- paste0("^(requirements|constraints)([_.-][a-z0-9]+)*\\.(txt|in)$|",
+                  "^pipfile(\\.lock)?$|^poetry\\.lock$|^uv\\.lock$|",
+                  "^environment\\.ya?ml$|^conda[_.-]?lock\\.ya?ml$|^pyproject\\.toml$")
+  out$python_files <- all_files$file_name[grepl(py_re, base_nm, ignore.case = TRUE)]
+  out$python_pinned <- length(out$python_files) > 0
+
   out$mechanisms <- unique(out$mechanisms)
   out$r_versions <- unique(out$r_versions)
   out$pinned <- length(out$mechanisms) > 0
   out
+}
+
+#' Whether the code's environment is written down, per language
+#'
+#' R code needs one of `.code_version_pin_check()`'s R mechanisms (`pinned`),
+#' Python code a list of Python packages (`python_pinned`). Code in neither
+#' language is judged by the R mechanisms, as before Python was checked.
+#'
+#' @param version_pin the result of `.code_version_pin_check()`
+#' @param langs the languages of the code files (`code_files$language`)
+#'
+#' @returns TRUE or FALSE
+#' @keywords internal
+.code_env_pinned <- function(version_pin, langs) {
+  has_r <- "R" %in% langs
+  has_py <- "Python" %in% langs
+  if (!has_r && !has_py) return(isTRUE(version_pin$pinned))
+  (!has_r || isTRUE(version_pin$pinned)) &&
+    (!has_py || isTRUE(version_pin$python_pinned))
 }
 
 #' Get files referenced in code

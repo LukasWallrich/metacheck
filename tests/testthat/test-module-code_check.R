@@ -279,6 +279,42 @@ test_that("code_check flags no pinned environment as a reproducibility gap", {
   expect_true(any(grepl("renv.lock", mo$report, fixed = TRUE)))
 })
 
+test_that("code_check gives Python code Python advice on package versions", {
+  tmp <- withr::local_tempdir()
+  writeLines(c("# analysis", "import numpy as np", "x = np.zeros(3)"), file.path(tmp, "analysis.py"))
+
+  mo <- module_run(test_paper(), "code_check", local_path = tmp)
+  expect_false(mo$summary_table$code_version_pinned)
+  expect_equal(mo$traffic_light, "yellow")
+  expect_match(mo$summary_text, "No list of Python package versions")
+  # no R advice for Python code, in the summary and in the report's
+  # paragraph on the environment
+  expect_false(grepl("renv", mo$summary_text, fixed = TRUE))
+  env_par <- mo$report[[which(mo$report == "#### Reproducible Environment") + 1]]
+  expect_false(grepl("renv", env_par, fixed = TRUE))
+  expect_match(env_par, "pip freeze", fixed = TRUE)
+
+  writeLines("numpy==1.26.4", file.path(tmp, "requirements.txt"))
+  mo <- module_run(test_paper(), "code_check", local_path = tmp)
+  expect_true(mo$summary_table$code_version_pinned)
+  expect_equal(mo$traffic_light, "green")
+  expect_match(mo$summary_text, "A list of Python packages was found (requirements.txt)", fixed = TRUE)
+  expect_true(mo$version_pin$python_pinned)
+  # pinned stays about R
+  expect_false(mo$version_pin$pinned)
+})
+
+test_that(".code_env_pinned", {
+  vp <- list(pinned = TRUE, python_pinned = FALSE)
+  expect_true(.code_env_pinned(vp, "R"))
+  expect_false(.code_env_pinned(vp, "Python"))
+  expect_false(.code_env_pinned(vp, c("R", "Python")))
+  expect_true(.code_env_pinned(list(pinned = FALSE, python_pinned = TRUE), "Python"))
+  # neither R nor Python: the R mechanisms, as before
+  expect_true(.code_env_pinned(vp, "SPSS"))
+  expect_false(.code_env_pinned(list(pinned = FALSE), "Stata"))
+})
+
 test_that("code_check detects a renv.lock and its R version + locked packages", {
   tmp <- withr::local_tempdir()
   writeLines(c("library(dplyr)", "x <- 1"), file.path(tmp, "analysis.R"))

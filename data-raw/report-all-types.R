@@ -1,7 +1,7 @@
 # Runs every built-in module once against the demo paper, then renders all
-# four report_type() combinations (full, brief, simple, simple_brief) from
-# that single run -- so comparing the four doesn't mean re-running every
-# module four times over. Output goes to the gitignored tmp_output/ folder.
+# five report types (full, brief, simple, simple_brief, checklist) from
+# that single run -- so comparing them doesn't mean re-running every
+# module once per type. Output goes to the gitignored tmp_output/ folder.
 #
 # The module run itself (network calls, ~30 modules) is the slow part, so its
 # result is cached to tmp_output/module_output.rds. Re-running this script
@@ -56,9 +56,9 @@ render_report <- function(report_type, out_dir, paper, module_output) {
   report_text <- report_qmd(module_output, paper)
 
   if (.report_is_static(report_type())) {
-    # Same plain-Pandoc path report() itself uses for "simple"/"simple_brief"
-    # -- see report()'s own comment for why Quarto's HTML format is skipped
-    # entirely for these two.
+    # Same plain-Pandoc path report() itself uses for "simple"/"simple_brief"/
+    # "checklist" -- see report()'s own comment for why Quarto's HTML format
+    # is skipped entirely for these.
     input_rmd <- file.path(out_dir, paste0("report_", report_type(), ".Rmd"))
     output_html <- sub("\\.Rmd$", ".html", input_rmd)
     writeLines(report_text, input_rmd)
@@ -88,7 +88,7 @@ render_report <- function(report_type, out_dir, paper, module_output) {
   output_html
 }
 
-report_types <- c("full", "brief", "simple", "simple_brief")
+report_types <- c("full", "brief", "simple", "simple_brief", "checklist")
 output_files <- sapply(report_types, render_report,
                        out_dir = out_dir, paper = paper,
                        module_output = module_output)
@@ -99,3 +99,4 @@ print(output_files)
 # browseURL(output_files[["brief"]])
 # browseURL(output_files[["simple"]])
 # browseURL(output_files[["simple_brief"]])
+# browseURL(output_files[["checklist"]])

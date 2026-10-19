@@ -7,9 +7,9 @@
 report_type(report_type = NULL)
 }
 \arguments{
-\item{report_type}{if one of \code{"full"}, \code{"brief"}, \code{"simple"}, or
-\code{"simple_brief"}, sets the report type; \code{NULL} (the default) returns the
-current setting without changing it}
+\item{report_type}{if one of \code{"full"}, \code{"brief"}, \code{"simple"},
+\code{"simple_brief"} or \code{"checklist"}, sets the report type; \code{NULL} (the
+default) returns the current setting without changing it}
 }
 \value{
 the current option value
@@ -38,11 +38,36 @@ These two axes combine into four values: \code{"full"} (default), \code{"brief"}
 tabbed output (e.g. \code{data_check}'s per-file table tabset) check this
 setting themselves, since they build their markdown/HTML while a module
 runs -- before \code{\link[=report]{report()}} ever selects a template.
+
+A fifth value, \code{"checklist"}, lays the report out by check instead of by
+module: every check of every module is sorted into to fix, to improve,
+decide by hand, for information, fine and not applicable, and each check
+that needs work says what was found and what to do on separate lines. It is
+rendered like \code{"simple"} (static, no JavaScript), in the colours and font
+of metacheck's website. A module gives its checks as a \code{checks} data frame
+in its output, one row per check, with the columns:
+\itemize{
+\item \code{status}: \code{"fix"}, \code{"improve"}, \code{"decide"} (decide by hand), \code{"info"},
+\code{"fine"} or \code{"na"} (not applicable)
+\item \code{title}: the name of the check
+\item \code{found}: what was found (markdown)
+\item \code{todo}: what to do (markdown)
+\item and optionally \code{why} and \code{note} (markdown), \code{section} (a label shown
+next to the title), and \code{details} (markdown, for example a
+\code{\link[=scroll_table]{scroll_table()}}) with \code{details_title} (the line that unfolds it)
+}
+
+A module without \code{checks} is shown as one check: its traffic light gives
+the result (red: to fix, yellow: to improve, green: fine), its summary text
+what was found, and its report the folded details. A module can also give
+\code{intro} (a paragraph shown at the top) and \code{logo} (the path of an image
+shown next to metacheck's logo).
 }
 \examples{
 report_type()
 report_type("simple")
 report_type("brief")
 report_type("simple_brief")
+report_type("checklist")
 report_type("full")
 }
