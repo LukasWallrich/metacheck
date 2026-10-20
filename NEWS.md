@@ -54,6 +54,7 @@
 * `reproducibility_check` no longer marks a script as missing a file it writes itself (#507: U235). A Python `open(path, "w")` names its path like a read, so the script that creates the file was "missing_input" and not run, and the script reading it then failed; an R script that reads back a file it saved was likewise not run. A script's own writes now count as available to it, for R and Python
 * A zip member's CRC32 must match exactly (#507: U70). `all.equal()` accepted a CRC up to about 60 off for large values, so a corrupt download could pass the check
 * `zip_peek(cache = TRUE)` no longer keeps a failed download on disk (#507: U210). A connection failure, a rate limit or a server error passes, but the disk entry outlived the session, so the zip was not listed again until `zip_peek_cache_clear()`; it is now kept for the session only. A cache entry is written to a temporary file and renamed into place, and an entry that cannot be read is no longer returned as a cached failure
+* A file that `data_check` takes out of a zip, tar or compressed file has its own `file_type` from its extension, not the archive's (#507: U213). The rows for an archive's files were copies of the archive's row, so a CSV from `data.zip` was typed "archive"
 
 # metacheck 0.4.0
 

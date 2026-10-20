@@ -315,6 +315,9 @@ test_that(".expand_zip keeps inner data files and drops inner materials", {
   # inner rows inherit the zip's repo/paper, lose their own URL
   expect_true(all(rows$paper_id == "p.1"))
   expect_true(all(is.na(rows$file_url)))
+  # each file takes its own type, not the zip's "archive" (U213)
+  expect_equal(rows$file_type[rows$file_name == "study.csv"], "data")
+  expect_equal(rows$file_type[rows$file_name == "README.txt"], "text")
 })
 
 # ── Hosts that refuse HEAD (issue #424) ─────────────────────────────────────
@@ -1011,6 +1014,7 @@ test_that(".expand_zip and .expand_tar unpack only kept members within the limit
   writeLines("# Read me", file.path(src, "README.md"))
   members <- c("big.csv", "small.csv", "notes.txt", "README.md")
   row <- .archive_row_472()
+  row$file_type <- "archive"
 
   z <- file.path(d, "data.zip")
   withr::with_dir(src, utils::zip(z, members, flags = "-q"))
@@ -1031,6 +1035,8 @@ test_that(".expand_zip and .expand_tar unpack only kept members within the limit
     expect_setequal(rows$file_name, c("small.csv", "README.md", "big.csv"))
     expect_true(is.na(rows$file_location[rows$file_name == "big.csv"]))
     expect_equal(attr(rows, "oversize")$file_name, "big.csv")
+    # a file over the limit takes its own type too (U213)
+    expect_equal(rows$file_type[rows$file_name == "big.csv"], "data")
     if (!grepl("tar.gz$", a))   # a compressed tar gives no size before unpacking
       expect_equal(attr(rows, "oversize")$file_size, file.size(file.path(src, "big.csv")))
   }

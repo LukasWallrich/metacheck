@@ -1446,6 +1446,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   if ("data_format" %in% names(extra))
     extra$data_format <- data_format(tolower(tools::file_ext(name)))
   if ("file_url" %in% names(extra))  extra$file_url  <- NA_character_
+  if ("file_type" %in% names(extra)) extra$file_type <- .inner_file_type(name)
   out <- dplyr::bind_rows(rows, extra)
   attr(out, "oversize") <- data.frame(file_name = basename(name),
                                       file_size = as.numeric(file_size))
@@ -1482,7 +1483,16 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   if ("data_format" %in% names(rows)) rows$data_format <- fmt
   # Inner files came from a local extraction, not a remote URL of their own.
   if ("file_url" %in% names(rows))    rows$file_url    <- NA_character_
+  if ("file_type" %in% names(rows))   rows$file_type   <- .inner_file_type(rel)
   rows
+}
+
+# Each file's own type from its extension (`file_types`, as repo_check types a
+# repository's files), NA without a known one. The rows for an archive's files
+# are copies of the archive's row, so every file kept the type "archive" (U213).
+.inner_file_type <- function(name) {
+  ext <- tolower(tools::file_ext(name))
+  metacheck::file_types$type[match(ext, metacheck::file_types$ext)]
 }
 
 # Expand a downloaded zip and return rows for its DATA-type inner files, ready to
