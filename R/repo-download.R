@@ -1706,7 +1706,10 @@ download_repo_files <- function(files,
       # actually hitting the hourly cap repeatedly -- a deliberate,
       # observed-behaviour-driven adjustment, not a re-run of that sweep.
       n_wanted   <- length(ridx)
-      record_n   <- sum(files$repo_url == repo)
+      # na.rm: a row without a repo_url made this NA, and with 13-50 wanted
+      # files the if() below stopped with "missing value where TRUE/FALSE
+      # needed" (U74)
+      record_n   <- sum(files$repo_url == repo, na.rm = TRUE)
       size_why   <- .archive_size_refusal(zip_bytes, max_download_size, mb)
       quota_worth_it <- n_wanted > 12L
       worth_it <- (n_wanted > 50L || record_n <= 2L * n_wanted) && quota_worth_it
@@ -1724,6 +1727,11 @@ download_repo_files <- function(files,
         next   # leaves ridx in `remaining` for the file-by-file loop below
       }
 
+      # These rows are not cached, so a location they carry is out of date;
+      # cleared, a location after the zip means the zip wrote that file.
+      # Kept, a row the zip did not deliver counted as done and was never
+      # fetched (U74).
+      files$file_location[ridx] <- NA_character_
       message(sprintf("Downloading %s as zip (%d file%s)...",
                       repo, length(ridx), plural(length(ridx))))
       files <- .download_zip_to_cache(files, ridx, zip_url,
@@ -1759,6 +1767,11 @@ download_repo_files <- function(files,
         next   # leaves ridx in `remaining` for the file-by-file loop below
       }
       expected_bytes <- sum(as.numeric(files$file_size[ridx]), na.rm = TRUE)
+      # These rows are not cached, so a location they carry is out of date;
+      # cleared, a location after the zip means the zip wrote that file.
+      # Kept, a row the zip did not deliver counted as done and was never
+      # fetched (U74).
+      files$file_location[ridx] <- NA_character_
       message(sprintf("Downloading %s as zip (%d file%s)...",
                       repo, length(ridx), plural(length(ridx))))
       files <- .download_zip_to_cache(files, ridx, zip_url,
@@ -1798,6 +1811,11 @@ download_repo_files <- function(files,
         next   # leaves ridx in `remaining` for the file-by-file loop below
       }
       expected_bytes <- sum(as.numeric(files$file_size[ridx]), na.rm = TRUE)
+      # These rows are not cached, so a location they carry is out of date;
+      # cleared, a location after the zip means the zip wrote that file.
+      # Kept, a row the zip did not deliver counted as done and was never
+      # fetched (U74).
+      files$file_location[ridx] <- NA_character_
       message(sprintf("Downloading %s as zip (%d file%s)...",
                       repo, length(ridx), plural(length(ridx))))
       # strip_dir = TRUE: like GitHub's zipball, GitLab's archive.zip wraps
