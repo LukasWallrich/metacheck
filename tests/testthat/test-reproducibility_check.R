@@ -1394,3 +1394,22 @@ test_that("repro_materialize_layout makes the copy writable", {
   repro_materialize_layout(.repro_package_plan(structure_df), structure_df, root)
   expect_equal(as.character(file.mode(file.path(root, "raw_data/a.csv"))), "666")
 })
+
+test_that(".repro_py_manifest_pins reads only pyproject.toml's dependencies (U236)", {
+  # every quoted string was a requirement (name, version, description), Poetry's
+  # "^1.26" became "numpy^1.26" (refused by pip), and a pyproject.toml with a
+  # string not starting like a package name stopped the function
+  pep621 <- c('[project]', 'name = "analysis"', 'version = "0.1"',
+              'description = "Code for the paper"', 'requires-python = ">=3.9"',
+              'dependencies = [', '  "numpy>=1.24",', '  "pandas",', ']')
+  expect_equal(.repro_py_manifest_pins(pep621)$requirement, c("numpy>=1.24", "pandas"))
+  poetry <- c('[tool.poetry]', 'name = "analysis"', '[tool.poetry.dependencies]',
+              'python = "^3.9"', 'numpy = "^1.26"', 'scipy = "~1.11"', 'pandas = "*"',
+              'statsmodels = { version = "^0.14", optional = true }', 'seaborn = "0.13.2"')
+  expect_equal(.repro_py_manifest_pins(poetry)$requirement,
+               c("numpy>=1.26,<2.0", "scipy>=1.11,<1.12", "pandas",
+                 "statsmodels>=0.14,<0.15", "seaborn==0.13.2"))
+  # requirements.txt: inline comments and options are dropped
+  expect_equal(.repro_py_manifest_pins(c("numpy==1.26  # pinned", "pandas>=2.0 --hash=sha256:abc"))$requirement,
+               c("numpy==1.26", "pandas>=2.0"))
+})

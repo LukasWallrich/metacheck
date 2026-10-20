@@ -208,17 +208,23 @@ repro_dependencies_py <- function(code_text, manifest_text = NULL) {
 #' A `requirements.txt` line is `package`, `package==1.2.3`, `package>=1.2`,
 #' a VCS/URL install (`git+https://...#egg=package`, `package @ https://...`),
 #' or a comment/blank line (skipped, along with `-r other.txt`/`-e .`/`--...`
-#' option lines, which name no installable package at all). A
-#' `pyproject.toml`'s dependency ARRAY entries (`dependencies = [...]` or
-#' Poetry's `[tool.poetry.dependencies]` table) are each one requirement
-#' STRING in the same `package==1.2.3`-style shape, just TOML-quoted — this
-#' only reads the quoted strings themselves, not the surrounding TOML
-#' structure, so it works for either file without a TOML parser dependency.
+#' option lines, which name no installable package at all); an inline comment
+#' (`numpy==1.26  # pinned`) and per-requirement options (`--hash=...`) are
+#' dropped. In a `pyproject.toml` only the dependency declarations are read:
+#' the strings of `[project]`'s `dependencies = [...]` array, and the
+#' `name = "spec"` / `name = { version = "spec", ... }` lines of
+#' `[tool.poetry.dependencies]` (not `python`). Every other quoted string of
+#' the file (`name = "analysis"`, the version, the description) was read as a
+#' requirement before, and a file whose strings did not all start like a
+#' package name stopped the function (U236). Poetry's `^` and `~` versions are
+#' written as pip ranges (`^1.26` -> `>=1.26,<2.0`, `~1.11` -> `>=1.11,<1.12`),
+#' a bare version as `==`, and `*` as no version, since pip refuses Poetry's
+#' own syntax.
 #'
 #' @param manifest_text character vector of the manifest file's lines, or NULL
 #'
 #' @returns a data frame with `package` (lowercased, as PyPI names are
-#'   case-insensitive) and `requirement` (the raw requirement text, for
+#'   case-insensitive) and `requirement` (the requirement text, for
 #'   `repro_install_deps_py()`/`repro_install_deps_py_docker()` to pass to
 #'   `pip install` verbatim). Empty frame when `manifest_text` is NULL/empty.
 #' @keywords internal
@@ -228,38 +234,94 @@ repro_dependencies_py <- function(code_text, manifest_text = NULL) {
 
   lines <- trimws(manifest_text)
   lines <- lines[nzchar(lines) & !grepl("^#", lines)]
-  # pyproject.toml: pull the quoted requirement strings out of a
-  # `dependencies = [...]` array or a Poetry table line (`numpy = "^1.26"` ->
-  # treated as `numpy^1.26`, close enough for pip to still resolve a name
-  # from — Poetry's own caret/tilde operators are not pip syntax, but the
-  # bare package NAME, which is all repro_dependencies_py() actually keys
-  # on, is still recovered correctly either way).
-  is_toml <- any(grepl("^\\[tool\\.poetry|^dependencies\\s*=|^\\[project\\]", lines))
-  if (is_toml) {
-    quoted <- regmatches(lines, gregexpr("(['\"])((?:[^'\"\\\\]|\\\\.)*)\\1",
-                                         lines, perl = TRUE))
-    reqs <- unlist(quoted)
-    reqs <- gsub("^['\"]|['\"]$", "", reqs)
-    poetry_kv <- regmatches(lines, regexec(
-      "^([A-Za-z0-9_.-]+)\\s*=\\s*[\"']([^\"']+)[\"']", lines, perl = TRUE))
-    poetry_kv <- Filter(function(x) length(x) == 3, poetry_kv)
-    poetry_reqs <- vapply(poetry_kv, function(x) paste0(x[2], x[3]), character(1))
-    reqs <- unique(c(reqs[nzchar(reqs)], poetry_reqs))
-  } else {
-    # requirements.txt: drop option lines (-r/-e/--...) and VCS/URL installs'
-    # leading flags; keep the rest as one requirement per (non-empty,
-    # non-comment) line, already filtered above.
-    reqs <- lines[!grepl("^(-r|-e|--)", lines)]
+  is_toml <- any(grepl("^\\[(project|tool\\.poetry)", lines))
+  reqs <- if (is_toml) .py_toml_requirements(lines) else {
+    # requirements.txt: drop option lines (-r/-e/--...), then each line's
+    # inline comment and per-requirement options (" --hash=...")
+    r <- lines[!grepl("^(-r|-e|--)", lines)]
+    r <- sub("\\s+#.*$", "", r)
+    trimws(sub("\\s+--\\S.*$", "", r))
   }
+  reqs <- reqs[nzchar(reqs)]
   if (length(reqs) == 0) return(empty)
 
   # The package name is the leading identifier before any version
   # specifier (==, >=, <=, ~=, !=, <, >), extras (`pkg[extra]`), or an
-  # `@`/`#egg=`-style VCS/URL marker.
+  # `@`/`#egg=`-style VCS/URL marker. regexpr() keeps one entry per
+  # requirement (regmatches() dropped non-matches, which misaligned the two
+  # columns and stopped data.frame()).
   name_pat <- "^([A-Za-z0-9][A-Za-z0-9._-]*)"
-  m <- regmatches(reqs, regexpr(name_pat, reqs, perl = TRUE))
-  ok <- nzchar(m)
-  data.frame(package = tolower(m[ok]), requirement = reqs[ok]) |> unique()
+  hit <- regexpr(name_pat, reqs, perl = TRUE)
+  ok <- hit > 0
+  if (!any(ok)) return(empty)
+  name <- substr(reqs[ok], 1, attr(hit, "match.length")[ok])
+  data.frame(package = tolower(name), requirement = reqs[ok]) |> unique()
+}
+
+# The requirement strings a pyproject.toml declares (see
+# .repro_py_manifest_pins()): [project] dependencies and the Poetry
+# dependency table, read section by section from `lines` (trimmed, without
+# blank or comment lines).
+.py_toml_requirements <- function(lines) {
+  out <- character(0)
+  section <- ""
+  in_array <- FALSE
+  unquote <- function(x) {
+    m <- regmatches(x, gregexpr("(['\"])((?:[^'\"\\\\]|\\\\.)*)\\1", x, perl = TRUE))[[1]]
+    gsub("^['\"]|['\"]$", "", m)
+  }
+  for (ln in lines) {
+    if (in_array) {
+      out <- c(out, unquote(sub("\\s+#.*$", "", ln)))
+      if (grepl("\\]", ln)) in_array <- FALSE
+      next
+    }
+    if (grepl("^\\[", ln)) {
+      section <- sub("^\\[+\\s*([^]]*?)\\s*\\]+.*$", "\\1", ln)
+      next
+    }
+    if (section == "project" && grepl("^dependencies\\s*=", ln)) {
+      rest <- sub("^dependencies\\s*=\\s*", "", ln)
+      out <- c(out, unquote(rest))
+      in_array <- !grepl("\\]", rest)
+    } else if (grepl("^tool\\.poetry(\\.group\\.[^.]+)?\\.dependencies$", section)) {
+      m <- regmatches(ln, regexec("^([A-Za-z0-9_.-]+)\\s*=\\s*(.*)$", ln, perl = TRUE))[[1]]
+      if (length(m) != 3 || tolower(m[2]) == "python") next
+      value <- m[3]
+      spec <- if (grepl("^\\{", value)) {
+        v <- regmatches(value, regexec("version\\s*=\\s*['\"]([^'\"]*)['\"]", value))[[1]]
+        if (length(v) == 2) v[2] else ""
+      } else unquote(value)[1]
+      out <- c(out, paste0(m[2], .poetry_to_pip(spec %||% "")))
+    }
+  }
+  trimws(out)
+}
+
+# A Poetry version constraint as a pip one: "^1.26" -> ">=1.26,<2.0",
+# "^0.3" -> ">=0.3,<0.4", "~1.11" -> ">=1.11,<1.12", "1.2.3" -> "==1.2.3",
+# "*" or "" -> "" (any version); pip operators (">=1.0") are kept.
+.poetry_to_pip <- function(spec) {
+  spec <- trimws(spec)
+  if (is.na(spec) || !nzchar(spec) || spec == "*") return("")
+  if (grepl("^[<>=!~]=|^[<>]", spec)) return(spec)
+  op <- substr(spec, 1, 1)
+  ver <- if (op %in% c("^", "~")) substring(spec, 2) else spec
+  parts <- suppressWarnings(as.integer(strsplit(ver, ".", fixed = TRUE)[[1]]))
+  if (!length(parts) || anyNA(parts)) return(if (op %in% c("^", "~")) "" else paste0("==", spec))
+  if (op == "^") {
+    # the first non-zero part may not change (only the last one given, if all zero)
+    i <- which(parts != 0)[1]
+    if (is.na(i)) i <- length(parts)
+  } else if (op == "~") {
+    i <- if (length(parts) >= 2) 2 else 1
+  } else {
+    return(paste0("==", ver))
+  }
+  upper <- parts[seq_len(i)]
+  upper[i] <- upper[i] + 1L
+  if (length(upper) < 2) upper <- c(upper, 0L)
+  paste0(">=", ver, ",<", paste(upper, collapse = "."))
 }
 
 # The Python standard library's top-level module names (3.10+), analogous to

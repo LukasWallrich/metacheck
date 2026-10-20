@@ -24,6 +24,7 @@
 * An AsPredicted page that answers with an error status (removed, private) or cannot be reached no longer stops `prereg_check`; the error is recorded for that page, with a warning (#507: U54)
 * `read_stat_tables()` of a path that is not a zip archive (another file, an empty zip, a folder) returns an empty list instead of stopping (#507: U137)
 * `check_orcid()` returns FALSE for NA or an ORCiD with an X before the check digit, instead of stopping; `pubpeer_comments()` sends a single DOI as a list, ignores feedback without an id (which stopped it) and keeps one row per DOI; the abstract rebuilt from OpenAlex no longer stops on an empty index; and `regcheck_start_local(method = "docker")` uses `port` (#507: U14)
+* `reproducibility_check` reads Python dependencies from a `pyproject.toml` properly (#507: U236): only `[project]` `dependencies` and the Poetry dependency table (without `python`) are read; every quoted string of the file (the project name, its version, the first word of its description) became a requirement, and some files stopped the check. Poetry versions are written for pip (`^1.26` as `>=1.26,<2.0`), and a `requirements.txt` line loses its inline comment and options
 
 # metacheck 0.4.0
 
