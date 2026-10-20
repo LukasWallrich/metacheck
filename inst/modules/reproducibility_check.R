@@ -1370,14 +1370,17 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   # "Produced upstream" must respect the run order: a file counts as available
   # to script S only when some script that runs *before* S writes it. The flat
   # pool of all writes would also excuse a file that is only produced later,
-  # which cannot help S actually run.
+  # which cannot help S actually run. A file S writes itself is not one it is
+  # missing either: a script that reads back what it saved was "missing_input"
+  # and not run (U235).
   writes_by_file <- io$writes %||% list()
   names(writes_by_file) <- io$file_name %||% names(writes_by_file)
   produced_before <- lapply(seq_len(n_code), function(i) {
+    own <- unlist(writes_by_file[r_files$file_name[i]], use.names = FALSE)
     ord_i <- file_order[i]
-    if (is.na(ord_i)) return(character(0))
-    earlier <- r_files$file_name[!is.na(file_order) & file_order < ord_i]
-    unique(tolower(unlist(writes_by_file[earlier], use.names = FALSE)))
+    earlier <- if (is.na(ord_i)) character(0) else
+      r_files$file_name[!is.na(file_order) & file_order < ord_i]
+    unique(tolower(c(own, unlist(writes_by_file[earlier], use.names = FALSE))))
   })
 
   # Per-file unresolved inputs, kept as names so the table can say *why* a file
@@ -2554,11 +2557,14 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   py_writes_by_file <- py_io$writes %||% list()
   names(py_writes_by_file) <- py_io$file_name %||% names(py_writes_by_file)
+  # a file the script writes itself counts too: open(path, "w") names its path
+  # like a read, so the script that creates the file was "missing_input" (U235)
   py_produced_before <- lapply(seq_len(n_py_code), function(i) {
+    own <- unlist(py_writes_by_file[py_files$file_name[i]], use.names = FALSE)
     ord_i <- py_file_order[i]
-    if (is.na(ord_i)) return(character(0))
-    earlier <- py_files$file_name[!is.na(py_file_order) & py_file_order < ord_i]
-    unique(tolower(unlist(py_writes_by_file[earlier], use.names = FALSE)))
+    earlier <- if (is.na(ord_i)) character(0) else
+      py_files$file_name[!is.na(py_file_order) & py_file_order < ord_i]
+    unique(tolower(c(own, unlist(py_writes_by_file[earlier], use.names = FALSE))))
   })
 
   py_unresolved_list <- lapply(seq_len(n_py_code), function(i) {

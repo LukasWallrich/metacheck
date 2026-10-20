@@ -515,6 +515,23 @@ test_that("static analysis: a two-script Python pipeline is ordered by read-afte
 
   ord <- stats::setNames(mo$table$run_order, mo$table$file_name)
   expect_lt(ord[["writes_then_reads.py"]], ord[["reads_written.py"]])
+  # open("intermediate.csv", "w") names the path like a read; the script that
+  # writes it was "missing_input" and not run (U235)
+  expect_true(all(mo$table$runnable))
+})
+
+test_that("static analysis: an R script that reads back the file it saved is runnable (U235)", {
+  paper <- test_paper()
+  script <- withr::local_tempfile(fileext = ".R")
+  writeLines(c('d <- read.csv("data.csv")', 'saveRDS(d, "model.rds")',
+               'm2 <- readRDS("model.rds")'), script)
+  code_tbl <- code_tbl_row(paper, "cache.R", script)
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df))
+  mo <- module_run(fake_code, "reproducibility_check")
+  expect_true(mo$table$runnable)
 })
 
 test_that("static analysis: a paper with BOTH R and Python code combines into one summary row", {

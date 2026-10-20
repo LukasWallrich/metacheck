@@ -51,6 +51,7 @@
 * `reproducibility_check()` keeps a named argument's name when it sends a write to the output folder: `save(a, b, file = "ab.RData")` had become `save(a, b, "<out>/ab.RData")`, which saves the path as another object (#507: U134)
 * `reproducibility_check()` finds the arguments after a file name in `paste()`, `paste0()`, `sprintf()` or `file.path()` where the file name ends, not where the call starts (#507: U133). `paste(wd, "data.csv", sep = "/")` was not recognised as a built path, so only its file name was replaced, giving "wd/<sandbox path>"; the whole call is now replaced. `paste0(path, ".R")` was taken as a reference to a file ".R"
 * `repro_file_io()` counts a Python `open()` call as a write only by its mode argument (positional or `mode =`): `w`, `a`, `x` or `r+`, with `b`, `t` or `+` (#507: U240). Any quoted word with a w, a or x in it counted, so `open(p, encoding = "ascii")` made the file an output that orders the scripts, and `open(p, "r+")` did not
+* `reproducibility_check` no longer marks a script as missing a file it writes itself (#507: U235). A Python `open(path, "w")` names its path like a read, so the script that creates the file was "missing_input" and not run, and the script reading it then failed; an R script that reads back a file it saved was likewise not run. A script's own writes now count as available to it, for R and Python
 
 # metacheck 0.4.0
 
