@@ -1974,6 +1974,9 @@ text_peek <- function(path, n = 20L) {
   }
   if (is.na(txt)) return(character(0))
 
+  # an 8-bit (Latin-1) file is converted before any string function, which
+  # stopped on it ("input string 1 is invalid", U63)
+  if (!validUTF8(txt)) txt <- iconv(txt, from = "latin1", to = "UTF-8")
   txt <- sub("^\ufeff", "", txt)                    # strip a BOM
   lines <- strsplit(txt, "\r\n|\n|\r")[[1]]
   utils::head(.utf8_lines(lines), n)
@@ -2174,7 +2177,9 @@ txt_classify_content <- function(path) {
     utils::read.delim(path, sep = sep, header = header, nrows = n_rows,
                       check.names = FALSE))
   has_invalid <- any(vapply(df, function(col) {
-    is.character(col) && any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")))
+    # & !is.na(col): an NA cell is not invalid UTF-8; counting it re-read every
+    # file with an "NA" cell as Latin-1, so "é" became "Ã©" (U64)
+    is.character(col) && any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")) & !is.na(col))
   }, logical(1)))
   if (has_invalid) {
     df <- suppressWarnings(
@@ -4091,7 +4096,7 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
         } else {
           has_invalid <- any(vapply(raw, function(col) {
             is.character(col) &&
-              any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")))
+              any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")) & !is.na(col))  # U64
           }, logical(1)))
           if (has_invalid) {
             raw <- tryCatch(
@@ -4790,13 +4795,16 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
   # column with a stray decimal value (e.g. 3.5 on an otherwise-integer 1-7
   # scale) hit this on every run.
   if (v == round(v)) {
-    ds <- strsplit(as.character(av), "")[[1]]
+    # the decimal digits: as.character(1e5) is "1e+05", whose "1e+0" read as 1,
+    # so 100000 was "a typo of 1" (U59)
+    av_chr <- format(av, scientific = FALSE, trim = TRUE)
+    ds <- strsplit(av_chr, "")[[1]]
     if (length(ds) >= 2) {
       # each single digit (33->3, 25->2 or 5, 105->1/0/5)
       cand <- c(cand, as.integer(ds))
       # drop the leading digit (25 -> 5, 105 -> 5), drop the trailing (25 -> 2)
-      cand <- c(cand, as.integer(substring(as.character(av), 2)),
-                as.integer(substring(as.character(av), 1, nchar(as.character(av)) - 1)))
+      cand <- c(cand, as.integer(substring(av_chr, 2)),
+                as.integer(substring(av_chr, 1, nchar(av_chr) - 1)))
     }
   }
   # sign flip (a -3 typed on a 1..7 scale, or a 3 that should be -3 on a bipolar)
@@ -5299,7 +5307,9 @@ data_check_colname_collisions <- function(col_names) {
     members <- nms[key == k]
     for (i in which(key == k)) {
       others <- unique(members[members != nms[i]])
-      out[[nms[i]]] <- sprintf(
+      # setNames(), not out[[name]]: a blank name "" could be stored that way
+      # but never read back, so a blank column's collision was lost (U56)
+      out <- c(out, stats::setNames(list(sprintf(
         "Column name becomes \"%s\" when special characters are replaced, the same as %s: tools that sanitize names (R's make.names(), SPSS/SAS/Stata import, codebook section links) cannot tell these columns apart.",
         k,
         if (length(others) == 0)
@@ -5307,7 +5317,7 @@ data_check_colname_collisions <- function(col_names) {
                   sum(members == nms[i]) - 1L,
                   plural(sum(members == nms[i]) - 1L))
         else
-          paste(sprintf('"%s"', utils::head(others, 5)), collapse = ", "))
+          paste(sprintf('"%s"', utils::head(others, 5)), collapse = ", "))), nms[i]))
     }
   }
   out

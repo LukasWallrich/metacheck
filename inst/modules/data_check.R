@@ -1632,8 +1632,10 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # file names, scripts, metadata keys) and often signal a misparsed header.
       cn <- data_check_colname(col)
       if (cn$problem) col_finds[["Problematic column name"]] <- cn$message
-      if (!is.null(coll[[col]]))
-        col_finds[["Colliding column names"]] <- coll[[col]]
+      # by name comparison, which also finds a blank name (U56)
+      coll_hit <- coll[names(coll) %in% col]
+      if (length(coll_hit))
+        col_finds[["Colliding column names"]] <- coll_hit[[1]]
 
       # Mixed / legacy encoding: values whose bytes were not valid UTF-8 at
       # read time. metacheck re-interpreted them as Latin-1 to continue, but

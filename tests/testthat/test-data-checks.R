@@ -1470,3 +1470,21 @@ test_that("a column with value labels but no variable label gets no variable lab
   expect_true("Question 2" %in% lab$label)
   expect_equal(metacheck:::.pad_to(1:2, 4), c(1L, 2L, NA, NA))
 })
+
+test_that("blank column names collide; 1e5 digits; Latin-1 text; UTF-8 with NA cells (U56, U59, U63, U64)", {
+  # a blank name's collision could not be looked up
+  coll <- data_check_colname_collisions(c("", "", "x"))
+  expect_true("" %in% names(coll))
+  # 1e5 gave its digits as "1e+05", with coercion warnings
+  expect_no_warning(metacheck:::.scale_typo_of(1e5, 1, 7))
+  expect_equal(metacheck:::.scale_typo_of(1e5, 1, 7), metacheck:::.scale_typo_of(100000L, 1, 7))
+  # an 8-bit (Latin-1) text file stopped text_peek()
+  f <- withr::local_tempfile(fileext = ".txt")
+  writeBin(c(charToRaw("caf"), as.raw(0xe9), charToRaw(" notes\nline 2\n")), f)
+  expect_equal(text_peek(f)[1], "café notes")
+  # a UTF-8 file with an "NA" cell was re-read as Latin-1 ("é" became "Ã©")
+  csv <- withr::local_tempfile(fileext = ".csv")
+  writeLines(enc2utf8(c("name,score", "café,1", "NA,2")), csv, useBytes = TRUE)
+  d <- data_read_head(csv)
+  expect_true("café" %in% d[[1]])
+})

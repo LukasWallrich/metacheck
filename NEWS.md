@@ -41,6 +41,7 @@
 * `convert()` of GROBID XML files works offline: it looked up the online conversion servers although XML is converted locally, and stopped with "online versions not available" (#507: U18). `papers_available()` returns an empty table for a repository whose releases hold no `.rds` files instead of stopping, so `papers_load()` reports the corpus as not found
 * GROBID XML files with a page range giving only `from` or `to`, a reference without its raw text, or a link without text no longer fail to load; and a paper whose TEI header has no DOI no longer gets its first reference's DOI (#507: U17)
 * `export_spv_html()` no longer fails on an SPSS table whose last level label is empty, or on a chart it cannot draw (that chart is left out with a note); images in exported JASP, jamovi and SPSS HTML are embedded at every occurrence (only the first was), and an image path with a malformed `%`-escape no longer stops the export (#507: U148)
+* `data_check` reports a collision between blank column names (it was stored where it could not be found), reads the digits of 100000 stored as a number the same as of the integer 100000 (it read "1e+05", with warnings), peeks into 8-bit (Latin-1) text files instead of failing, and no longer re-reads a valid UTF-8 file with an "NA" cell as Latin-1, which turned "é" into "Ã©" (#507: U56, U59, U63, U64)
 
 # metacheck 0.4.0
 
