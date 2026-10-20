@@ -191,9 +191,11 @@ dataone_links <- function(paper) {
   # own "doi:..." form (e.g. ".../view/doi:10.18739/A2GT5FG86") -- confirmed
   # live 2026-09-12 by resolving a real citation's DOI and following the
   # redirect.
-  match <- regexec("doi:(10\\.[0-9]+/[A-Za-z0-9._-]+)", dataone_url, perl = TRUE, ignore.case = TRUE)
+  # A marked PID may contain "/", as a bare one may (below); a final "." is
+  # the sentence's full stop, not part of the PID (U40).
+  match <- regexec("doi:(10\\.[0-9]+/[A-Za-z0-9._/-]+)", dataone_url, perl = TRUE, ignore.case = TRUE)
   groups <- regmatches(dataone_url, match)[[1]]
-  if (length(groups) >= 2) return(paste0("doi:", groups[[2]]))
+  if (length(groups) >= 2) return(paste0("doi:", sub("[./]+$", "", groups[[2]])))
 
   # A bare DOI (with or without a doi.org/https:// prefix) has no "doi:"
   # marker of its own -- add one, since that is the literal PID string
@@ -205,7 +207,7 @@ dataone_links <- function(paper) {
   # dropped this whole class of PID before this fix.
   match <- regexec("(?:doi\\.org/)?(10\\.[0-9]+/[A-Za-z0-9._/-]+)$", dataone_url, perl = TRUE, ignore.case = TRUE)
   groups <- regmatches(dataone_url, match)[[1]]
-  if (length(groups) >= 2) return(paste0("doi:", groups[[2]]))
+  if (length(groups) >= 2) return(paste0("doi:", sub("[./]+$", "", groups[[2]])))
 
   NA_character_
 }
@@ -264,6 +266,9 @@ dataone_info <- function(dataone_url, id_col = 1, pb = NULL, cache = FALSE) {
     unique()
   ids <- ids[!is.na(ids$dataone_url), , drop = FALSE]
   valid <- ids[!is.na(ids$dataone_host) & !is.na(ids$dataone_pid), , drop = FALSE] |> unique()
+  # one fetch per dataset: unique on the URL too, two URLs for one dataset
+  # fetched it twice, and the join below then gave each URL two rows (U35)
+  valid <- valid[!duplicated(valid[, c("dataone_host", "dataone_pid")]), , drop = FALSE]
 
   if (nrow(valid) == 0) {
     ("No valid DataONE links") |>
@@ -469,10 +474,16 @@ dataone_info <- function(dataone_url, id_col = 1, pb = NULL, cache = FALSE) {
   # %empty_or% (not %||%) because a name part can come back as a length-zero
   # value rather than NULL; vapply(..., character(1)) requires exactly
   # length 1 from every call.
+  # a missing name part is NA, which %empty_or% does not replace, so a
+  # surname-only creator was "NA Smith" (U40)
+  name_part <- function(cr, part) {
+    v <- xml2::xml_text(xml2::xml_find_first(cr, sprintf(".//*[local-name()='%s']", part)))
+    if (length(v) == 0 || is.na(v)) "" else trimws(v)
+  }
   authors <- vapply(creators, function(cr) {
-    given <- xml2::xml_text(xml2::xml_find_first(cr, ".//*[local-name()='givenName']")) %empty_or% ""
-    surn  <- xml2::xml_text(xml2::xml_find_first(cr, ".//*[local-name()='surName']")) %empty_or% ""
-    org   <- xml2::xml_text(xml2::xml_find_first(cr, ".//*[local-name()='organizationName']")) %empty_or% ""
+    given <- name_part(cr, "givenName")
+    surn  <- name_part(cr, "surName")
+    org   <- name_part(cr, "organizationName")
     full <- trimws(paste(given, surn))
     if (nzchar(full)) full else if (nzchar(org)) org else NA_character_
   }, character(1))

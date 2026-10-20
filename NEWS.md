@@ -75,6 +75,7 @@
 * `repo_check` de-duplicates files one by one: a remote file by its URL and path, a local file by its location. The URL and the path were tested separately, so a file was dropped when its URL appeared on one other row and its path on another (#507: U121)
 * `repo_check` leaves out every private OSF file, not only when it is the listing's one row; and a local file that `file_category()` cannot place takes its extension's type, so a local .zip or .tar.gz counts as an archive file, as the same file in a repository does (#507: U123)
 * 4TU.ResearchData: a DOI with a uuid that starts with digits (10.4121/7f866e02-...) is looked up by its uuid; the digits were taken as the id ("7"). Short article addresses (data.4tu.nl/articles/_/<id>/<version>) and addresses of other item types (articles/software/<title>/<id>) get their id, and an article known only by its uuid is downloaded (#507: U41, U156)
+* `dataone_info()` fetches a dataset once when several URLs name it (it was fetched once per URL, and the join then gave each URL one row per fetch: 2 URLs, 4 rows). A DataONE PID no longer keeps a sentence's final full stop ("doi:10.5063/PG1Q4B."), a PID marked "doi:" may contain "/", and a creator with a missing name part is no longer written "NA Smith" (#507: U35, U40)
 
 # metacheck 0.4.0
 
