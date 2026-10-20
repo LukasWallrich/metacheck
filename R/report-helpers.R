@@ -1250,6 +1250,9 @@ cap_gate_count <- function(n_needed, param, current, unit = "item",
 #' @examples
 #' link("https://scienceverse.org")
 link <- function(url, text = url, new_window = TRUE, type = "") {
+  # recorded before the DOI prefix is added: sprintf() made NA into
+  # "https://doi.org/NA", so a missing DOI became a link (U8)
+  missing_url <- is.na(url)
   if (type == "doi") {
     url <- gsub("https?://doi.org/", "", url) |>
       sprintf("https://doi.org/%s", x = _)
@@ -1262,7 +1265,7 @@ link <- function(url, text = url, new_window = TRUE, type = "") {
     "<a href='%s'%s>%s</a>",
     url, nw, text
   )
-  links[is.na(url)] <- NA
+  links[missing_url | is.na(url)] <- NA
 
   return(links)
 }

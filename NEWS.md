@@ -82,6 +82,8 @@
 * `code_extract_r()` reads an .Rmd or .qmd with a numeric or logical YAML chunk label (`#| label: 3`): knitr used the label as a position and stopped ("subscript out of bounds"), so `code_check` skipped the file (#507: U153)
 * `paper_write(schema_version = "12.0")` keeps every decimal of a double exactly: jsonlite wrote 15 significant digits, so rewriting a bibr export changed values such as 0.9411764705882353 into 0.941176470588235. Such values are written with the 16 or 17 digits they need; all others as before (#507: U22)
 * Reading R output: an output line that starts with "+" stays output; every line starting with ">" or "+" was counted as part of the statement, so output lines before it were lost (#507: U140). An untitled one-line result takes the source label as its analysis, a notebook line without a `*Result` class has `call_fn` "", and an SPSS sub-heading, table or chart without `commandName` keeps the enclosing command: these fallbacks never applied, because `%||%` replaces NULL but not NA (#507: U139)
+* `link(type = "doi")` gives no link for a missing DOI; it linked to https://doi.org/NA (#507: U8)
+* `stat_output_validate()` reads a JSON document given as a string; every string was reported as "Input is not valid JSON." (#507: U136)
 
 # metacheck 0.4.0
 

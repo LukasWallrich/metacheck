@@ -463,7 +463,10 @@ stat_output_json <- function(tables, paper_id = "metacheck",
 #' @export
 stat_output_validate <- function(doc) {
   if (is.character(doc) && length(doc) == 1L) {
-    src <- if (file.exists(doc)) doc else textConnection(doc)
+    # a JSON string as it is: fromJSON() cannot read a text connection
+    # ("can only read from a binary connection"), so every JSON string was
+    # "not valid JSON" (U136)
+    src <- doc
     parsed <- tryCatch(jsonlite::fromJSON(src, simplifyVector = FALSE),
                        error = function(e) NULL)
     if (is.null(parsed))

@@ -377,3 +377,11 @@ test_that("R output: a '+' output line stays output, and an untitled result take
   o <- .r_output_oneline("t = 2.31, df = 28, p-value = 0.028", source_label = "analysis.R")
   expect_equal(o[[1]]$analysis, "analysis.R")
 })
+
+test_that("stat_output_validate reads a JSON string (U136)", {
+  # fromJSON() could not read the text connection, so every JSON string was
+  # "Input is not valid JSON."
+  v <- stat_output_validate('{"a": 1}')
+  expect_false(any(grepl("not valid JSON", v$issues)))
+  expect_true(any(grepl("not valid JSON", stat_output_validate("not json")$issues)))
+})
