@@ -4554,7 +4554,9 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
   norm_col <- normalize_varname(columns_df$column_name)
 
   # Expand range notation (e.g. "V1-V10") into individual variable rows.
-  range_pat  <- "^([A-Za-z]*)\\s*(\\d+)\\s*[-\u2013]\\s*(\\d+)$"
+  # The second number may repeat the prefix ("V1-V10") or not ("V1-10"); only
+  # the second form was expanded, though the comment named the first (U58).
+  range_pat  <- "^([A-Za-z]*)\\s*(\\d+)\\s*[-\u2013]\\s*(?:\\1)?(\\d+)$"
   range_rows <- grep(range_pat, codebook_vars_df$codebook_variable, perl = TRUE)
   if (length(range_rows) > 0) {
     expanded <- Filter(Negate(is.null), lapply(range_rows, function(i) {
@@ -4620,9 +4622,12 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
     matches  <- codebook_vars_df[name_idx, , drop = FALSE]
     scoped   <- matches[!is.na(matches$group), , drop = FALSE]
     unscoped <- matches[ is.na(matches$group), , drop = FALSE]
-    same_group   <- scoped[!is.na(scoped$group) & scoped$group == cg, , drop = FALSE]
+    # A column without a group matches only labels without one: with cg NA
+    # the comparisons were NA and selected rows of NAs, bogus labels (U58).
+    in_group     <- !is.na(cg) & scoped$group %in% cg
+    same_group   <- scoped[in_group, , drop = FALSE]
     applicable   <- rbind(unscoped, same_group)
-    other_scoped <- scoped[!is.na(scoped$group) & scoped$group != cg, , drop = FALSE]
+    other_scoped <- scoped[!in_group, , drop = FALSE]
 
     if (nrow(applicable) == 0) {
       if (nrow(other_scoped) > 0) {

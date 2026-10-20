@@ -1500,3 +1500,17 @@ test_that("a UTF-16 text file (E-Prime export) is read, not reported empty (U217
   expect_equal(names(d), c("Subject", "Trial", "RT"))
   expect_equal(nrow(d), 2)
 })
+
+test_that("codebook ranges V1-V10 expand; a column without a group gets no other group's label (U58)", {
+  cols <- data.frame(paper_id = "p", source_file = "d.csv", column_name = c("V1", "V10", "Q3"),
+                     group = NA_character_)
+  cb <- data.frame(codebook_variable = c("V1-V10", "Q1-5"), label = c("Item", "Question"),
+                   codebook_source = "cb.txt", group = NA_character_)
+  r <- match_column_labels(cols, cb)
+  expect_equal(r$label, c("Item", "Item", "Question"))
+  # a label scoped to study 2 is not applied to a column without a group
+  cb2 <- data.frame(codebook_variable = "Q3", label = "Study 2 question",
+                    codebook_source = "cb.txt", group = "study2")
+  r2 <- match_column_labels(cols[3, ], cb2)
+  expect_false(isTRUE(r2$label_status == "labelled"))
+})
