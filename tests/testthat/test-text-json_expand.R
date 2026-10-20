@@ -123,3 +123,9 @@ test_that("json_expand remove ```json", {
 
   expect_equal(expanded[, 3:5], exp)
 })
+
+test_that("json_expand returns a table without rows unchanged (U151)", {
+  # the join on the empty expansion stopped
+  tbl <- data.frame(id = integer(0), answer = character(0))
+  expect_equal(json_expand(tbl), tbl)
+})

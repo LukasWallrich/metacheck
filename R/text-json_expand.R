@@ -26,6 +26,9 @@
 json_expand <- function(table, col = "answer", suffix = c("", ".json")) {
   # handle non-table input
   if (is.vector(table)) table <- data.frame(json = table)
+  # nothing to expand: the join below stopped on the empty expansion
+  # ("Join columns in `y` must be present in the data", U151)
+  if (nrow(table) == 0) return(table)
   if (is.null(table[[col]])) col <- 1
 
   table$.temp_id. <- seq_along(table[[1]])
