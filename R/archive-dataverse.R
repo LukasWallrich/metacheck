@@ -551,20 +551,15 @@ dataverse_links <- function(paper) {
   has_url <- !is.na(url) & nzchar(url)
   if (!any(has_url)) return(data.frame(host = host, doi = doi))
 
-  host_m <- regmatches(url, regexpr(.dataverse_host_regex(), url,
-                                    ignore.case = TRUE, perl = TRUE))
-  host[has_url] <- tolower(host_m)[seq_len(sum(has_url))]
-  # regexpr/regmatches on a non-match returns character(0) for that element,
-  # which the assignment above silently drops -- realign by re-matching per
-  # element instead when any host is missing after a bulk match.
-  missing <- has_url & (is.na(host) | !nzchar(host %||% ""))
-  if (any(missing)) {
-    host[missing] <- vapply(url[missing], function(u) {
-      m <- regmatches(u, regexpr(.dataverse_host_regex(), u,
-                                 ignore.case = TRUE, perl = TRUE))
-      if (length(m) == 0) NA_character_ else tolower(m)
-    }, character(1))
-  }
+  # Each match goes back to its own URL: regmatches() drops the URLs without
+  # a match, and putting its output back by position gave a URL without a
+  # host the next URL's host (U31). The host must not continue into a longer
+  # host name: dataverse.no is not dataverse.northwestern.edu (U155).
+  host_pat <- paste0("(?:", .dataverse_host_regex(), ")(?![A-Za-z0-9-])")
+  m <- regexpr(host_pat, url, ignore.case = TRUE, perl = TRUE)
+  len <- attr(m, "match.length")
+  hit <- has_url & !is.na(m) & m > 0
+  host[hit] <- tolower(substring(url[hit], m[hit], m[hit] + len[hit] - 1L))
 
   # The label's ":" may be percent-encoded ("persistentId=doi%3A10.7910..."),
   # as a copied link often has it; the value is decoded below.

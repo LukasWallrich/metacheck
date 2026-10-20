@@ -43,6 +43,16 @@ test_that(".dataverse_parse", {
   expect_equal(nrow(.dataverse_parse(character(0))), 0)
 })
 
+test_that(".dataverse_parse gives each URL its own host (U31, U155)", {
+  # a URL without a host took the next URL's host, and dataverse.no matched
+  # the start of dataverse.northwestern.edu
+  parsed <- .dataverse_parse(c(
+    "https://doi.org/10.18167/DVN1/T0DMFJ",
+    "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/ABC123",
+    "https://dataverse.northwestern.edu/dataset.xhtml?persistentId=doi:10.18131/g3/XYZ"))
+  expect_equal(parsed$host, c("dataverse.cirad.fr", "dataverse.harvard.edu", NA))
+})
+
 
 test_that(".dataverse_info", {
   expect_true(is.function(metacheck:::.dataverse_info))
