@@ -11,7 +11,7 @@
 }
 \value{
 a data frame with \code{package} (lowercased, as PyPI names are
-case-insensitive) and \code{requirement} (the raw requirement text, for
+case-insensitive) and \code{requirement} (the requirement text, for
 \code{repro_install_deps_py()}/\code{repro_install_deps_py_docker()} to pass to
 \verb{pip install} verbatim). Empty frame when \code{manifest_text} is NULL/empty.
 }
@@ -19,11 +19,17 @@ case-insensitive) and \code{requirement} (the raw requirement text, for
 A \code{requirements.txt} line is \code{package}, \verb{package==1.2.3}, \code{package>=1.2},
 a VCS/URL install (\verb{git+https://...#egg=package}, \verb{package @ https://...}),
 or a comment/blank line (skipped, along with \verb{-r other.txt}/\verb{-e .}/\code{--...}
-option lines, which name no installable package at all). A
-\code{pyproject.toml}'s dependency ARRAY entries (\verb{dependencies = [...]} or
-Poetry's \verb{[tool.poetry.dependencies]} table) are each one requirement
-STRING in the same \verb{package==1.2.3}-style shape, just TOML-quoted — this
-only reads the quoted strings themselves, not the surrounding TOML
-structure, so it works for either file without a TOML parser dependency.
+option lines, which name no installable package at all); an inline comment
+(\code{numpy==1.26  # pinned}) and per-requirement options (\code{--hash=...}) are
+dropped. In a \code{pyproject.toml} only the dependency declarations are read:
+the strings of \verb{[project]}'s \verb{dependencies = [...]} array, and the
+\code{name = "spec"} / \verb{name = \{ version = "spec", ... \}} lines of
+\verb{[tool.poetry.dependencies]} (not \code{python}). Every other quoted string of
+the file (\code{name = "analysis"}, the version, the description) was read as a
+requirement before, and a file whose strings did not all start like a
+package name stopped the function (U236). Poetry's \code{^} and \code{~} versions are
+written as pip ranges (\verb{^1.26} -> \verb{>=1.26,<2.0}, \code{~1.11} -> \verb{>=1.11,<1.12}),
+a bare version as \code{==}, and \code{*} as no version, since pip refuses Poetry's
+own syntax.
 }
 \keyword{internal}

@@ -2299,6 +2299,21 @@ txt_classify_content <- function(path) {
   df
 }
 
+# A copy of a UTF-16 text file (one starting with a byte order mark) in UTF-8,
+# in the session's temporary folder; any other file is returned as it is.
+.utf16_as_utf8 <- function(path) {
+  bom <- tryCatch(readBin(path, "raw", n = 2), error = function(e) raw(0))
+  if (length(bom) < 2) return(path)
+  enc <- if (identical(bom, as.raw(c(0xff, 0xfe)))) "UTF-16LE" else
+    if (identical(bom, as.raw(c(0xfe, 0xff)))) "UTF-16BE" else return(path)
+  raw <- readBin(path, "raw", n = file.size(path))[-(1:2)]
+  txt <- tryCatch(iconv(list(raw), from = enc, to = "UTF-8")[[1]], error = function(e) NA)
+  if (is.na(txt)) return(path)
+  out <- tempfile(fileext = paste0(".", tools::file_ext(path)))
+  writeBin(charToRaw(enc2utf8(txt)), out)
+  out
+}
+
 #' Read the head of a data file regardless of format
 #'
 #' Reads the first `n_rows` of a tabular data file (csv/tsv/txt/dat/xlsx/xls/
@@ -2321,21 +2336,6 @@ txt_classify_content <- function(path) {
 # of "tabular", exported through .readable_extensions / data_format(). Any new
 # branch added here must be added there too, or the format will never be
 # downloaded and this reader will never be reached.
-# A copy of a UTF-16 text file (one starting with a byte order mark) in UTF-8,
-# in the session's temporary folder; any other file is returned as it is.
-.utf16_as_utf8 <- function(path) {
-  bom <- tryCatch(readBin(path, "raw", n = 2), error = function(e) raw(0))
-  if (length(bom) < 2) return(path)
-  enc <- if (identical(bom, as.raw(c(0xff, 0xfe)))) "UTF-16LE" else
-    if (identical(bom, as.raw(c(0xfe, 0xff)))) "UTF-16BE" else return(path)
-  raw <- readBin(path, "raw", n = file.size(path))[-(1:2)]
-  txt <- tryCatch(iconv(list(raw), from = enc, to = "UTF-8")[[1]], error = function(e) NA)
-  if (is.na(txt)) return(path)
-  out <- tempfile(fileext = paste0(".", tools::file_ext(path)))
-  writeBin(charToRaw(enc2utf8(txt)), out)
-  out
-}
-
 data_read_head <- function(path, n_rows = 5, sheet = NULL) {
   ext <- tolower(tools::file_ext(path))
   tryCatch({
@@ -2521,13 +2521,6 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
   })
 }
 
-# Read an .RData/.rda workspace in an ISOLATED subprocess and return its first
-# data frame (head of `n_rows`), or NULL. Isolation is essential: restoring
-# model/session objects that reference uninstalled packages prints C-level
-# diagnostics and can crash the process -- none of which must reach the caller.
-# A NULL return means the workspace holds no reusable tabular data (only models
-# / session objects, or it could not be restored at all); data_check turns that
-# into a sharing recommendation.
 # The first n rows of a data frame with each column's label, value labels
 # and class kept: head() drops the label of unclassed and factor columns, and
 # a haven_labelled column keeps its labels only when vctrs is loaded, so
@@ -2541,6 +2534,13 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
   out
 }
 
+# Read an .RData/.rda workspace in an ISOLATED subprocess and return its first
+# data frame (head of `n_rows`), or NULL. Isolation is essential: restoring
+# model/session objects that reference uninstalled packages prints C-level
+# diagnostics and can crash the process -- none of which must reach the caller.
+# A NULL return means the workspace holds no reusable tabular data (only models
+# / session objects, or it could not be restored at all); data_check turns that
+# into a sharing recommendation.
 .read_rdata_isolated <- function(path, n_rows = 5) {
   out_rds <- tempfile(fileext = ".rds")
   on.exit(unlink(out_rds), add = TRUE)
