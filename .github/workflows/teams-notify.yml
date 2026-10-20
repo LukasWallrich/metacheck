@@ -9,10 +9,16 @@ jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
+      # The commit message reaches the shell as an environment variable and jq
+      # writes the JSON, so quotes, apostrophes and line breaks in it can no
+      # longer break the command (an apostrophe made this step fail), and no
+      # part of it is run as shell code.
       - name: Send notification to Teams
+        env:
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          curl -H 'Content-Type: application/json' \
-               -d '{
-                     "text": "New push to repository: ${{ github.repository }} by ${{ github.actor }}. Commit message: ${{ github.event.head_commit.message }}"
-                   }' \
-               ${{ secrets.TEAMS_WEBHOOK_URL }}
+          jq -n --arg text "New push to repository: $REPO by $ACTOR. Commit message: $MESSAGE" '{text: $text}' |
+            curl -sS --fail -H 'Content-Type: application/json' -d @- "$TEAMS_WEBHOOK_URL"
