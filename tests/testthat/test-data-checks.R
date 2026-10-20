@@ -1488,3 +1488,15 @@ test_that("blank column names collide; 1e5 digits; Latin-1 text; UTF-8 with NA c
   d <- data_read_head(csv)
   expect_true("café" %in% d[[1]])
 })
+
+test_that("a UTF-16 text file (E-Prime export) is read, not reported empty (U217)", {
+  f <- withr::local_tempfile(fileext = ".txt")
+  txt <- "Subject\tTrial\tRT\n1\t1\t512\n1\t2\t498\n"
+  con <- file(f, "wb")
+  writeBin(as.raw(c(0xff, 0xfe)), con)
+  writeBin(iconv(txt, "UTF-8", "UTF-16LE", toRaw = TRUE)[[1]], con)
+  close(con)
+  d <- data_read_head(f)
+  expect_equal(names(d), c("Subject", "Trial", "RT"))
+  expect_equal(nrow(d), 2)
+})
