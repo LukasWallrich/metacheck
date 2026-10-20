@@ -73,6 +73,9 @@ causal_relations <- function(sentence,
   api <- "/predict"
 
   # ---- handle empty vectors gracefully ----
+  # NA sentences are not sent (they went as the text "NA"), and an all-NA
+  # input made the check below NA, which stopped it (U84)
+  sentence <- sentence[!is.na(sentence)]
   if (length(sentence) == 0 || all(trimws(sentence) == "")) {
     empty <- data.frame(
       sentence = character(0),

@@ -104,7 +104,12 @@ causal_claims <- function(paper) {
   # causal claims ----
   table <- text_search(paper) |>
     dplyr::filter(section_type == "abstract")
-  causal_title <- causal_relations(paper$info$title)
+  # every paper's title, also for a paper list (which has no $info, so its
+  # titles were never checked); a missing title is left out: NA stopped
+  # causal_relations() (U84)
+  titles <- paper_table(paper, "info", "title")$title
+  titles <- titles[!is.na(titles) & nzchar(trimws(titles))]
+  causal_title <- causal_relations(titles)
   causal_abstract <- causal_relations(table$text)
 
   ## summary_table ----

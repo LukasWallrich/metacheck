@@ -26,6 +26,7 @@
 * `check_orcid()` returns FALSE for NA or an ORCiD with an X before the check digit, instead of stopping; `pubpeer_comments()` sends a single DOI as a list, ignores feedback without an id (which stopped it) and keeps one row per DOI; the abstract rebuilt from OpenAlex no longer stops on an empty index; and `regcheck_start_local(method = "docker")` uses `port` (#507: U14)
 * `reproducibility_check` reads Python dependencies from a `pyproject.toml` properly (#507: U236): only `[project]` `dependencies` and the Poetry dependency table (without `python`) are read; every quoted string of the file (the project name, its version, the first word of its description) became a requirement, and some files stopped the check. Poetry versions are written for pip (`^1.26` as `>=1.26,<2.0`), and a `requirements.txt` line loses its inline comment and options
 * `json_expand()` returns a table without rows unchanged instead of stopping ("Join columns in `y` must be present") (#507: U151)
+* `causal_claims` no longer stops on a paper without a title, and checks the title of every paper in a paper list (a list has no `$info`, so its titles were never checked) (#507: U84). `causal_relations()` no longer sends a missing sentence as the text "NA"
 
 # metacheck 0.4.0
 
