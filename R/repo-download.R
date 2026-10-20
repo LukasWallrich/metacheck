@@ -184,6 +184,66 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
   size
 }
 
+# Which files of a dataset the size limits leave out (MB), for the
+# *_file_download() functions: over `max_file_size` each, then the largest
+# until the rest fits `max_download_size`. `exempt` (zips read member by
+# member) are never left out. Returns a logical vector; the files stay in the
+# caller's table with downloaded = FALSE, as documented -- they were removed
+# from it (U36). Each omission is reported on `pb`, as before.
+.omit_for_size <- function(size, name, exempt, max_file_size, max_download_size, pb) {
+  size <- suppressWarnings(as.numeric(size))
+  omit <- rep(FALSE, length(size))
+  say <- function(i) paste0("- omitting ", name[[i]], " (",
+                           round(size[[i]] / 1024 / 1024, 1), "MB)") |>
+    list(what = _) |>
+    pb$tick(0, tokens = _)
+  if (!is.null(max_file_size) && is.finite(max_file_size) && max_file_size > 0) {
+    for (i in which(size > max_file_size * 1024 * 1024 & !exempt)) {
+      say(i)
+      omit[i] <- TRUE
+    }
+  }
+  if (!is.null(max_download_size) && is.finite(max_download_size) && max_download_size > 0) {
+    capped <- function() which(!exempt & !omit)
+    while (length(capped()) > 0 &&
+           sum(size[capped()], na.rm = TRUE) > max_download_size * 1024 * 1024) {
+      i <- capped()[which.max(size[capped()])]
+      say(i)
+      omit[i] <- TRUE
+    }
+  }
+  omit
+}
+
+# A response's bytes, raw(0) for an empty body: resp_body_raw() refuses one
+# ("Can't retrieve empty body"), outside any tryCatch(), so one zero-byte file
+# stopped a whole *_file_download() (U36).
+.resp_bytes <- function(resp) {
+  if (httr2::resp_has_body(resp)) httr2::resp_body_raw(resp) else raw(0)
+}
+
+# The table a *_file_download() function returns when the size limits leave
+# out every file: each one listed with downloaded = FALSE and no folder (none
+# is made), instead of NULL (U36). `id_cols` are the function's own id
+# columns, e.g. list(zenodo_id = "123").
+.all_omitted_table <- function(files, id_cols) {
+  files$downloaded <- FALSE
+  files$extracted <- NA_integer_
+  files$path <- NA_character_
+  files$size_on_disk <- NA_real_
+  files$checksum_ok <- NA
+  files$folder <- NA_character_
+  for (nm in names(id_cols)) files[[nm]] <- id_cols[[nm]]
+  cols <- c("folder", names(id_cols), "id", "key", "path", "size",
+            "size_on_disk", "checksum", "checksum_ok", "self",
+            "downloaded", "extracted")
+  for (col in setdiff(cols, names(files))) files[[col]] <- NA
+  out <- files[, cols]
+  attr(out, "failed") <- data.frame(key = character(0), member = character(0),
+                                    error = character(0), stringsAsFactors = FALSE)
+  out
+}
+
 # Estimated size (bytes) of a repository's whole-archive download: the sum of
 # the file sizes listed for it in `files`, or NA when none are listed. Used
 # because no whole-archive endpoint reports its size ahead of time (see

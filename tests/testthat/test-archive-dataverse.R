@@ -287,10 +287,12 @@ test_that("dataverse_file_download", {
     "did not arrive intact"
   )
 
-  expect_equal(nrow(dl), 1)
-  expect_equal(dl$dataverse_doi, "10.7910/DVN/ABC123")
-  expect_equal(dl$key, "small.csv")
-  expect_false(dl$downloaded)
+  # big.bin is over max_file_size: it stays in the table, not downloaded, as
+  # documented (it was dropped, U36)
+  expect_equal(nrow(dl), 2)
+  expect_equal(unique(dl$dataverse_doi), "10.7910/DVN/ABC123")
+  expect_equal(dl$key, c("small.csv", "big.bin"))
+  expect_equal(dl$downloaded, c(FALSE, FALSE))
 
   folder <- file.path(tmpdir, "10.7910_DVN_ABC123")
   expect_true(dir.exists(folder))
@@ -358,6 +360,42 @@ test_that("dataverse_file_download", {
   expect_equal(nrow(dl_ok), 1)
   expect_true(dl_ok$downloaded[[1]])
   expect_true(file.exists(file.path(tmpdir_ok, "10.7910_DVN_OK000", "ok.csv")))
+})
+
+test_that("dataverse_file_download: a zero-byte file, and every file over the limit (U36)", {
+  one_file <- function(size) function(host, doi, pb = NULL) data.frame(
+    dataverse_host = host, dataverse_doi = doi,
+    files = I(list(list(list(label = "empty.txt", dataFile = list(
+      id = 5, filename = "empty.txt", filesize = size,
+      checksum = list(type = "MD5", value = "notreal")))))))
+  testthat::local_mocked_bindings(.dataverse_info = one_file(0))
+  testthat::local_mocked_bindings(
+    request = function(url) structure(list(url = url), class = "httr2_request"),
+    req_headers = function(req, ...) req,
+    req_timeout = function(req, seconds) req,
+    req_error = function(req, is_error) req,
+    req_perform = function(req) {
+      structure(list(status = 200, body = raw(0)), class = "httr2_response")
+    },
+    resp_status = function(resp) resp$status,
+    .package = "httr2"
+  )
+  # resp_body_raw() refuses an empty body, which stopped the whole download
+  tmp <- withr::local_tempdir()
+  dl <- dataverse_file_download("dataverse.harvard.edu", "10.7910/DVN/EMPTY0",
+                                download_to = tmp, max_file_size = 10)
+  expect_true(dl$downloaded)
+
+  # every file over the limit: listed with downloaded = FALSE and no folder,
+  # instead of NULL
+  testthat::local_mocked_bindings(.dataverse_info = one_file(50 * 1024 * 1024))
+  tmp2 <- withr::local_tempdir()
+  dl <- dataverse_file_download("dataverse.harvard.edu", "10.7910/DVN/BIG000",
+                                download_to = tmp2, max_file_size = 10)
+  expect_equal(dl$key, "empty.txt")
+  expect_false(dl$downloaded)
+  expect_true(is.na(dl$folder))
+  expect_length(list.files(tmp2), 0)
 })
 
 # A dataset holding one large zip, for the unzip_types tests below. Mirrors the

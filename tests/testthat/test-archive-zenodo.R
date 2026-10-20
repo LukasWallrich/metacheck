@@ -251,10 +251,12 @@ test_that("zenodo_file_download", {
     "did not arrive intact"
   )
 
-  expect_equal(nrow(dl), 1)
-  expect_equal(dl$zenodo_id, "12345")
-  expect_equal(dl$key, "small.csv")
-  expect_false(dl$downloaded)
+  # big.bin is over max_file_size: it stays in the table, not downloaded, as
+  # documented (it was dropped, U36)
+  expect_equal(nrow(dl), 2)
+  expect_equal(unique(dl$zenodo_id), "12345")
+  expect_equal(dl$key, c("small.csv", "big.bin"))
+  expect_equal(dl$downloaded, c(FALSE, FALSE))
 
   folder <- file.path(tmpdir, "12345")
   expect_true(dir.exists(folder))

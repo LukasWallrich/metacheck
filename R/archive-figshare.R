@@ -1219,43 +1219,16 @@ figshare_file_download <- function(figshare_id,
     unzippable <- .is_zip(files$key) & !is.na(files$self) & nzchar(files$self %||% "")
 
   # --- size filters (MB) ----
-  if (!is.null(max_file_size) && is.finite(max_file_size) && max_file_size > 0) {
-    too_big_files <- which(files$size > max_file_size * 1024 * 1024 & !unzippable)
-    if (length(too_big_files) > 0) {
-      for (i in too_big_files) {
-        paste0(
-          "- omitting ", files$key[[i]],
-          " (", round(files$size[[i]] / 1024 / 1024, 1), "MB)"
-        ) |>
-          list(what = _) |>
-          pb$tick(0, tokens = _)
-      }
-      files <- files[-too_big_files, , drop = FALSE]
-      unzippable <- unzippable[-too_big_files]
-    }
-  }
+  # Omitted files stay in the table with downloaded = FALSE, as documented;
+  # they were dropped from it (U36).
+  omit <- .omit_for_size(files$size, files$key, unzippable,
+                         max_file_size, max_download_size, pb)
 
-  if (!is.null(max_download_size) && is.finite(max_download_size) && max_download_size > 0) {
-    while (any(!unzippable) &&
-           sum(files$size[!unzippable], na.rm = TRUE) > max_download_size * 1024 * 1024) {
-      capped <- which(!unzippable)
-      max_file <- capped[which.max(files$size[capped])]
-      paste0(
-        "- omitting ", files$key[[max_file]],
-        " (", round(files$size[[max_file]] / 1024 / 1024, 1), "MB)"
-      ) |>
-        list(what = _) |>
-        pb$tick(0, tokens = _)
-      files <- files[-max_file, , drop = FALSE]
-      unzippable <- unzippable[-max_file]
-    }
-  }
-
-  if (nrow(files) == 0) {
+  if (all(omit)) {
     paste0("- All files omitted due to size constraints") |>
       list(what = _) |>
       pb$tick(0, tokens = _)
-    return(NULL)
+    return(invisible(.all_omitted_table(files, list(figshare_id = as.character(figshare_id)))))
   }
 
   # --- target directory (avoid overwrite) ----
@@ -1277,7 +1250,7 @@ figshare_file_download <- function(figshare_id,
 
   # --- download into temp, then copy to target ----
   temppath <- tempfile()
-  on.exit(unlink(temppath, recursive = TRUE))
+  on.exit(unlink(temppath, recursive = TRUE), add = TRUE)
   dir.create(temppath)
 
   n <- nrow(files)
@@ -1287,6 +1260,7 @@ figshare_file_download <- function(figshare_id,
                        error = character(0), stringsAsFactors = FALSE)
 
   for (i in seq_len(n)) {
+    if (omit[i]) next   # left out for its size (U36)
     # --- selected members out of a zip, instead of the whole zip ----
     if (unzippable[i]) {
       paste0("Reading zip contents of ", files$key[[i]]) |>
@@ -1341,7 +1315,7 @@ figshare_file_download <- function(figshare_id,
         error = \(e) NULL
       )
       if (!is.null(resp) && httr2::resp_status(resp) == 200) {
-        writeBin(httr2::resp_body_raw(resp), target_path)
+        writeBin(.resp_bytes(resp), target_path)
         ok <- TRUE
       }
     }
@@ -1377,9 +1351,9 @@ figshare_file_download <- function(figshare_id,
   # --- verify what actually reached the disk ----
   files <- .figshare_verify_downloads(files, download_to)
 
-  n_missing <- sum(!files$downloaded)
+  n_missing <- sum(!files$downloaded & !omit)   # omitted files were never meant to arrive
   if (n_missing > 0) {
-    worst <- files[!files$downloaded, ]
+    worst <- files[!files$downloaded & !omit, ]
     warning(sprintf(
       "%d of %d file%s from Figshare article %s did not arrive intact (e.g. %s). The returned table marks %s downloaded = FALSE. Run again to retry.",
       n_missing, nrow(files), plural(nrow(files)), figshare_id,
