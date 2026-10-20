@@ -103,9 +103,13 @@ code_read <- function(file_path) {
                  error = function(e) NULL)
   if (is.null(nb)) return(NA_character_)
 
-  lang <- nb$metadata$kernelspec$language %||%
-          nb$metadata$language_info$name %||%
-          nb$metadata$kernelspec$name %||% ""
+  # a notebook that is not a JSON object, or has malformed metadata, gives no
+  # language instead of stopping code_check ("$ operator is invalid", U68)
+  lang <- tryCatch(
+    nb$metadata$kernelspec$language %||%
+      nb$metadata$language_info$name %||%
+      nb$metadata$kernelspec$name %||% "",
+    error = function(e) "")
   .kernel_language(as.character(lang)[[1]] %||% "")
 }
 
@@ -184,7 +188,9 @@ code_read <- function(file_path) {
       front_matter <- txt[2:end]
       yaml <- tryCatch(yaml::yaml.load(paste(front_matter, collapse = "\n")),
                        error = function(e) NULL)
-      jupyter <- yaml$jupyter
+      # a front matter that is a single value or a list ("just a title") has
+      # no fields: yaml$jupyter stopped code_check (U68)
+      jupyter <- if (is.list(yaml)) yaml$jupyter else NULL
       # `jupyter:` may be a bare kernel name ("python3") or a list with its
       # own kernelspec$language (the same shape .ipynb stores under
       # metadata$kernelspec$language).
