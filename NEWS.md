@@ -43,6 +43,7 @@
 * `export_spv_html()` no longer fails on an SPSS table whose last level label is empty, or on a chart it cannot draw (that chart is left out with a note); images in exported JASP, jamovi and SPSS HTML are embedded at every occurrence (only the first was), and an image path with a malformed `%`-escape no longer stops the export (#507: U148)
 * `data_check` reports a collision between blank column names (it was stored where it could not be found), reads the digits of 100000 stored as a number the same as of the integer 100000 (it read "1e+05", with warnings), peeks into 8-bit (Latin-1) text files instead of failing, and no longer re-reads a valid UTF-8 file with an "NA" cell as Latin-1, which turned "é" into "Ã©" (#507: U56, U59, U63, U64)
 * `data_check` reads UTF-16 text files (E-Prime and other Windows exports start with a byte order mark) instead of reporting them as empty: read as bytes, the first column was named "ÿþS" and the table had no rows (#507: U217)
+* The data manifest keeps small numbers (0.000012345 was written as 0) and keeps JSON nulls as null when it is merged again (they became `{}`) (#507: U62)
 
 # metacheck 0.4.0
 

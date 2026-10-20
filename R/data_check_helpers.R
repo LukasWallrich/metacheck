@@ -1285,8 +1285,10 @@ manifest_merge <- function(path, patch) {
   }
   # Overlay each patched key; a NULL value removes that key.
   for (nm in names(patch)) existing[[nm]] <- patch[[nm]]
+  # digits = NA: the default 4 significant digits wrote 0.000012345 as 0; null
+  # = "null": a null read back as NULL was rewritten as {} on every merge (U62)
   json <- jsonlite::toJSON(existing, auto_unbox = TRUE, pretty = TRUE,
-                           na = "null")
+                           na = "null", null = "null", digits = NA)
   writeLines(json, path, useBytes = TRUE)
   invisible(path)
 }
