@@ -76,7 +76,14 @@ llm <- function(text, system_prompt,
   }
 
   # set up answer data frame to return ----
-  unique_text <- unique(text[[text_col]])
+  # orig_text: the distinct texts as given, which the answers are joined
+  # back to; unique_text: the same texts sanitised, which are sent. Joining on
+  # the sanitised text lost the answer of every text sanitising changed, and
+  # numeric text failed at the join. NA texts are not sent (they went out as
+  # the string "NA") (U19).
+  orig_text <- unique(text[[text_col]])
+  orig_text <- orig_text[!is.na(orig_text)]
+  unique_text <- orig_text
   # Sanitise before anything downstream keys on the text (cache key, request
   # body). Research data routinely carries invalid UTF-8 (a mis-encoded
   # apostrophe/deg/e in a free-text survey answer) and stray control bytes; ellmer
@@ -86,7 +93,14 @@ llm <- function(text, system_prompt,
   unique_text <- .llm_sanitise_text(unique_text)
   ncalls <- length(unique_text)
 
-  if (ncalls == 0) stop("No calls to the LLM")
+  if (ncalls == 0 && nrow(text) == 0) stop("No calls to the LLM")
+  if (ncalls == 0) {
+    # every text is NA: nothing to ask, every answer is missing
+    if (!structured) text$answer <- rep(NA_character_, nrow(text))
+    class(text) <- c("metacheck_llm", "data.frame")
+    attr(text, "llm") <- list(system_prompt = system_prompt, model = model, type = type)
+    return(text)
+  }
   if (ncalls > llm_max_calls()) {
     stop("This would make ", ncalls, " calls to the LLM, but your maximum number of calls is set to ", llm_max_calls(),
          ". Set `llm_max_calls(", ncalls, ")` (or higher) to allow this call.", call. = FALSE)
@@ -296,7 +310,7 @@ llm <- function(text, system_prompt,
           # "nothing found") unnests to a 0-row frame; assigning a length-1
           # join key to a 0-row column errors, so only set it when there are
           # rows. A 0-row df drops out of the downstream left_join cleanly.
-          if (nrow(df) > 0) df$.join_key. <- unique_text[i]
+          if (nrow(df) > 0) df$.join_key. <- orig_text[i]
           # Reasoning trace (opt-in): read from the CHAT object's own last
           # turn, not from `result` itself -- chat_structured()'s return value
           # is only the parsed/validated structured object, the thinking
@@ -314,7 +328,9 @@ llm <- function(text, system_prompt,
         } else {
           answer <- chat$chat(unique_text[i], echo = FALSE)
           pb$tick()
-          out <- list(answer = trimws(answer))
+          # plain text: bind_rows() could not combine an ellmer_output answer
+          # with a failed call's NA, so one failure stopped the whole call (U19)
+          out <- list(answer = trimws(as.character(answer)))
           if (!is.null(key)) .llm_cache_put(key, out)
           out
         }
@@ -333,10 +349,10 @@ llm <- function(text, system_prompt,
           "(vllm reads Sys.getenv(\"VLLM_API_KEY\")).\n  First error: ", msg))
       if (structured) {
         df <- data.frame(.error = TRUE, .error_msg = msg)
-        df$.join_key. <- unique_text[i]
+        df$.join_key. <- orig_text[i]
         df
       } else {
-        list(answer = NA, error = TRUE, error_msg = msg)
+        list(answer = NA_character_, error = TRUE, error_msg = msg)
       }
     })
   })
@@ -358,7 +374,7 @@ llm <- function(text, system_prompt,
     answer_df$.join_key. <- NULL
   } else {
     response_df <- do.call(dplyr::bind_rows, responses)
-    response_df[text_col] <- unique_text
+    response_df[text_col] <- orig_text
     answer_df <- dplyr::left_join(text, response_df, by = text_col)
   }
 
@@ -387,7 +403,8 @@ llm <- function(text, system_prompt,
         call. = FALSE)
     }
   } else if (!structured) {
-    error_indices <- isTRUE(answer_df$error)
+    # every failed row, not isTRUE() of the column (never TRUE for several rows)
+    error_indices <- if ("error" %in% names(answer_df)) answer_df$error %in% TRUE else FALSE
     if (any(error_indices)) {
       warn <- paste(which(error_indices), collapse = ", ") |>
         paste("There were errors in the following rows:", x = _)
