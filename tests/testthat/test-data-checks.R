@@ -14,6 +14,28 @@ test_that("data_check_outliers flags Tukey outliers", {
   expect_false(data_check_outliers(rep(5, 20))$problem)
   # non-numeric → no problem
   expect_false(data_check_outliers(c("a", "b"))$problem)
+  # both quartiles infinite: no spread, so no outliers (stopped, U55)
+  expect_false(data_check_outliers(c(1, Inf, Inf, Inf))$problem)
+})
+
+test_that("data_check_scale_values treats fractional range bounds as an interval (U55)", {
+  # lo:hi made 1.5, 2.5, ... and "%d" stopped on 1.5
+  r <- data_check_scale_values(c(1.5, 2.5, 3.5, 9), valid_range = c(1.5, 4.5))
+  expect_equal(r$values, 9)
+  expect_match(r$message, "outside the 1.5-4.5 scale", fixed = TRUE)
+  # values between the bounds are valid, not only 1.5, 2.5, ...
+  r <- data_check_scale_values(c(1.7, 2.2, 3.9, 9), valid_range = c(1.5, 4.5))
+  expect_equal(r$values, 9)
+  # whole-number bounds keep the scale points and the message
+  r <- data_check_scale_values(c(1, 2, 3, 4, 9), valid_range = c(1, 7))
+  expect_match(r$message, "outside the 1-7 scale", fixed = TRUE)
+})
+
+test_that("an NA value-label name does not stop the label reader (U60)", {
+  labs <- setNames(1:6, c("a", "b", NA, "c", "d", "e"))
+  expect_false(metacheck:::.looks_like_freetext_labels(names(labs)))
+  vl <- metacheck:::.haven_value_labels(haven::labelled(c(1, 2, 3), labels = labs))
+  expect_match(vl$value_labels, '"1":"a"', fixed = TRUE)
 })
 
 test_that(".detect_likert_scale infers scale ranges robustly", {

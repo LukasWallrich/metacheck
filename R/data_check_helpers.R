@@ -3268,7 +3268,9 @@ normalize_label <- function(x) {
 # label LENGTH can: category names are short, free-text responses run long.
 .looks_like_freetext_labels <- function(labs) {
   txt <- trimws(as.character(labs))
-  txt <- txt[nzchar(txt)]
+  # an NA label name is left out like an empty one: nzchar(NA) is TRUE and
+  # nchar(NA) is NA, so the result was NA and the caller's && stopped (U60)
+  txt <- txt[!is.na(txt) & nzchar(txt)]
   if (length(txt) < 5) return(FALSE)   # too few to judge reliably
   mean(nchar(txt) > 40) > 0.2          # a meaningful fraction are long prose
 }
@@ -4863,6 +4865,7 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
   if (length(xv) == 0) return(none)
 
   # -- Establish the valid range: ground truth, else inferred scale ------------
+  interval <- FALSE   # TRUE: valid values are the interval [lo, hi]
   if (!is.null(valid_values) && length(valid_values)) {
     vv <- sort(unique(as.numeric(valid_values)))
     vv <- vv[is.finite(vv)]
@@ -4901,18 +4904,25 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
   } else if (!is.null(valid_range) && length(valid_range) == 2 &&
              all(is.finite(valid_range))) {
     lo <- min(valid_range); hi <- max(valid_range)
-    valid_set <- lo:hi
+    # A range with fractional bounds (1.5 to 4.5) is a continuous interval,
+    # not a set of scale points: lo:hi made 1.5, 2.5, ... and the message's
+    # "%d" stopped on it (U55). Whole-number bounds keep the scale points.
+    interval <- lo != round(lo) || hi != round(hi)
+    valid_set <- if (interval) c(lo, hi) else lo:hi
   } else {
     lo <- hi <- valid_set <- NULL   # signals "run inference below"
   }
+  in_scale <- function(v) if (interval) v >= lo & v <= hi else v %in% valid_set
 
   # -- Ground truth must actually explain most of the data ---------------------
   # A declared range that covers only a small slice of the column is very likely
   # attached to the WRONG column (see the function doc), not evidence that most
   # of the data is broken. Discard it and fall back to inference rather than
   # flagging the majority of the column.
-  if (!is.null(valid_set) && mean(xv %in% valid_set) < min_ground_truth_coverage)
+  if (!is.null(valid_set) && mean(in_scale(xv)) < min_ground_truth_coverage) {
     lo <- hi <- valid_set <- NULL
+    interval <- FALSE
+  }
 
   if (is.null(valid_set) && !isTRUE(infer)) return(none)
   if (is.null(valid_set)) {
@@ -4922,7 +4932,7 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
     valid_set <- lo:hi
   }
 
-  out <- sort(unique(xv[!(xv %in% valid_set)]))
+  out <- sort(unique(xv[!in_scale(xv)]))
   if (length(out) == 0)
     return(list(problem = FALSE, message = "", values = NULL,
                 lower = lo, upper = hi, classes = character(0)))
@@ -4946,9 +4956,11 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
   }
   shown_i <- seq_len(min(length(out), n_max))
   parts <- vapply(shown_i, function(i) describe(out[i], classes[i]), character(1))
+  # format(), not "%d": the bounds of an interval are decimals (U55); whole
+  # numbers print as before ("1-7")
   msg <- sprintf(
-    "%d value%s outside the %d-%d scale: %s%s",
-    length(out), plural(length(out)), lo, hi,
+    "%d value%s outside the %s-%s scale: %s%s",
+    length(out), plural(length(out)), format(lo), format(hi),
     paste(parts, collapse = ", "),
     if (length(out) > n_max) ", ..." else "")
   list(problem = TRUE, message = msg, values = out,
@@ -4974,7 +4986,10 @@ data_check_outliers <- function(x, k = 1.5, n_max = 10) {
   if (length(x) < 4) return(none)
   qs <- stats::quantile(x, c(0.25, 0.75), names = FALSE)
   iqr <- qs[2] - qs[1]
-  if (iqr == 0) return(none)
+  # both quartiles infinite (c(1, Inf, Inf, Inf)) gives Inf - Inf = NaN: no
+  # spread, so no outliers (this stopped with "missing value where TRUE/FALSE
+  # needed", U55)
+  if (is.na(iqr) || iqr == 0) return(none)
   lower <- qs[1] - k * iqr
   upper <- qs[2] + k * iqr
   out <- unique(x[x < lower | x > upper])
