@@ -90,6 +90,8 @@
 * `match_reported_output()` counts the exponent in a reported number's decimals: "1.5e-05" had one decimal, so its tolerance (0.05) matched almost any small output value. A table's own caption is used whenever it has one, also for an older-format paper (#507: U143)
 * `json_expand()` keeps a `_row` key as a column (jsonlite read it as row names, so it was lost) and gives nested objects columns of their own (`v.k`); each row of a nested object read "c(1, NA)" (#507: U9)
 * Reading statistics tables from HTML output: a short row without content is dropped like an empty row (it became a row of NAs), and table fields are read by their exact name, so a table with only `line_seq` no longer gets a locator from it as if it were `line` (#507: U141)
+* `causal_claims` finds randomisation written with an s ("randomised"), leaves out negated statements ("not randomized", "non-randomized"), and counts a sentence that describes random assignment next to random effects ("randomly assigned ... random intercepts"), which was dropped whole (#507: U85)
+* `coi_check` keeps a statement that ends with "Nil.", "No.", "None mentioned." or "Nothing to declare.": these were emptied and dropped, so the paper got a red light (#507: U95)
 
 # metacheck 0.4.0
 

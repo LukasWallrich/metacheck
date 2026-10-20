@@ -216,11 +216,14 @@ rtransparent_coi <- function(splitted) {
     }
   }
 
-  # If only None/No/Nothing appear, stop after the fullstop.
+  # If only None/No/Nothing appear, stop after the fullstop. One group for
+  # all the endings: the replacement kept only groups 1-4 of 11, so "Nil.",
+  # "No.", "None mentioned." and "Nothing to declare." became "" and the
+  # statement was dropped (U95).
   coi_text <-
     gsub(
-      "(^.+None\\.).*$|(^.+None disclosed\\.).*$|(^.+None reported\\.).*$|(^.+None declared\\.).*$|(^.+None mentioned\\.).*$|(^.+None aired\\.).*$|(^.+None communicated\\.).*$|(^.+None revealed\\.).*$|(^.+Nothing to declare\\.).*$|(^.+No\\.).*$|(^.+Nil\\.).*$",
-      "\\1\\2\\3\\4",
+      "^(.+(None|None disclosed|None reported|None declared|None mentioned|None aired|None communicated|None revealed|Nothing to declare|No|Nil)\\.).*$",
+      "\\1",
       coi_text,
       fixed = F, ignore.case = T
     )

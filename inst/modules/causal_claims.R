@@ -31,7 +31,7 @@ causal_claims <- function(paper) {
     \\brandom(?:ly)?\\s+assign(?:ed|ment)\\b
   | \\bassign(?:ed)?\\s+at\\s+random\\b
   | \\bassign(?:ed)?\\s+random(?:ly)?\\b
-  | \\brandomiz(?:e|ed|ation)\\b
+  | \\brandomi[sz](?:e|ed|ation)\\b
   | \\brandom(?:ly)?\\s+allocat(?:ed|ion)\\b
   | \\brandom(?:ly)?\\s+divid(?:e|ed)\\b
   | \\brandom(?:ly)?\\s+split\\b
@@ -69,10 +69,20 @@ causal_claims <- function(paper) {
   | \\bsuccessful\\s+random\\s+assignment\\b
 )"
 
+  # a negated statement is not one of randomisation (U85)
+  negated_re <- "(?ix)(
+    \\b(?:not|never)\\s+(?:been\\s+)?randomi[sz]ed\\b
+  | \\bnon\\-?randomi[sz]ed\\b
+  | \\bwithout\\s+random(?:isation|ization|\\s+assignment)\\b
+)"
+
   ## get matches ----
-  inc <- grepl(include_re, random_sentences$text, perl = TRUE)
-  exc <- grepl(exclude_re, random_sentences$text, perl = TRUE)
-  random_assignment_subset <- random_sentences[inc & !exc, , drop = FALSE]
+  # An exclusion removes only its own words: a sentence was dropped whole, so
+  # "randomly assigned ... random intercepts" did not count (U85).
+  kept_text <- gsub(exclude_re, " ", random_sentences$text, perl = TRUE)
+  inc <- grepl(include_re, kept_text, perl = TRUE)
+  neg <- grepl(negated_re, random_sentences$text, perl = TRUE)
+  random_assignment_subset <- random_sentences[inc & !neg, , drop = FALSE]
 
   ## summary_text for rand ----
   ## report for rand ----

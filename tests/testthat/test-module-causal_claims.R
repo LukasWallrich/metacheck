@@ -24,3 +24,16 @@ test_that("causal_relations of a missing sentence returns no rows, without a req
   # all(trimws(NA) == "") is NA, which stopped the function
   expect_equal(nrow(causal_relations(NA_character_)), 0)
 })
+
+test_that("causal_claims finds 'randomised', skips negations, and keeps assignment next to random effects (U85)", {
+  s <- c("Participants were randomised to two groups.",
+         "The study was not randomized.",
+         "Participants were randomly assigned to conditions, and the model had random intercepts.",
+         "We used random effects for items.")
+  mo <- module_run(test_paper(s), "causal_claims")
+  r <- paste(mo$report, collapse = "\n")
+  expect_match(r, "randomised to two groups", fixed = TRUE)
+  expect_match(r, "randomly assigned to conditions", fixed = TRUE)
+  expect_false(grepl("not randomized", r, fixed = TRUE))
+  expect_false(grepl("random effects for items", r, fixed = TRUE))
+})
