@@ -1005,6 +1005,21 @@ test_that(".expand_compressed decompresses only a kept file, and only up to the 
   expect_equal(attr(rows, "oversize")$file_name, "results.csv")
 })
 
+test_that("an archive of the user's own is extracted into the temporary folder (U214)", {
+  # extracting beside it wrote into the user's folder, and the next run
+  # counted every extracted file twice
+  own <- withr::local_tempfile(tmpdir = test_path(), fileext = ".zip")
+  writeBin(as.raw(1:10), own)
+  dest <- metacheck:::.archive_dest(own)
+  expect_false(startsWith(dest, normalizePath(test_path(), winslash = "/")))
+  expect_true(startsWith(normalizePath(dest, winslash = "/", mustWork = FALSE),
+                         normalizePath(tempdir(), winslash = "/")))
+  # a downloaded archive (here: in the temporary folder) is extracted beside itself
+  dl <- withr::local_tempfile(fileext = ".zip")
+  writeBin(as.raw(1:10), dl)
+  expect_equal(metacheck:::.archive_dest(dl), paste0(dl, ".contents"))
+})
+
 test_that(".expand_zip and .expand_tar unpack only kept members within the limit (#472)", {
   d <- withr::local_tempdir()
   src <- file.path(d, "src"); dir.create(src)

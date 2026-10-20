@@ -1495,6 +1495,25 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   metacheck::file_types$type[match(ext, metacheck::file_types$ext)]
 }
 
+# The folder an archive is extracted into. A downloaded archive (in the
+# repository cache or the temporary folder) is extracted beside itself, to
+# "<archive>.contents", which a later run reuses. Any other archive is the
+# user's own (local_path): extracting beside it wrote into the user's folder,
+# and the next run listed the extracted files as files of their own and
+# extracted the archive again, so every file counted twice (U214). It is
+# extracted into the temporary folder instead, under the archive's checksum.
+.archive_dest <- function(path) {
+  beside <- paste0(path, ".contents")
+  repo_cache <- getOption("metacheck.repo_cache.dir")
+  if (is.null(repo_cache) || !nzchar(repo_cache))
+    repo_cache <- file.path(.metacheck_cache_root(), ".metacheck_repo_cache")
+  roots <- normalizePath(c(tempdir(), repo_cache), winslash = "/", mustWork = FALSE)
+  norm <- normalizePath(path, winslash = "/", mustWork = FALSE)
+  if (.Platform$OS.type == "windows") { roots <- tolower(roots); norm <- tolower(norm) }
+  if (any(startsWith(norm, paste0(roots, "/")))) return(beside)
+  file.path(tempdir(), "metacheck-archives", unname(tools::md5sum(path)))
+}
+
 # Expand a downloaded zip and return rows for its DATA-type inner files, ready to
 # bind into data_check's `all_files`. The zip is extracted once to a cache dir
 # beside the zip; each inner file is classified, and only files whose type is
@@ -1516,8 +1535,9 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   empty <- zip_row[0, , drop = FALSE]
   if (is.null(zip_path) || is.na(zip_path) || !file.exists(zip_path)) return(empty)
 
-  # Extract into "<zip>.contents/" beside the cached zip (idempotent: reuse).
-  dest <- paste0(zip_path, ".contents")
+  # Extract into "<zip>.contents/" beside the cached zip (idempotent: reuse);
+  # a zip of the user's own is extracted elsewhere (.archive_dest()).
+  dest <- .archive_dest(zip_path)
   entries <- tryCatch(utils::unzip(zip_path, list = TRUE), error = function(e) NULL)
   if (is.null(entries) || nrow(entries) == 0) return(empty)
   entries <- entries[!grepl("/$", entries$Name), , drop = FALSE]
@@ -1551,7 +1571,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   empty <- tar_row[0, , drop = FALSE]
   if (is.null(tar_path) || is.na(tar_path) || !file.exists(tar_path)) return(empty)
 
-  dest <- paste0(tar_path, ".contents")
+  dest <- .archive_dest(tar_path)
   entries <- tryCatch(utils::untar(tar_path, list = TRUE), error = function(e) NULL,
                       warning = function(w) NULL)
   if (is.null(entries) || length(entries) == 0) return(empty)
@@ -1603,7 +1623,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     gz  = gzfile, bz2 = bzfile, xz = xzfile, NULL)
   if (is.null(open_con)) return(empty)
 
-  dest <- paste0(gz_path, ".contents")
+  dest <- .archive_dest(gz_path)
   inner_name <- sub("[.](gz|bz2|xz)$", "", basename(gz_path), ignore.case = TRUE)
   if (!.archive_keep(inner_name, skip_types)) return(empty)
   out <- file.path(dest, inner_name)
