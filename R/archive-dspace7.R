@@ -337,12 +337,16 @@ dspace7_links <- function(paper) {
 # error, server error) is tried again the next time the DOI comes up.
 .dspace7_doi_cache <- new.env(parent = emptyenv())
 
-# TRUE when `url` lies on a known DSpace 7 host. The same fixed-string test
-# as before the handle API was used, so the set of recognised hosts is
-# unchanged.
+# TRUE when `url` lies on a known DSpace 7 host, or a subdomain of one. The
+# URL's host name is compared (a leading "www." aside): a host found anywhere
+# in the URL, as in its path or query string, counted (U211).
 .dspace7_on_known_host <- function(url) {
   if (length(url) != 1 || is.na(url)) return(FALSE)
-  any(vapply(.dspace7_hosts(), \(h) grepl(h, url, fixed = TRUE), logical(1)))
+  host <- tryCatch(httr2::url_parse(url)$hostname, error = \(e) NULL)
+  if (is.null(host) || !length(host) || is.na(host)) return(FALSE)
+  host <- sub("^www\\.", "", tolower(host))
+  known <- sub("^www\\.", "", tolower(.dspace7_hosts()))
+  any(host == known | endsWith(host, paste0(".", known)))
 }
 
 # The URL registered for one handle -- a DOI is a handle too -- read from a
@@ -538,7 +542,10 @@ dspace7_links <- function(paper) {
     on.exit(pb$terminate())
   }
 
-  paste0("* Retrieving info from ", host, " (", (uuid %||% handle), ")...") |>
+  # NA is not NULL, so %||% never fell back and the message showed "(NA)" (U42)
+  item_label <- if (!is.null(uuid) && !is.na(uuid)) uuid else
+    if (!is.null(handle) && !is.na(handle)) handle else "unknown"
+  paste0("* Retrieving info from ", host, " (", item_label, ")...") |>
     list(what = _) |>
     pb$tick(0, tokens = _)
 
@@ -555,7 +562,7 @@ dspace7_links <- function(paper) {
     }
   }
   if (is.null(item) || is.null(item$uuid)) {
-    warning(host, " (", (uuid %||% handle %||% "unknown"), ") could not be found", call. = FALSE)
+    warning(host, " (", item_label, ") could not be found", call. = FALSE)
     obj$error <- "unfound"
     return(obj)
   }
