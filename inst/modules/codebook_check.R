@@ -2385,7 +2385,14 @@ codebook_parse_llm <- function(lines, src, model, params, max_chunks = 10L) {
   # output on capitalisation. Scale names are not always capitalised ("the grit
   # scale"), and the model was asked to return lower-case instruments too, so a
   # capitalisation gate here would silently discard exactly those.
-  ts <- text_scales[nzchar(trimws(text_scales$scale_name)), , drop = FALSE]
+  # A field's value, or "" when missing: nzchar(NA) is TRUE, so an NA name,
+  # acronym or item count was printed as "NA" / "NA items" (U93).
+  val <- function(x) {
+    x <- trimws(x %||% "")
+    if (!length(x) || is.na(x)) "" else x
+  }
+  ts <- text_scales[vapply(text_scales$scale_name, \(x) nzchar(val(x)), logical(1)), ,
+                    drop = FALSE]
   if (!nrow(ts)) return(character(0))
 
   # Drop instruments already identified in the shared data: same name, or the
@@ -2395,8 +2402,11 @@ codebook_parse_llm <- function(lines, src, model, params, max_chunks = 10L) {
     m <- tolower(matched)
     hit <- tolower(ts$scale_name) %in% m |
       vapply(seq_len(nrow(ts)), function(i) {
-        a <- tolower(trimws(ts$acronym[i] %||% ""))
-        nzchar(a) && any(grepl(paste0("\\b", a, "\\b"), m))
+        # matched literally, as a whole word: unescaped, "C++" or "(X" was an
+        # invalid pattern and stopped the module (U93)
+        a <- tolower(val(ts$acronym[i]))
+        nzchar(a) && any(grepl(paste0("(?<![[:alnum:]_])", .zenodo_regex_escape(a),
+                                      "(?![[:alnum:]_])"), m, perl = TRUE))
       }, logical(1))
     ts <- ts[!hit, , drop = FALSE]
   }
@@ -2404,9 +2414,9 @@ codebook_parse_llm <- function(lines, src, model, params, max_chunks = 10L) {
 
   lines <- vapply(seq_len(nrow(ts)), function(i) {
     bits <- c(
-      if (nzchar(trimws(ts$acronym[i] %||% ""))) paste0(trimws(ts$acronym[i])),
-      if (nzchar(trimws(ts$n_items[i] %||% ""))) paste0(trimws(ts$n_items[i]), " items"),
-      if (identical(tolower(trimws(ts$administered[i] %||% "")), "unclear"))
+      if (nzchar(val(ts$acronym[i]))) val(ts$acronym[i]),
+      if (nzchar(val(ts$n_items[i]))) paste0(val(ts$n_items[i]), " items"),
+      if (identical(tolower(val(ts$administered[i])), "unclear"))
         "possibly not administered here")
     sprintf("- **%s**%s", ts$scale_name[i],
             if (length(bits)) paste0(" (", paste(bits, collapse = "; "), ")") else "")

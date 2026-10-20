@@ -666,3 +666,18 @@ test_that("codebook_check still uses a tabset in full mode", {
   expect_match(rpt, "## s1.csv", fixed = TRUE)
   expect_match(rpt, "## s2.csv", fixed = TRUE)
 })
+
+test_that(".scale_text_report leaves out NA fields and matches acronyms literally (U93)", {
+  ts <- data.frame(scale_name = c("Big Five Inventory", NA, "Grit Scale", "Need for Cognition"),
+                   acronym = c("BFI", "X", NA, "C++"), n_items = c("44", NA, NA, "18"),
+                   administered = c("yes", NA, "unclear", "yes"), stringsAsFactors = FALSE)
+  # NA fields were printed as "NA" / "NA items"
+  r <- .cbc$.scale_text_report(ts)
+  expect_false(any(grepl("NA", r, fixed = TRUE)))
+  expect_true(any(grepl("**Grit Scale** (possibly not administered here)", r, fixed = TRUE)))
+  # "C++" or "(X" went into a regex unescaped and stopped the module
+  ts$acronym[1] <- "(X"
+  expect_no_error(.cbc$.scale_text_report(ts, matched = "Need for Cognition (C++)"))
+  r <- .cbc$.scale_text_report(ts, matched = "Need for Cognition (C++)")
+  expect_false(any(grepl("Need for Cognition", r, fixed = TRUE)))   # matched by C++
+})
