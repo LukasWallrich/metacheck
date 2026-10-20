@@ -56,6 +56,7 @@
 * `zip_peek(cache = TRUE)` no longer keeps a failed download on disk (#507: U210). A connection failure, a rate limit or a server error passes, but the disk entry outlived the session, so the zip was not listed again until `zip_peek_cache_clear()`; it is now kept for the session only. A cache entry is written to a temporary file and renamed into place, and an entry that cannot be read is no longer returned as a cached failure
 * A file that `data_check` takes out of a zip, tar or compressed file has its own `file_type` from its extension, not the archive's (#507: U213). The rows for an archive's files were copies of the archive's row, so a CSV from `data.zip` was typed "archive"
 * `data_check` no longer writes into the folder given as `local_path` (#507: U214). A zip, tar or compressed file there was extracted beside itself, to "<archive>.contents"; the next run listed the extracted files as files of their own and extracted the archive again, so every file inside counted twice. An archive outside the repository cache and the temporary folder is now extracted into the temporary folder; a downloaded archive is still extracted beside itself
+* `module_report()` keeps the "How It Works" box of a module without `@details`, and the report of a module without `summary_text` (#507: U129). Searching the missing details for a validation note failed, which dropped the whole box with the description and authors; and without `summary_text`, `all(NULL == report)` is TRUE, so the report was dropped
 
 # metacheck 0.4.0
 

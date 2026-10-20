@@ -998,7 +998,9 @@ report_qmd <- function(module_output, paper = list()) {
       # \if{html}{\out{...}}, and that wrapper leaked into the rendered report as
       # literal "}}" / "\if{html}{\out{" around the validation text. A fenced div
       # renders to <div class="validation"> cleanly and keeps the CSS hook.
-      m <- gregexpr("<validation>.*?</validation>", info$details)
+      # a module without details: gregexpr() on NULL stopped this block, so the
+      # whole callout (description, authors) was dropped (U129)
+      m <- gregexpr("<validation>.*?</validation>", info$details %||% "")
       if (m[[1]][1] > -1) {
         validation <- regmatches(info$details, m) |>
           _[[1]] |>
@@ -1111,8 +1113,11 @@ module_report <- function(module_output,
   # already a real block container, so it needs no second one nested inside.
   pre <- "<details><summary>View detailed feedback</summary>"
   post <- "</details>"
+  # without summary_text, all(NULL == report) was TRUE and the report was
+  # dropped (U129)
   if (is.null(report) ||
-    all(module_output$summary_text == report)) {
+    (!is.null(module_output$summary_text) &&
+       all(module_output$summary_text == report))) {
     pre <- post <- report <- NULL
   } else if (paste(report, collapse = "\n\n") |> nchar() < 300) {
     pre <- post <- NULL

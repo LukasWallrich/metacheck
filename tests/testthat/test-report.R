@@ -415,6 +415,19 @@ test_that("module_report howitworks", {
   expect_false(grepl("This module was developed by", rep))
 })
 
+test_that("module_report keeps How It Works without details, and the report without summary_text (U129)", {
+  # gregexpr() on NULL details dropped the whole callout; a NULL summary_text
+  # made all(NULL == report) TRUE, which dropped the report
+  local_mocked_bindings(module_info = function(...)
+    list(description = "Demo description", details = NULL, author = "Ann Author"))
+  mo <- list(module = "nodetails", title = "No Details", traffic_light = "info",
+             summary_text = NULL, report = "The module's own report.")
+  rep <- module_report(mo)
+  expect_match(rep, "How It Works", fixed = TRUE)
+  expect_match(rep, "This module was developed by Ann Author", fixed = TRUE)
+  expect_match(rep, "The module's own report.", fixed = TRUE)
+})
+
 
 test_that("module_report validation", {
   paper <- demopaper()
