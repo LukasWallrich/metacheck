@@ -648,6 +648,9 @@ dspace7_file_download <- function(dspace7_url, pb = NULL) {
 
     file_lists <- lapply(unique_urls, dspace7_file_download, pb = pb)
     info <- do.call(dplyr::bind_rows, file_lists)
+    # every link failed: NULL, as for one failed link; the join below stopped
+    # on a table without columns ("Join columns in `y` must be present", U43)
+    if (nrow(info) == 0) return(NULL)
     orig <- data.frame(dspace7_url = dspace7_url)
     df <- dplyr::left_join(orig, info, by = "dspace7_url")
 

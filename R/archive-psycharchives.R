@@ -479,6 +479,9 @@ psycharchives_file_download <- function(pa_url, pb = NULL, cache = FALSE) {
 
     file_lists <- lapply(unique_pa, psycharchives_file_download, pb = pb, cache = cache)
     info <- do.call(dplyr::bind_rows, args = file_lists)
+    # every link failed: NULL, as for one failed link; the join below stopped
+    # on a table without columns ("Join columns in `y` must be present", U43)
+    if (nrow(info) == 0) return(NULL)
     orig <- data.frame(pa_url = pa_url)
     df <- dplyr::left_join(orig, info, by = "pa_url")
 

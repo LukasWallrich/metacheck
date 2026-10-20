@@ -690,8 +690,12 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   rb_files_df <- data.frame(repo_name = character(0))
   if (length(rb_urls) > 0) {
     tryCatch({
-      rb_file_list <- rbox_file_download(rb_urls, pb = pb) |>
-        dplyr::filter(!isdir)
+      rb_file_list <- rbox_file_download(rb_urls, pb = pb)
+      # NULL when no box could be retrieved (refused, removed); filter() on
+      # it stopped and the error text became the reason (U43)
+      if (is.null(rb_file_list))
+        stop("ResearchBox did not serve the box", call. = FALSE)
+      rb_file_list <- dplyr::filter(rb_file_list, !isdir)
       rb_files_df <- data.frame(
         repo_url = rb_file_list$rb_url,
         # rb_file_list$name is the RELATIVE PATH within the unzipped

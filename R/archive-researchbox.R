@@ -188,7 +188,9 @@ rbox_info <- function(rb_url, id_col = 1, pb = NULL) {
 
   # check if redirect (suppress encodings warning)
   suppressMessages({
-    body_text <- httr2::resp_body_string(resp)
+    # an empty body (a refusal can have none) stopped resp_body_string() before
+    # the status was checked (U45)
+    body_text <- if (httr2::resp_has_body(resp)) httr2::resp_body_string(resp) else ""
     pattern <- "(?<=window\\.location\\.replace\\(')https://researchbox.org/\\d+(?='\\))"
     if (grepl(pattern, body_text, perl = TRUE)) {
       matches <- gregexpr(pattern, body_text, perl = TRUE)
@@ -215,6 +217,13 @@ rbox_info <- function(rb_url, id_col = 1, pb = NULL) {
               call. = FALSE)
       obj$error <- paste0("HTTP ", status)
     }
+    return(obj)
+  }
+
+  # A 200 page without content is no box (U45)
+  if (!httr2::resp_has_body(resp)) {
+    warning(rb_url, " could not be found", call. = FALSE)
+    obj$error <- "unfound"
     return(obj)
   }
 
@@ -301,6 +310,9 @@ rbox_file_download <- function(rb_url, pb = NULL) {
 
     file_lists <- lapply(unique_rb, rbox_file_download, pb = pb)
     info <- do.call(dplyr::bind_rows, args = file_lists)
+    # every link failed: NULL, as for one failed link; the join below stopped
+    # on a table without columns ("Join columns in `y` must be present", U43)
+    if (nrow(info) == 0) return(NULL)
     orig <- data.frame(rb_url = rb_url)
     df <- dplyr::left_join(orig, info, by = "rb_url")
 
