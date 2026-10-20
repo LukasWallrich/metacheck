@@ -1587,7 +1587,8 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
     idx <- decode_index(cell$index)
     labels <- vector("list", length(dims))
     for (j in seq_along(dims)) {
-      leaf <- dims[[j]]$leaves[[as.character(idx[j])]]
+      # format(scientific = FALSE): as.character(1e5) is "1e+05" (U148)
+      leaf <- dims[[j]]$leaves[[format(idx[j], scientific = FALSE, trim = TRUE)]]
       labels[[j]] <- if (!is.null(leaf)) paste(leaf, collapse = " / ") else NA_character_
     }
     names(labels) <- dim_names
@@ -2041,7 +2042,12 @@ export_spv_html <- function(path, out = NULL) {
       }
       title <- if (!is.na(tb$title %||% NA) && nzchar(tb$title))
         sprintf("<h3>%s</h3>", .spv_html_escape(tb$title)) else ""
-      body_html <- if (isTRUE(tb$is_chart)) .spv_chart_html(tb$data) else .spv_table_html(tb$data)
+      # a chart that cannot be drawn (an unusual guide, a box plot without
+      # numbers) is left out instead of failing the whole export (U148)
+      body_html <- if (isTRUE(tb$is_chart))
+        tryCatch(.spv_chart_html(tb$data),
+                 error = function(e) "<p>(This chart could not be drawn.)</p>")
+      else .spv_table_html(tb$data)
       sections[[i]] <- paste0(heading, title, body_html)
     }
     paste(unlist(sections), collapse = "\n")
@@ -2213,6 +2219,13 @@ export_spv_html <- function(path, out = NULL) {
 # LAYER, is dropped from the grid the same way a "current layer" filter would
 # apply in SPSS's own Viewer -- out of scope here since only one layer is
 # ever present in the tables this port covers).
+# Split pivot level keys on the dimension separator, keeping empty labels
+# (also a trailing one, which strsplit() drops).
+.spv_split_levels <- function(x) {
+  lapply(strsplit(paste0(x, "\u241f\u0001"), "\u241f", fixed = TRUE),
+         function(p) p[-length(p)])
+}
+
 .spv_table_html_pivot <- function(df, row_dims, col_dims) {
   row_key <- if (length(row_dims))
     do.call(paste, c(as.list(df[row_dims]), sep = "\u241f")) else rep("", nrow(df))
@@ -2229,8 +2242,10 @@ export_spv_html <- function(path, out = NULL) {
   # row-dimension names are spliced into the LAST (innermost) row's left
   # edge afterwards, aligned with the deepest header level the way SPSS's
   # own corner stub sits -- not as a separate row above everything.
+  # .spv_split_levels(): strsplit() drops a trailing empty label, and the
+  # [[d]] below then stopped export_spv_html() (U148)
   col_parts <- if (length(col_dims))
-    strsplit(col_levels, "\u241f", fixed = TRUE) else list()
+    .spv_split_levels(col_levels) else list()
   header_row_cells <- if (length(col_dims)) {
     lapply(seq_along(col_dims), function(d) {
       labels <- vapply(col_parts, `[[`, character(1), d)
@@ -2267,7 +2282,7 @@ export_spv_html <- function(path, out = NULL) {
   for (i in seq_len(nrow(df))) grid[ri[i], ci[i]] <- df$value[i]
 
   row_parts <- if (length(row_dims))
-    strsplit(row_levels, "\u241f", fixed = TRUE) else list()
+    .spv_split_levels(row_levels) else list()
   body_rows <- vapply(seq_along(row_levels), function(i) {
     stub <- if (length(row_dims))
       paste(sprintf("<td>%s</td>", vapply(row_parts[[i]], .spv_html_escape, character(1))),
