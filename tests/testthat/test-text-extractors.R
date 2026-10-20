@@ -247,3 +247,16 @@ test_that("bibr vs extract_eq", {
   dplyr::filter(compare, is.na(bibr) | is.na(mc)) |> View()
 
 })
+
+test_that("extract_p_values and extract_eq search a character vector (U150)", {
+  # both stopped on a plain character vector, while extract_urls() took one
+  txt <- c("We found t(28) = 2.4, p = .03.", "No effect, p > .05.")
+  p <- extract_p_values(txt)
+  expect_equal(p$p_value, c(0.03, 0.05))
+  expect_equal(p$text_id, 1:2)
+  eq <- extract_eq(txt)
+  expect_equal(eq$lhs, c("t", "p", "p"))
+  expect_equal(eq$grp_id, c(1, 1, 2))
+  # a text table without paper_id or text_id stopped extract_eq's grouping
+  expect_equal(nrow(extract_eq(data.frame(text = txt))), 3)
+})

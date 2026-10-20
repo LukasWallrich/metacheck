@@ -39,6 +39,12 @@ extract_urls <- function(paper) {
 #' paper <- demopaper()
 #' p_values <- extract_p_values(paper)
 extract_p_values <- function(paper) {
+  # a character vector is searched as a text table, one row per string:
+  # text_search() returns plain matches for one, and p$text stopped with "$
+  # operator is invalid for atomic vectors" (U150)
+  if (is.character(paper))
+    paper <- data.frame(text = paper, text_id = seq_along(paper))
+
   # set up pattern
   operators <- c(
     "=", "<", ">", "~",
@@ -96,6 +102,11 @@ extract_p_values <- function(paper) {
 #' equations <- extract_eq(paper)
 extract_eq <- function(paper) {
   paper_id <- text_id <- grp_id <- NULL # CMD-check :(
+  # a character vector is searched as a text table, one row per string:
+  # text_search() returns plain matches for one, which stopped bind_rows()
+  # below (U150)
+  if (is.character(paper))
+    paper <- data.frame(text = paper, text_id = seq_along(paper))
 
   # set up pattern
   operators <- c(
@@ -219,11 +230,14 @@ extract_eq <- function(paper) {
   # eq$rhs <- suppressWarnings(as.numeric(rhs))
 
   # set group equal to sentence for now
+  # identical(), not != / ==: a text table without a paper_id (or text_id)
+  # has NA there, and NA != NA stopped with "missing value where TRUE/FALSE
+  # needed" (U150)
   eq$grp_id <- 1
   for (i in seq_along(eq$text_id)) {
-    if (i == 1 || eq$paper_id[[i]] != eq$paper_id[[i-1]]) {
+    if (i == 1 || !identical(eq$paper_id[[i]], eq$paper_id[[i-1]])) {
       eq$grp_id[[i]] <- 1
-    } else if (eq$text_id[[i]] == eq$text_id[[i-1]]) {
+    } else if (identical(eq$text_id[[i]], eq$text_id[[i-1]])) {
       eq$grp_id[[i]] <- eq$grp_id[[i-1]]
     } else {
       eq$grp_id[[i]] <- eq$grp_id[[i-1]] + 1
