@@ -86,6 +86,7 @@
 * `stat_output_validate()` reads a JSON document given as a string; every string was reported as "Input is not valid JSON." (#507: U136)
 * `github_links()` and `gitlab_links()` find hyperlinks in papers read from a bibr 12.x export or converted with `grobid_to_bibr(schema_version = "12.0")`: they searched the url table's first column, which in those papers is the number `url_id`, so no link was found and `repo_check` missed every GitHub and GitLab repository linked there (#507: U196)
 * `text_search(return = "section")` keeps each section's header; it was NA, so `coi_check_oi` tables named no section (#507: U80)
+* An SPSS box plot drawn from case data is decoded; the decoder always stopped (it took the absolute value of the text category column), so such box plots were dropped with a warning (#507: U144)
 
 # metacheck 0.4.0
 

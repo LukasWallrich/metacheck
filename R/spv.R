@@ -768,7 +768,11 @@
   category[is.na(category)] <- cats[is.na(category)]  # no relabel entry: use the raw code
   value <- vapply(y_var$values, function(v) if (!is.null(v$d)) v$d else NA_real_, numeric(1))
 
-  is_na_like <- function(v) is.na(v) | (is.numeric(v) & abs(v) >= .Machine$double.xmax)
+  # abs() only for numbers: with `&` it also ran on the character category
+  # and stopped, so a box plot from case data never decoded (U144)
+  is_na_like <- function(v) {
+    if (is.numeric(v)) is.na(v) | abs(v) >= .Machine$double.xmax else is.na(v)
+  }
   keep <- !is_na_like(category) & !is_na_like(value)
   if (!any(keep)) return(NULL)
   data.frame(category = category[keep], value = value[keep], stringsAsFactors = FALSE)
