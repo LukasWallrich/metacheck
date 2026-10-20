@@ -45,16 +45,22 @@ prereg_check <- function(paper) {
   }
 
   ## AsPredicted preregs ----
-  table_ap <- suppressMessages(
-    aspredicted_info(links_ap$href)
-  )
+  # Only with AsPredicted links: aspredicted_info() first checks that
+  # aspredicted.org is online, so an OSF-only paper failed offline (U109).
+  table_ap <- if (nrow(links_ap) > 0) {
+    suppressMessages(aspredicted_info(links_ap$href))
+  } else {
+    data.frame()
+  }
   ap_schema_table <- ap_schema(table_ap)
 
   ## OSF prereg ----
   osf_ids <- links_osf$href |>
     osf_check_id() |>
     unique()
-  link_types <- osf_type(osf_ids)
+  # osf_type(character(0)) stopped an AsPredicted-only paper ("argument is of
+  # length zero", U109)
+  link_types <- if (length(osf_ids) > 0) osf_type(osf_ids) else character(0)
   reg_ids <- osf_ids[link_types == "registrations" & !is.na(link_types)]
   # A validly-formed OSF id that cannot be read (private, embargoed,
   # withdrawn, or deleted) is a different finding from "not a registration at
@@ -107,9 +113,15 @@ prereg_check <- function(paper) {
     osf_prereg_extract(info)
   })
 
-  # make sure all items are not lists
-  prereg_schemas <- c(ps, list(ap_schema_table)) |>
-    lapply(\(x) lapply(x, paste, collapse = "\n\n"))
+  # make sure all items are not lists. Each AsPredicted preregistration is
+  # its own row: collapsing the whole table pasted every one of the call into
+  # a single row whose link matched no paper (paper_id NA, every paper
+  # counting 0), and a missing field became the text "NA" (U109).
+  ap_rows <- lapply(seq_len(nrow(ap_schema_table)), \(i) as.list(ap_schema_table[i, , drop = FALSE]))
+  collapse_field <- \(v) if (length(v) > 0 && all(is.na(v))) NA_character_ else
+    paste(v, collapse = "\n\n")
+  prereg_schemas <- c(ps, ap_rows) |>
+    lapply(\(x) lapply(x, collapse_field))
   prereg_info <- do.call(dplyr::bind_rows, prereg_schemas)
 
   ## every registration inaccessible, nothing else found ----
