@@ -763,7 +763,8 @@ openalex_doi <- function(doi, select = NULL) {
 #' @returns the info list with abstract field added
 #' @keywords internal
 .openalex_add_abstract <- function(info) {
-  if (!is.null(info$abstract_inverted_index)) {
+  # an empty index ({}) has no words to put in order: rep() stopped (U14)
+  if (length(info$abstract_inverted_index) > 0) {
     aii <- info$abstract_inverted_index
     words <- rep(names(aii), sapply(aii, length))
     order <- unname(unlist(aii))

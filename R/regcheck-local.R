@@ -176,6 +176,8 @@ regcheck_start_local <- function(method = c("docker", "python"),
       env     = c(
         Sys.getenv(),
         OLLAMA_MODEL        = model,
+        # the host port; docker-compose.yml fixed it at 8000 and `port` was ignored (U14)
+        REGCHECK_PORT       = as.character(port),
         REGCHECK_API_TOKEN  = Sys.getenv("REGCHECK_API_TOKEN")
       ),
       stdout  = "|",

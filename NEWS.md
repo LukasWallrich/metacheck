@@ -23,6 +23,7 @@
 * Papers in a list that share a `paper_id` are renamed "id~2", "id~3", ... with a warning, where a list comes in (`paperlist()`, `module_run()`, `report()`) (#507: U208, U101). Tables are joined and grouped on `paper_id`, so a shared id mixed the papers: sentences were joined to the other paper's sections (two papers with 2 p-values each gave 8 rows instead of 4), summaries had more rows than papers, references were pooled, `ethics_check` and `open_practices` stopped ("factor level [2] is duplicated"), and `report()` wrote both reports to one file
 * An AsPredicted page that answers with an error status (removed, private) or cannot be reached no longer stops `prereg_check`; the error is recorded for that page, with a warning (#507: U54)
 * `read_stat_tables()` of a path that is not a zip archive (another file, an empty zip, a folder) returns an empty list instead of stopping (#507: U137)
+* `check_orcid()` returns FALSE for NA or an ORCiD with an X before the check digit, instead of stopping; `pubpeer_comments()` sends a single DOI as a list, ignores feedback without an id (which stopped it) and keeps one row per DOI; the abstract rebuilt from OpenAlex no longer stops on an empty index; and `regcheck_start_local(method = "docker")` uses `port` (#507: U14)
 
 # metacheck 0.4.0
 

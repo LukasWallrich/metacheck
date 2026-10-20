@@ -74,9 +74,12 @@ credit_roles <- function(display = c("explain", "names", "abbr")) {
 #' check_orcid("https://orcid.org/0000-0002-0247-239X")
 #' check_orcid("0000-0002-0247-2394") # incorrect, return FALSE
 check_orcid <- function(orcid) {
+  # NA, or an X anywhere but the check digit, stopped the checksum loop below
+  # ("missing value where TRUE/FALSE needed", U14): neither is a valid ORCiD
+  if (length(orcid) != 1 || is.na(orcid)) return(FALSE)
   baseDigits <- gsub("[^0-9X]", "", orcid)
 
-  if (nchar(baseDigits) != 16) {
+  if (!grepl("^[0-9]{15}[0-9X]$", baseDigits)) {
     if (verbose()) {
       warning("The ORCiD ", orcid, " is not valid.")
     }

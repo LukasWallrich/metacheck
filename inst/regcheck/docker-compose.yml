@@ -2,7 +2,7 @@ services:
   regcheck:
     build: .
     ports:
-      - "8000:8000"
+      - "${REGCHECK_PORT:-8000}:8000"
     environment:
       - REGCHECK_API_TOKEN=metacheck-local
       - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
