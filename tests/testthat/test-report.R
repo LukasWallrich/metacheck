@@ -467,6 +467,26 @@ test_that("report_qmd", {
   expect_true(grepl(mi$title, report_text, fixed = TRUE))
 })
 
+test_that("report_qmd copes with a split summary, no paper and an unknown light (U7, U128)", {
+  mo <- function(summary = "All fine.", tl = "green") structure(list(
+    module = "demo_mod", title = "Demo Module", traffic_light = tl,
+    summary_text = summary, report = "Details here.", table = NULL),
+    class = "metacheck_module_output")
+
+  # a summary of several parts stopped the whole report (R >= 4.3)
+  txt <- report_qmd(list(demo_mod = mo(c("Part one.", "Part two."))), demopaper())
+  expect_match(txt, "Part one. Part two.", fixed = TRUE)
+
+  # the default paper = list() stopped ("argument is of length zero")
+  expect_match(report_qmd(list(demo_mod = mo())), "All fine.", fixed = TRUE)
+
+  # an undefined light kept no summary row and lost its heading
+  txt <- report_qmd(list(demo_mod = mo(tl = "blue")), demopaper())
+  expect_match(txt, "mc-summary-row blue", fixed = TRUE)
+  expect_match(txt, "All fine.", fixed = TRUE)
+  expect_match(module_report(mo(tl = "blue")), "### +Demo Module \\{#demo-module \\.blue\\}")
+})
+
 test_that("a paper without a title or DOI keeps the whole report header (#497)", {
   # sub() with an NA replacement returned NA for the whole header, so the
   # YAML (embed-resources), CSS, banner and info box became the word "NA";

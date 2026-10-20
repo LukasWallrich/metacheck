@@ -570,14 +570,17 @@ report_qmd <- function(module_output, paper = list()) {
   title <- paper$info$title
   if (length(title) == 0 || is.na(title[[1]])) title <- ""
   subtitle <- gsub('"', '\\\\"', title[[1]])
-  doi_text <- ifelse(is.na(paper$info$doi) |
-                       (paper$info$doi %||% "") == "", "",
-    sprintf("DOI: [%s](https://doi.org/%s)", paper$info$doi, paper$info$doi)
-  )
+  # No paper (the default list()), a zero-row info table or no doi column gave
+  # a zero-length doi_text, and nrow(NULL) > 0 below stopped with "argument is
+  # of length zero" (U128): the report is written without them.
+  doi <- paper$info$doi
+  doi <- if (length(doi) == 0 || is.na(doi[[1]])) "" else doi[[1]]
+  doi_text <- if (nzchar(doi))
+    sprintf("DOI: [%s](https://doi.org/%s)", doi, doi) else ""
 
   # get authors
   author_text <- ""
-  if (nrow(paper$author) > 0) {
+  if (NROW(paper$author) > 0) {
     names <- paste(paper$author$given,
                    paper$author$family)
     last <- utils::tail(names, 1)
@@ -737,8 +740,12 @@ report_qmd <- function(module_output, paper = list()) {
   # nesting inside the <li>.
   summary_list <- sapply(summary_output, \(x) {
     tl <- x$traffic_light %||% "info"
-    tl_symbol <- emojis[[paste0("tl_", tl)]]
-    summary_text <- x$summary_text %||% ""
+    # an undefined light ("blue") has no emoji: NULL made sprintf() below
+    # return character(0), an empty row (U128)
+    tl_symbol <- emojis[[paste0("tl_", tl)]] %||% ""
+    # a summary of several parts is joined: nzchar() of a vector stopped the
+    # whole report in R >= 4.3 ("'length = 2' in coercion to 'logical(1)'", U7)
+    summary_text <- paste(x$summary_text %||% "", collapse = " ")
     # Some modules' summary_text is ITSELF a multi-item markdown list (one
     # "- " bullet per finding, e.g. code_check's "- We found 33 R...\n- 1
     # code file had no comments.\n..."), not a single sentence -- confirmed
@@ -1055,7 +1062,9 @@ module_report <- function(module_output,
 
   # set up header
   tl <- module_output$traffic_light %||% "info"
-  tl_symbol <- emojis[[paste0("tl_", tl)]]
+  # an undefined light ("blue") has no emoji: NULL made sprintf() below
+  # return character(0), so the heading was lost (U128)
+  tl_symbol <- emojis[[paste0("tl_", tl)]] %||% ""
   if (is.null(header)) {
     head <- ""
   } else if (header == 0) {
