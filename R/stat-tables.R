@@ -617,7 +617,10 @@ read_stat_tables <- function(path) {
 
   mat <- do.call(rbind, lapply(data_rows, function(k) {
     v <- grid_of(row_cells[[k]])
-    length(v) <- gw                          # align to the header grid width
+    # align to the header grid width; a short row is padded with empty
+    # cells, not NA, so a row without content is dropped as empty below
+    # (NA padding made it an NA row; U141)
+    if (length(v) < gw) v <- c(v, rep("", gw - length(v))) else length(v) <- gw
     v
   }))
 
@@ -836,7 +839,7 @@ read_stat_tables <- function(path) {
   # recognisably the coefficient-table shape (has "coef" and at least one of
   # the columns that always accompanies it).
   is_coef_table <- function(tb) {
-    hdr <- tolower(trimws(names(tb$data)))
+    hdr <- tolower(trimws(names(tb[["data"]])))
     "coef" %in% hdr && any(c("std err", "t", "p>|t|", "p>|z|") %in% hdr)
   }
   tabs <- Filter(is_coef_table, tabs)
@@ -969,7 +972,7 @@ read_stat_tables <- function(path) {
         for (tb in tabs) {
           ti <<- ti + 1L
           out[[length(out) + 1L]] <<- list(
-            analysis = analysis, title = title, data = tb$data,
+            analysis = analysis, title = title, data = tb[["data"]],
             table_index = ti)
         }
         return(invisible())

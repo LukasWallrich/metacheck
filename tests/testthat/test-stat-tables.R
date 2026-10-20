@@ -392,3 +392,14 @@ test_that(".norm_value counts the exponent in a number's decimals (U143)", {
   expect_equal(.norm_value("0.03")$dec, 2L)
   expect_equal(.norm_value("2.5E+03")$dec, 0L)
 })
+
+test_that("stat tables: a row without content is dropped, and fields are read by exact name (U141)", {
+  # a short empty row became an NA row, and tb$line read tb$line_seq
+  h <- xml2::read_html(paste0('<table><tr><th>Name</th><th>t</th></tr>',
+                              '<tr><td>A</td><td>2.1</td></tr><tr><td></td></tr><tr></tr>',
+                              '<tr><td>B</td><td>1.1</td></tr></table>'))
+  parsed <- .stat_table_parse(xml2::xml_find_first(h, "//table"))
+  expect_equal(parsed$data$Name, c("A", "B"))
+  ids <- .stat_result_ids(list(list(line_seq = 3L, analysis = "x")), "f.R")
+  expect_false(grepl("l3", ids))
+})
