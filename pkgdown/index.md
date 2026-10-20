@@ -21,10 +21,9 @@ aspects, such as power analyses, and provide general advice. However,
 actioning this advice is always up to a human who can interpret the
 advice in context.
 
-See [Get Started](articles/metacheck.html) for the basics,
-[Articles](articles/) for more detailed examples of what you can do, or
-our [introductory blog post](articles/intro.html) for a more conceptual
-overview. You can contact the Metacheck team at:
+See the [Metacheck Manual](https://www.scienceverse.org/metacheck_book/)
+for the basics, worked examples, and a conceptual overview of what you
+can do. You can contact the Metacheck team at:
 <metacheck.scienceverse@gmail.com>.
 
 ## Our Values

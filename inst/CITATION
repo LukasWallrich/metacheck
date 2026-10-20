@@ -24,7 +24,7 @@ bibentry(
              comment = c(ORCID = "0000-0002-0247-239X"))
   ),
   year = 2026,
-  note = "R package version 0.1.0",
+  note = "R package version 0.4.0",
   url = "https://scienceverse.org/metacheck",
   doi = "10.5281/zenodo.20704754",
   key = "metacheck-package"
