@@ -347,6 +347,16 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # all, with nothing in gated_repos. Now it is a repository that could
       # not be checked, like a failed link on any other platform (#476).
       osf_failed_types <- c("unfound", "error", "too many requests")
+      # A link whose id is not a valid OSF id gets no osf_type: with only
+      # such links the column was missing and filter(osf_type ...) below
+      # found the exported osf_type() function, so dplyr's error text became
+      # the reason; beside valid links it was removed without a word (U122).
+      if (!"osf_type" %in% names(osf_info))
+        osf_info$osf_type <- rep(NA_character_, nrow(osf_info))
+      invalid_osf <- osf_info$osf_url[is.na(osf_info$osf_type) &
+                                        osf_info$osf_url %in% osf_urls]
+      fill <- repos$repo_url %in% invalid_osf & is.na(repos$repo_error)
+      repos$repo_error[fill] <- "not a valid OSF link"
       osf_failed <- osf_info[osf_info$osf_type %in% osf_failed_types &
                                osf_info$osf_url %in% osf_urls, , drop = FALSE]
       if (nrow(osf_failed) > 0) {
@@ -357,7 +367,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         repos$repo_error[fill] <- why[hit[fill]]
       }
       osf_to_remove <- osf_info |>
-        dplyr::filter(!osf_type %in% c("nodes", "files", "private", osf_failed_types)) |>
+        dplyr::filter(!is.na(osf_type),
+                      !osf_type %in% c("nodes", "files", "private", osf_failed_types)) |>
         _$osf_url
       repos <- repos[!repos$repo_url %in% osf_to_remove, ]
 

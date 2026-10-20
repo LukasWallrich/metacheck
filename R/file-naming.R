@@ -309,7 +309,9 @@ check_file_naming <- function(file_name, file_path = file_name,
     ifelse(is.na(i), x, given[i])
   }
 
-  per_file <- lapply(seq_len(n), function(i) {
+  # a file without a name (a platform listing can have one) has nothing to
+  # check; it stopped the module ("missing value where TRUE/FALSE needed", U122)
+  per_file <- lapply(which(!is.na(file_name)), function(i) {
     df <- .file_naming_check_one(file_name[[i]], data_type[[i]])
     # Add file_name even when 0 rows, so rbind()-ing an all-clean batch still
     # produces a data.frame with a file_name column to select below (a bare
@@ -325,8 +327,8 @@ check_file_naming <- function(file_name, file_path = file_name,
     stringsAsFactors = FALSE)
   per_file <- per_file[, c("file_name", "rule", "detail")]
 
-  padding <- .file_naming_check_padding(file_name)
-  length_issues <- .file_naming_check_length(file_path)
+  padding <- .file_naming_check_padding(file_name[!is.na(file_name)])
+  length_issues <- .file_naming_check_length(file_path[!is.na(file_path)])
 
   out <- rbind(per_file, padding, length_issues)
   out$severity <- unname(.file_naming_severity[out$rule])

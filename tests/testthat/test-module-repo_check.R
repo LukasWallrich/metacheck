@@ -729,3 +729,15 @@ test_that("repo_check reports OSF links it could not check, instead of dropping 
   # the OSF again instead of replaying the 503
   osf_cache_clear()
 })
+
+test_that("an invalid OSF link is reported, and a nameless file does not stop the naming check (U122)", {
+  # with only invalid OSF ids, filter(osf_type ...) found the osf_type()
+  # function and dplyr's error text became the reason; beside valid links the
+  # invalid one vanished
+  llm_use(FALSE)
+  mo <- suppressWarnings(suppressMessages(module_run(test_paper(url = "https://osf.io/ab"), "repo_check")))
+  expect_equal(mo$gated_repos$repo_error, "not a valid OSF link")
+  # check_file_naming(NA) stopped the module
+  out <- check_file_naming(c(NA, "my file.csv"), c(NA, "my file.csv"))
+  expect_equal(out$file_name, "my file.csv")
+})
