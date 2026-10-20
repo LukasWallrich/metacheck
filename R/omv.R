@@ -102,10 +102,10 @@ import_omv <- function(path) {
     dt <- f$dataType %||% "Integer"
     mt <- f$measureType %||% "Nominal"
     if (identical(dt, "Decimal")) {
-      v <- readBin(con, "double", n = nrow, size = 8, endian = "little")
+      v <- .pad_to(readBin(con, "double", n = nrow, size = 8, endian = "little"), nrow)
       v[is.nan(v)] <- NA
     } else {
-      idx <- readBin(con, "integer", n = nrow, size = 4, endian = "little")
+      idx <- .pad_to(readBin(con, "integer", n = nrow, size = 4, endian = "little"), nrow)  # short column padded (U145)
       if (identical(dt, "Text")) {
         # Text: the int is a 0-based index into the NUL-separated string pool.
         v <- rep(NA_character_, length(idx))
@@ -132,7 +132,7 @@ import_omv <- function(path) {
   # as.data.frame drops per-column attributes; re-attach label/labels.
   for (j in seq_along(cols)) {
     if (!is.null(attr(cols[[j]], "labels"))) attr(df[[j]], "labels") <- attr(cols[[j]], "labels")
-    if (!is.null(attr(cols[[j]], "label")))  attr(df[[j]], "label")  <- attr(cols[[j]], "label")
+    if (!is.null(attr(cols[[j]], "label", exact = TRUE)))  attr(df[[j]], "label")  <- attr(cols[[j]], "label", exact = TRUE)
   }
 
   list(data = df,

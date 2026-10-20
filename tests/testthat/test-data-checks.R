@@ -1459,3 +1459,14 @@ test_that(".bh_is_trial_level_file reads only the header line (#477)", {
                paste(c("S1", rep(0, 1600)), collapse = ",")), wide)
   expect_lt(system.time(.bh_is_trial_level_file(wide))[["elapsed"]], 10)
 })
+
+test_that("a column with value labels but no variable label gets no variable label (U145)", {
+  # attr(x, "label") partially matches "labels": the first value code became
+  # the variable label
+  df <- data.frame(q1 = haven::labelled(c(1, 2), labels = c(Yes = 1, No = 2)),
+                   q2 = haven::labelled(c(1, 2), labels = c(Yes = 1, No = 2), label = "Question 2"))
+  lab <- metacheck:::.extract_haven_labels(df, "data.sav")
+  expect_false("1" %in% lab$label)
+  expect_true("Question 2" %in% lab$label)
+  expect_equal(metacheck:::.pad_to(1:2, 4), c(1L, 2L, NA, NA))
+})

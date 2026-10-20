@@ -3877,7 +3877,9 @@ normalize_label <- function(x) {
 # different study. Callers that know the file's group should pass it.
 .extract_haven_labels <- function(df, src, group = NA_character_) {
   labels <- vapply(names(df), function(col) {
-    lbl <- attr(df[[col]], "label")
+    # exact: attr(x, "label") partially matches "labels", so a column with
+    # value labels but no variable label got its first code as label (U145)
+    lbl <- attr(df[[col]], "label", exact = TRUE)
     if (is.null(lbl)) NA_character_ else trimws(as.character(lbl[1]))
   }, character(1))
   # Value labels + declared missing values are useful even for columns without a
