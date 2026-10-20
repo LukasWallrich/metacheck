@@ -57,6 +57,7 @@
 * A file that `data_check` takes out of a zip, tar or compressed file has its own `file_type` from its extension, not the archive's (#507: U213). The rows for an archive's files were copies of the archive's row, so a CSV from `data.zip` was typed "archive"
 * `data_check` no longer writes into the folder given as `local_path` (#507: U214). A zip, tar or compressed file there was extracted beside itself, to "<archive>.contents"; the next run listed the extracted files as files of their own and extracted the archive again, so every file inside counted twice. An archive outside the repository cache and the temporary folder is now extracted into the temporary folder; a downloaded archive is still extracted beside itself
 * `module_report()` keeps the "How It Works" box of a module without `@details`, and the report of a module without `summary_text` (#507: U129). Searching the missing details for a validation note failed, which dropped the whole box with the description and authors; and without `summary_text`, `all(NULL == report)` is TRUE, so the report was dropped
+* `extract_urls()` no longer lists the two halves of an e-mail address as URLs (`k.aristovich@ucl.ac.uk` gave `k.aristovich` and `ucl.ac.uk`), nor "et al." glued to the next word ("et al.Inhibitory" gave `al.Inhibitory`) (#507: U158, U206). A URL with an `@` after its host (`twitter.com/@user`) is kept
 
 # metacheck 0.4.0
 

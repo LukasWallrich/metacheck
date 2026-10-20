@@ -36,6 +36,15 @@ test_that("extract_urls", {
   expect_in(urls$paper_id, names(paper))
 })
 
+test_that("extract_urls skips e-mail addresses and 'et al.' glued to a word (U158, U206)", {
+  # both halves of an address were listed, and "et al.Inhibitory" gave the
+  # URL "al.Inhibitory"
+  paper <- test_paper(c("Catarino et al.Inhibitory Control was studied.",
+                        "Contact k.aristovich@ucl.ac.uk for data.",
+                        "Mail john@site.com, or visit site.com or twitter.com/@user."))
+  expect_equal(extract_urls(paper)$text, c("site.com", "twitter.com/@user"))
+})
+
 
 test_that("extract_p_values", {
   expect_true(is.function(metacheck::extract_p_values))

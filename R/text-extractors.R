@@ -15,6 +15,11 @@ extract_urls <- function(paper) {
   # simplified version without strict IPv4 validation or IPv6 support
   # these are very unlikely to be in papers
   pattern <- "\\b((doi:)?(https?://)?(([\\w.-]+\\.[a-z]{2,})|(\\d{1,3}(\\.\\d{1,3}){3}))(:\\d+)?(/[^\\s]*)?)\\b"
+  # An e-mail address is matched whole and skipped, so neither its local
+  # part nor its domain is listed as a URL (U206); a host name right after
+  # "et " is "et al." glued to the next word ("et al.Inhibitory"; U158).
+  pattern <- paste0("[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+(*SKIP)(*FAIL)|(?<!\\bet\\s)",
+                    pattern)
   table <- text_search(paper, pattern, return = "match", "perl" = TRUE)
 
   return(table)
