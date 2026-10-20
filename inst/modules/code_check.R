@@ -612,27 +612,6 @@ code_check <- function(paper, local_path = NULL,
       paste(comment_issue, collapse = ", ")
     )
   }
-  # "percentage_comment" is only set inside the per-file try block above, on
-  # a file that was actually read -- absent from code_files entirely (not
-  # just NA) when every checked file errored before reaching that point,
-  # e.g. every download in the batch failed (confirmed live 2026-08-31:
-  # code_files[rows, cols] below throws "undefined columns selected" in
-  # exactly that scenario, a real crash that took down an entire batch of an
-  # unattended corpus run). n_analysed/comment_issue above already handle
-  # this correctly (NULL column -> is.na()/== both give an empty, not an
-  # error), so mirror that here: an absent column means nothing to report.
-  if ("percentage_comment" %in% names(code_files)) {
-    cols <- c("file_name", "language", "percentage_comment")
-    rows <- !is.na(code_files$percentage_comment)
-    report_table_comments <- code_files[rows, cols]
-    report_table_comments$percentage_comment <- sprintf("%.0f%%", report_table_comments$percentage_comment * 100)
-  } else {
-    report_table_comments <- code_files[0, c("file_name", "language"), drop = FALSE]
-    report_table_comments$percentage_comment <- character(0)
-  }
-  colnames(report_table_comments) <- c(
-    "File name", "Language", "Percent comments"
-  )
 
   ## Missing files ----
   missingfiles_issue <- code_files$file_name[which(code_files$loaded_files_missing > 0)]

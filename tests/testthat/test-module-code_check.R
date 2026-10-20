@@ -830,3 +830,24 @@ test_that("code_check handles empty code files without errors or warnings", {
   expect_equal(mo$table$comment_lines[mo$table$file_name == "__init__.py"], 0)
   expect_true(any(grepl("All your code files had comments", mo$report, fixed = TRUE)))
 })
+
+test_that("code_check takes a listing without file_url, and empty code files (U87)", {
+  # a listing without file_url crashed the report (link(NULL, file_name)),
+  # and an empty file got a per-file error
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  writeLines(c("# analysis", "x <- 1", "mean(x)"), file.path(d, "analysis.R"))
+  file.create(file.path(d, "empty.R"), file.path(d, "empty.py"))
+  paper <- test_paper()
+  fn <- c("analysis.R", "empty.R", "empty.py")
+  repo <- structure(list(
+    module = "repo_check", paper = paper,
+    summary_table = data.frame(paper_id = paper_id(paper)),
+    table = data.frame(paper_id = paper_id(paper), file_name = fn, repo_url = d,
+                       file_location = file.path(d, fn))),
+    class = "metacheck_module_output")
+  mo <- suppressWarnings(suppressMessages(module_run(repo, "code_check")))
+  expect_true(all(is.na(mo$table$error) | mo$table$error == ""))
+  txt <- module_report(mo)
+  expect_match(txt, "analysis.R", fixed = TRUE)
+})
