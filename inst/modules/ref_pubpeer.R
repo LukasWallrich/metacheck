@@ -36,6 +36,14 @@ ref_pubpeer <- function(paper) {
 
   ## join to  pubpeer ----
   pp <- pubpeer_comments(bib$doi)
+  # NULL when PubPeer answered with an error: the join below stopped on it
+  # ("`x` and `y` must share the same src", U23)
+  if (is.null(pp)) {
+    return(list(
+      traffic_light = "fail",
+      summary_text = "PubPeer could not be reached (the request failed), so the references were not checked for comments."
+    ))
+  }
   pp <- pp[pp$total_comments > 0 & pp$users != "Statcheck", ]
   table <- dplyr::inner_join(bib, pp, by = "doi")
 

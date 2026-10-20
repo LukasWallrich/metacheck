@@ -242,3 +242,11 @@ test_that("ref_summary", {
   expect_in("accuracy_mismatch", names(mod_output$table))
   expect_disjoint("retractionwatch", names(mod_output$table))
 })
+
+test_that("ref_pubpeer reports a failed PubPeer request instead of stopping (U23)", {
+  # pubpeer_comments() gives NULL for an error answer; the join stopped on it
+  local_mocked_bindings(pubpeer_comments = function(doi) NULL)
+  mo <- module_run(demopaper(), "ref_pubpeer")
+  expect_equal(mo$traffic_light, "fail")
+  expect_match(mo$summary_text, "PubPeer could not be reached", fixed = TRUE)
+})
