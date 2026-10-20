@@ -635,3 +635,13 @@ test_that("bibstruct", {
   expect_equal(bib$title, exp)
 })
 
+
+test_that("GROBID TEI edge cases load; the paper DOI comes from the header only (U17)", {
+  # a page range with only `from`, a reference without a raw-text note and a
+  # link without text stopped the whole paper; the DOI fell back to the first
+  # reference's DOI
+  p <- .grobid_to_bibr(test_path("fixtures", "grobid_edge.xml"))
+  expect_false(identical(p$info$doi, "10.1234/first.reference"))
+  expect_equal(p$bib$first_page[p$bib$bib_id == 0], "12")
+  expect_equal(nrow(p$bib), 3)
+})

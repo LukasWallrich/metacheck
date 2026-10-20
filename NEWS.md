@@ -39,6 +39,7 @@
 * `match_reported_output()` (used by `reproducibility_check`) no longer stops on an output row without a `test_id` next to a jamovi residuals row, on an empty `test_id`, or on infinite values (an infinite value simply does not match); a paper list gets a clear error asking for one paper at a time (#507: U142)
 * A column with value labels but no variable label (in an SPSS, Stata, JASP or jamovi file) no longer gets its first value code as its variable label: `attr(x, "label")` partially matched the value labels (`labels`) (#507: U145). A JASP or jamovi column shorter than the row count is padded with missing values instead of stopping the import, and a JASP column without a column type is read as nominal
 * `convert()` of GROBID XML files works offline: it looked up the online conversion servers although XML is converted locally, and stopped with "online versions not available" (#507: U18). `papers_available()` returns an empty table for a repository whose releases hold no `.rds` files instead of stopping, so `papers_load()` reports the corpus as not found
+* GROBID XML files with a page range giving only `from` or `to`, a reference without its raw text, or a link without text no longer fail to load; and a paper whose TEI header has no DOI no longer gets its first reference's DOI (#507: U17)
 
 # metacheck 0.4.0
 
