@@ -285,9 +285,12 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   codebook_vars_df <- if (length(parsed_list) > 0) {
     v <- dplyr::bind_rows(parsed_list)
-    # Drop exact duplicate definitions (same normalised name + label + group).
+    # Drop exact duplicate definitions (same normalised name + label + group),
+    # within a paper: across papers, another paper's identical definition was
+    # dropped, so that column was reported as undocumented (U91).
     dup_key <- paste(normalize_varname(v$codebook_variable), v$label,
-                     ifelse(is.na(v$group), "", v$group), sep = "\x01")
+                     ifelse(is.na(v$group), "", v$group),
+                     if ("paper_id" %in% names(v)) v$paper_id else "", sep = "\x01")
     v[!duplicated(dup_key), , drop = FALSE]
   } else {
     .empty_codebook_vars()
@@ -2518,10 +2521,13 @@ codebook_parse_llm <- function(lines, src, model, params, max_chunks = 10L) {
     # prefix differs from the manuscript's abbreviation (e.g. "Response.*" columns
     # described as the "Teleological Beliefs Scale") — otherwise that description
     # is never retrieved. Pooled and de-duplicated; prefix sentences come first.
+    # this file's own paper: `paper` is a list for a paper list, so no
+    # sentences were sent at all (U91)
     prefixes <- vapply(groups, function(g) g$display, character(1))
-    sents <- if (.is_paper(paper))
-      unique(c(.scale_prefix_sentences(paper, prefixes),
-               .scale_description_sentences(paper))) else character(0)
+    p <- paper_for_file(file)
+    sents <- if (.is_paper(p))
+      unique(c(.scale_prefix_sentences(p, prefixes),
+               .scale_description_sentences(p))) else character(0)
 
     # Dictionary hints: known instruments whose acronym equals a group prefix.
     hint_rows <- dict[toupper(gsub("[^A-Za-z0-9]","",dict$acronym)) %in%
@@ -2589,7 +2595,9 @@ codebook_parse_llm <- function(lines, src, model, params, max_chunks = 10L) {
         totals_only = isTRUE(gg$totals_only),
         columns = I(list(gg$columns)), stringsAsFactors = FALSE)
     }
-    if (n_calls >= max_calls) break
+    # no break at the call cap: the call above is capped already, and the
+    # break also stopped listing the groups of the remaining files, even with
+    # llm_use(FALSE) and max_calls = 0 (U92)
   }
 
   res <- if (length(out)) do.call(rbind, out) else NULL
@@ -3098,7 +3106,8 @@ codebook_parse_llm <- function(lines, src, model, params, max_chunks = 10L) {
                   "task","level","levels","during","the","of","a","an","and",
                   "or","for","to","in","on","data","metrics","measure")
   toks <- function(s) {
-    t <- unique(strsplit(tolower(gsub("[^a-z ]+", " ", s)), "\\s+")[[1]])
+    # lower-cased first: "Emotion Recognition" became "motion ecognition" (U92)
+    t <- unique(strsplit(gsub("[^a-z ]+", " ", tolower(s)), "\\s+")[[1]])
     t <- t[nchar(t) > 0 & !t %in% stop_words]
     t
   }
