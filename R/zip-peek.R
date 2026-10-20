@@ -752,8 +752,11 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     raw <- .http_range_tail(url, nb, total = total,
                             skip_on_api_limit = skip_on_api_limit)
     if (is.null(raw)) {
+      # kept for this session only: a failed request (a connection failure, a
+      # rate limit, a server error) can pass, and the disk cache outlives the
+      # session, so the archive was not listed again until the cache was
+      # cleared (U210)
       assign(url, NULL, envir = .zip_peek_cache)
-      if (isTRUE(cache)) .zip_peek_cache_put(url, NULL)
       return(NULL)
     }
     if (is.na(total)) total <- attr(raw, "total") %||% NA_real_
@@ -1098,7 +1101,9 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   } else {
     return(NA)
   }
-  isTRUE(all.equal(as.numeric(got), as.numeric(crc)))
+  # an exact comparison: both are whole numbers, and all.equal()'s tolerance
+  # accepted a CRC up to about 60 off for large values (U70)
+  isTRUE(as.numeric(got) == as.numeric(crc))
 }
 
 # Download selected members of a remote zip into `dest`, skipping the rest.

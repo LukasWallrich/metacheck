@@ -59,6 +59,8 @@ test_that(".zip_crc_ok distinguishes a match, a mismatch, and no check", {
   b <- charToRaw("123456789")
   expect_true(metacheck:::.zip_crc_ok(b, 3421780262))
   expect_false(metacheck:::.zip_crc_ok(b, 12345))
+  # a near miss is a mismatch: all.equal() accepted it (U70)
+  expect_false(metacheck:::.zip_crc_ok(b, 3421780262 + 20))
   # An absent CRC is "not checked", not "failed" -- .zip_member_fetch() rejects
   # only on FALSE, so returning NA here must not discard a good download.
   expect_true(is.na(metacheck:::.zip_crc_ok(b, NA_real_)))
@@ -508,6 +510,32 @@ test_that("zip_peek(cache = FALSE) never reads or writes the on-disk cache", {
   httr2::local_mocked_responses(.s3_like_host(bytes))
   metacheck:::zip_peek(url)   # cache defaults to FALSE
   expect_false(metacheck:::.zip_peek_cache_has(url))
+})
+
+test_that("a failed zip_peek() download is kept for the session only, not on disk (U210)", {
+  # a connection failure, rate limit or server error passes, but the disk
+  # entry outlived the session, so the zip was not listed again
+  d <- withr::local_tempdir()
+  withr::local_options(metacheck.zip_peek_cache.dir = d)
+  url <- "https://down.example/failed.zip"
+  withr::defer(suppressWarnings(rm(list = url, envir = metacheck:::.zip_peek_cache)))
+  local_mocked_bindings(.http_range_tail = function(...) NULL, .head_size = function(...) 100)
+  expect_null(metacheck:::zip_peek(url, cache = TRUE))
+  expect_true(exists(url, envir = metacheck:::.zip_peek_cache, inherits = FALSE))
+  expect_false(metacheck:::.zip_peek_cache_has(url))
+})
+
+test_that("an unreadable zip-peek cache entry is a miss, and a new entry replaces it (U210)", {
+  # an interrupted write left a file that was returned as a cached failure
+  d <- withr::local_tempdir()
+  withr::local_options(metacheck.zip_peek_cache.dir = d)
+  url <- "https://x.example/broken.zip"
+  writeBin(as.raw(1:10), metacheck:::.zip_peek_cache_path(url))
+  expect_false(metacheck:::.zip_peek_cache_has(url))
+  metacheck:::.zip_peek_cache_put(url, data.frame(name = "a", size = 1))
+  expect_true(metacheck:::.zip_peek_cache_has(url))
+  expect_equal(metacheck:::.zip_peek_cache_get(url)$name, "a")
+  expect_equal(length(list.files(d)), 1)   # no temporary file left behind
 })
 
 test_that("zip_peek_cache_clear() removes every cached entry", {
