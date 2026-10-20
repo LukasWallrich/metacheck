@@ -377,7 +377,7 @@ osf_check_id <- function(osf_id) {
         if (grepl("^[a-z0-9]{5}(_v\\d+)?\\?view_only=.+$", id)) {
           return(id)
         }
-        if (nchar(id) == 24 && grepl("^[a-z0-9]+$", id)) {
+        if (grepl("^[a-f0-9]{24}$", id)) {
           return(id)
         }
 
@@ -385,18 +385,26 @@ osf_check_id <- function(osf_id) {
         parsed <- tryCatch(httr2::url_parse(id), error = \(e) NULL)
         if (is.null(parsed)) stop()
 
-        path <- parsed$path |>
-          strsplit("/", fixed = TRUE) |> # fs::path_split() |>
-          sapply(utils::tail, 1)
+        segs <- strsplit(parsed$path %||% "", "/", fixed = TRUE)[[1]]
+        segs <- segs[nzchar(segs)]
+        last <- utils::tail(segs, 1)
 
-        # All OSF IDs are 5 or 24 characters
-        if (grepl("^[a-z0-9]{5}(_v\\d+)?$", path)) {
+        # A 24-character last segment is a file id when it is hexadecimal and
+        # not a registration schema (osf.io/<id>/register/<schema>) (U51)
+        if (length(last) && grepl("^[a-f0-9]{24}$", last) &&
+            !identical(utils::tail(segs, 2)[1], "register")) {
+          return(last)
+        }
+
+        # The id is the first id-shaped segment that is not a route name: the
+        # last segment made osf.io/j3gcx/files/ the id "files" (U51)
+        routes <- c("files", "forks", "links", "login", "about", "wiki")
+        cand <- segs[grepl("^[a-z0-9]{5}(_v\\d+)?$", segs) & !segs %in% routes]
+        if (length(cand)) {
+          path <- cand[[1]]
           if (!is.null(parsed$query$view_only)) {
             path <- paste0(path, "?view_only=", parsed$query$view_only)
           }
-          return(path)
-        }
-        if (nchar(path) == 24) {
           return(path)
         }
 
@@ -404,13 +412,17 @@ osf_check_id <- function(osf_id) {
       },
       error = \(e) {
         # try to extract 5-char ID
-        m <- gregexpr("(?<=osf\\.io/)[a-z0-9]{5}(_v\\d+)?[?/]?",
+        # a whole path segment only, and the first of several: any word after
+        # osf.io/ was cut to five characters ("prereg" gave "prere"), and two
+        # ids made this fail (U51)
+        m <- gregexpr("(?<=osf\\.io/)[a-z0-9]{5}(_v\\d+)?(?=[?/#]|$)",
           id,
           perl = TRUE
         )
-        id5 <- regmatches(id, m) |> sub("[?/]$", "", x = _)
-        if (nchar(id5) %in% c(5, 8, 9)) {
-          return(id5)
+        id5 <- regmatches(id, m)[[1]]
+        id5 <- id5[!id5 %in% c("files", "forks", "links", "login", "about", "wiki")]
+        if (length(id5) && nchar(id5[[1]]) %in% c(5, 8, 9)) {
+          return(id5[[1]])
         }
 
         # else...

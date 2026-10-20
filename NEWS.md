@@ -77,6 +77,7 @@
 * 4TU.ResearchData: a DOI with a uuid that starts with digits (10.4121/7f866e02-...) is looked up by its uuid; the digits were taken as the id ("7"). Short article addresses (data.4tu.nl/articles/_/<id>/<version>) and addresses of other item types (articles/software/<title>/<id>) get their id, and an article known only by its uuid is downloaded (#507: U41, U156)
 * `dataone_info()` fetches a dataset once when several URLs name it (it was fetched once per URL, and the join then gave each URL one row per fetch: 2 URLs, 4 rows). A DataONE PID no longer keeps a sentence's final full stop ("doi:10.5063/PG1Q4B."), a PID marked "doi:" may contain "/", and a creator with a missing name part is no longer written "NA Smith" (#507: U35, U40)
 * DSpace 7: a resolved DOI counts as a DSpace 7 link only when its host name is a known DSpace 7 host or a subdomain of one; a known host anywhere in the URL, such as in its query string, counted. Messages about an item without a uuid name its handle instead of "(NA)", and a legacy DSpace handle on an unknown host is asked of PsychArchives instead of https://NA/rest (#507: U42, U211)
+* `osf_check_id()` takes the project id from a link that ends in a route name (osf.io/j3gcx/files/ gave the id "files"), no longer cuts a word after osf.io/ to five characters (osf.io/prereg gave "prere"), and does not take a registration schema (osf.io/<id>/register/<schema>) as a file id (#507: U51)
 
 # metacheck 0.4.0
 
