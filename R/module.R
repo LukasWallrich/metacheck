@@ -174,16 +174,21 @@ module_run <- function(paper, module, ...) {
 #' @returns the path to the module
 #' @keywords internal
 module_find <- function(module) {
-  # search for modules in built-in directory
-  module_libs <- system.file("modules", package = "metacheck") |>
-    list.dirs() |>
-    c(".", "modules") # also search working directory and any directory called modules
-  module_paths <- sapply(module_libs, list.files,
-    pattern = "\\.R$",
-    full.names = TRUE
-  ) |>
-    unlist(use.names = FALSE) |>
-    c(.module_installed_files()) # modules installed with module_install()
+  # search for modules in built-in directory, then in the modules installed
+  # with module_install(), and only then in the working directory and a
+  # directory called modules in it (#512). The working directory came before
+  # the installed modules, so a file modules/<name>.R replaced an installed
+  # module: a server that runs a check from inside an uploaded folder ran the
+  # upload's own code as that module.
+  find_r <- function(dirs) {
+    sapply(dirs, list.files, pattern = "\\.R$", full.names = TRUE) |>
+      unlist(use.names = FALSE)
+  }
+  module_paths <- c(
+    find_r(list.dirs(system.file("modules", package = "metacheck"))),
+    .module_installed_files(),
+    find_r(c(".", "modules"))
+  )
 
   module_names <- basename(module_paths) |> sub("\\.R$", "", x = _)
 

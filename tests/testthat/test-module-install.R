@@ -85,6 +85,17 @@ test_that("METACHECK_MODULES_DIR", {
   expect_equal(normalizePath(module_find("ext_shared")),
                normalizePath(file.path(shared, "owner", "repo", "ext_shared.R")))
 
+  # an installed module comes before a file of the same name in the working
+  # directory or its modules/ folder (#512), which is still found when no
+  # module of that name is installed
+  wd <- withr::local_tempdir()
+  write_modules(wd, c("modules/ext_shared.R", "modules/ext_local_only.R"))
+  withr::with_dir(wd, {
+    expect_equal(normalizePath(module_find("ext_shared")),
+                 normalizePath(file.path(shared, "owner", "repo", "ext_shared.R")))
+    expect_equal(module_find("ext_local_only"), "modules/ext_local_only.R")
+  })
+
   # unset: the user data folder
   withr::local_envvar(METACHECK_MODULES_DIR = NA)
   expect_equal(metacheck:::.modules_dir(),
