@@ -18,27 +18,38 @@ code_read <- function(file_path) {
   # arrived locally. There is nothing to guess an encoding FOR in an empty
   # file, so this is checked directly rather than caught after the fact.
   # file.exists()/file.size() are meaningless for `file_path` as a remote URL
-  # (readr::guess_encoding() and read_lines() both accept one directly), so
-  # this only applies when the path resolves to a real local file; a URL
-  # falls through to the unchanged behaviour below.
+  # (fetched with curl below), so this only applies when the path resolves
+  # to a real local file; a URL falls through to the code below.
   if (file.exists(file_path) && file.size(file_path) == 0) return(character(0))
 
-  # first try readr, handles most encodings well
-  enc <- readr::guess_encoding(file_path)$encoding[[1]]
-
-  file_lines <- tryCatch(
-    readr::read_lines(file_path, locale = readr::locale(encoding = enc)),
-    error = \(e) { NULL },
-    warning = \(w) { NULL }
-  )
-
-  # Fallback: base R handles NULs
-  if (is.null(file_lines)) {
-    file_lines <- readLines(file_path, warn = FALSE, skipNul = TRUE)
+  # The file's bytes, turned into UTF-8 by base R's iconv() from the encoding
+  # readr guesses. readr::read_lines() with that encoding is not used: on a
+  # byte the encoding leaves undefined, vroom raises "Invalid multibyte
+  # sequence" and then crashes R itself while unwinding from that error,
+  # tryCatch() or not (vroom 1.7.1). A 6-byte file "ab\x81cd", guessed as
+  # windows-1252 (which has no character 0x81), was enough; on metacheck's
+  # SURF server a README in the freetype sources of a Zenodo repository
+  # stopped the whole check. iconv() writes such a byte as "<81>" instead.
+  raw <- if (file.exists(file_path)) {
+    readBin(file_path, "raw", file.size(file_path))
+  } else {
+    curl::curl_fetch_memory(file_path)$content
   }
+  if (!length(raw)) return(character(0))
+  enc <- readr::guess_encoding(raw)$encoding
+  enc <- if (length(enc) && !is.na(enc[[1]])) enc[[1]] else "UTF-8"
 
-  # Convert to UTF-8, replacing invalid characters
-  file_lines <- iconv(file_lines, to = "UTF-8", sub = "byte")
+  # NUL bytes cannot be in an R string (base R's skipNul); in UTF-16 and
+  # UTF-32 they are part of the characters
+  if (!grepl("^UTF-?(16|32)", toupper(enc))) raw <- raw[raw != as.raw(0)]
+  to_utf8 <- function(from) {
+    tryCatch(iconv(list(raw), from = from, to = "UTF-8", sub = "byte")[[1]],
+             error = \(e) NA_character_)
+  }
+  text <- to_utf8(enc)
+  if (is.na(text)) text <- to_utf8("latin1")   # an encoding name iconv() does not know
+  text <- sub("^﻿", "", text)             # a byte order mark
+  file_lines <- strsplit(text, "\r\n|\r|\n")[[1]]
   # Remove any NA entries resulting from failed conversions
   file_lines <- file_lines[!is.na(file_lines)]
 

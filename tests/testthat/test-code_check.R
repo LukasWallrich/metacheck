@@ -28,6 +28,18 @@ test_that("code_read", {
   file.create(empty_path)
   obs <- code_read(empty_path)
   expect_equal(obs, character(0))
+
+  # A byte the guessed encoding leaves undefined (0x81 in windows-1252)
+  # crashed R itself inside readr::read_lines() (vroom), tryCatch() or not;
+  # it is now written as "<81>"
+  odd_path <- withr::local_tempfile()
+  writeBin(c(charToRaw("ab"), as.raw(0x81), charToRaw("cd\n")), odd_path)
+  expect_equal(code_read(odd_path), "ab<81>cd")
+
+  # a byte order mark is dropped; LF, CRLF and CR all end a line
+  bom_path <- withr::local_tempfile()
+  writeBin(c(as.raw(c(0xef, 0xbb, 0xbf)), charToRaw("x <- 1\r\ny <- 2\rz <- 3\n")), bom_path)
+  expect_equal(code_read(bom_path), c("x <- 1", "y <- 2", "z <- 3"))
 })
 
 
