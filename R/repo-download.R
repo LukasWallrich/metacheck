@@ -730,6 +730,13 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
 .download_one <- function(url, dest, skip_on_api_limit = FALSE,
                           expected_bytes = NA_real_) {
   dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)
+  # Written to "<dest>.part" and renamed when complete: an interrupted
+  # download left a partial file at `dest`, and an empty response a 0-byte
+  # one, which the next run's file.exists() check reused as the file
+  # (U75, U203).
+  final <- dest
+  dest <- paste0(final, ".part")
+  on.exit(if (file.exists(dest)) unlink(dest), add = TRUE)
   tryCatch({
     # Throttle realm = the host (explicit: the default derivation errors on
     # host-less URLs such as file://, which the tests use).
@@ -774,8 +781,9 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
       unlink(dest)
       return("not authorised (the OSF returned a sign-in page; see ?osf_pat)")
     }
-    if (file.exists(dest) && file.size(dest) > 0) NA_character_
-    else "empty response"
+    if (!(file.exists(dest) && file.size(dest) > 0)) return("empty response")
+    if (!file.rename(dest, final)) return("could not move the download into place")
+    NA_character_
   }, error = function(e) {
     if (file.exists(dest)) unlink(dest)
     # A 429 caught here (rather than retried away) means .storage_is_transient
@@ -827,6 +835,11 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
 .download_many_parallel <- function(urls, dests, expected_size = NA_real_,
                                     .retried = FALSE, skip_on_api_limit = FALSE) {
   if (length(urls) == 0) return(character(0))
+  # Each file is written to "<dest>.part" and renamed when complete, as in
+  # .download_one() (U75, U203).
+  final <- dests
+  dests <- paste0(final, ".part")
+  on.exit(unlink(dests[file.exists(dests)]), add = TRUE)
 
   expected_size <- rep_len(as.numeric(expected_size), length(urls))
   for (d in dests) dir.create(dirname(d), showWarnings = FALSE, recursive = TRUE)
@@ -895,7 +908,10 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
       # has no body either, so this still reports "empty response" for that
       # case (checked below).
       body <- tryCatch(httr2::resp_body_raw(r), error = \(e) raw(0))
-      if (length(body) == 0) return("empty response")
+      if (length(body) == 0) {
+        if (file.exists(dests[i])) unlink(dests[i])   # no 0-byte file (U75)
+        return("empty response")
+      }
       writeBin(body, dests[i])
     }
     # A sign-in page served in place of the file: the file is private and the
@@ -927,9 +943,12 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
   # .retried stops this at one pass: an `expected_size` that is simply wrong
   # (as opposed to a genuinely truncated transfer) would otherwise recurse
   # forever, since every attempt reports the same "mismatch".
+  for (i in which(is.na(errs)))
+    if (!file.rename(dests[i], final[i])) errs[i] <- "could not move the download into place"
+
   retry <- if (.retried) integer(0) else which(!is.na(errs) & startsWith(errs, "truncated ("))
   if (length(retry) > 0) {
-    retry_errs <- .download_many_parallel(urls[retry], dests[retry], expected_size[retry],
+    retry_errs <- .download_many_parallel(urls[retry], final[retry], expected_size[retry],
                                           .retried = TRUE, skip_on_api_limit = skip_on_api_limit)
     errs[retry] <- retry_errs
   }
@@ -1164,12 +1183,21 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
     dest <- files$.cache_path[row_idx[j]]
     if (file.exists(src) && file.size(src) > 0) {
       dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)
-      if (file.copy(src, dest, overwrite = TRUE))
+      if (.copy_into_place(src, dest))
         files$file_location[row_idx[j]] <- dest
     }
   }
 
   files
+}
+
+# Copy `src` to `dest` through "<dest>.part", so an interrupted copy leaves no
+# partial file at `dest` for the next run to reuse as complete (U203).
+.copy_into_place <- function(src, dest) {
+  part <- paste0(dest, ".part")
+  ok <- isTRUE(file.copy(src, part, overwrite = TRUE)) && isTRUE(file.rename(part, dest))
+  if (!ok && file.exists(part)) unlink(part)
+  ok
 }
 
 

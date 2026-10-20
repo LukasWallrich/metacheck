@@ -751,6 +751,22 @@ test_that(".download_many_parallel reports HTTP errors and retries a truncated d
   expect_true(grepl("^truncated \\(", errs2))
 })
 
+test_that("an empty or partial download is not left at the cache path (U75, U203)", {
+  # an empty response left a 0-byte file, and a stopped download a partial
+  # one, which the next run's file.exists() check reused as the file
+  empty <- tempfile(fileext = ".csv"); file.create(empty)
+  full  <- tempfile(fileext = ".csv"); writeLines("a,b\n1,2", full)
+  url <- function(p) paste0("file:///", gsub("\\\\", "/", p))
+  tmp <- withr::local_tempdir()
+
+  expect_equal(.download_one(url(empty), file.path(tmp, "e1.csv")), "empty response")
+  expect_equal(.download_many_parallel(url(empty), file.path(tmp, "e2.csv")), "empty response")
+  expect_true(is.na(.download_one(url(full), file.path(tmp, "f1.csv"))))
+  expect_true(is.na(.download_many_parallel(url(full), file.path(tmp, "f2.csv"))))
+  # only the complete files, and no ".part" files
+  expect_setequal(list.files(tmp), c("f1.csv", "f2.csv"))
+})
+
 test_that("osfstorage and Zenodo file-by-file rows use the parallel path, others don't", {
   # OSF and Zenodo have no archive route (issue #424), so every row goes to
   # the file-by-file section. Routing within it must be decided per FILE

@@ -384,17 +384,24 @@ rbox_file_download <- function(rb_url, pb = NULL) {
       return(NULL)
     }
 
-    dir.create(out_dir, showWarnings = FALSE)
+    # Unzipped into "unzipped.part" and renamed when done: an unzip that was
+    # stopped left some files in "unzipped", which the next run reused as the
+    # whole box (U203).
+    part_dir <- paste0(out_dir, ".part")
+    unlink(part_dir, recursive = TRUE)
+    dir.create(part_dir, showWarnings = FALSE)
     paste0("Unzipping into: ", out_dir) |>
       list(what = _) |>
       pb$tick(0, tokens = _)
     # a box with one file may get that file itself, not a zip
     is_zip <- identical(readBin(zip_path, "raw", 2), charToRaw("PK"))
     if (!is_zip && length(file_ids) == 1) {
-      file.copy(zip_path, file.path(out_dir, basename(info$files[[1]]$name[[1]])))
+      file.copy(zip_path, file.path(part_dir, basename(info$files[[1]]$name[[1]])))
     } else {
-      utils::unzip(zip_path, exdir = out_dir)
+      utils::unzip(zip_path, exdir = part_dir)
     }
+    unlink(out_dir, recursive = TRUE)   # empty: a box with files is reused above
+    file.rename(part_dir, out_dir)
   }
 
   unzipped_files <- list.files(out_dir, recursive = TRUE, full.names = TRUE)

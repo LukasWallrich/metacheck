@@ -61,6 +61,7 @@
 * `extract_p_values()` finds p written as "ps", "p's", "p’s" or "p-values" ("ps < .05" gave no row), and reads scientific notation written with "×", without "^", or with the Unicode minus: "p = 1.8 × 10 -6", "p = 6.1 × 10−5" and "p=2.14e−213" were read as 1.8, 6.1 and 2.14 (#507: U204). The p-value modules (`all_p_values`, `stat_p_exact`, `stat_p_nonsig`) see these p-values too, so a paper reporting "ps < .05" can now be flagged for imprecise p-values
 * `extract_eq()` reads statistics with the Unicode minus (U+2212), which text taken from PDFs often has: "t(28) = −2.15", "d = −0.80" and "r = − 0.12" gave no row; `rhs` is returned with "-" (#507: U205). It also reads the same scientific notation as `extract_p_values()`, and "and z = 3.1" is the statistic z, not "d z" (#507: U218)
 * `dataverse_info()` asks the right Dataverse installation for each URL (#507: U31, U155). The hosts found were put back by position, so a URL without a host name (a bare DOI) took the next URL's host, and the next URL a later one's; and "dataverse.no" matched the start of a longer host name such as dataverse.northwestern.edu
+* A download, an extraction or a decompression that is stopped half way, or a download that comes back empty, no longer leaves a file in the cache that the next run reuses as complete (#507: U75, U203). Downloads are written to "<file>.part" and renamed when complete, archives are extracted into a ".part" folder beside their destination and moved in when done, and a ResearchBox box is unzipped into "unzipped.part" and renamed
 
 # metacheck 0.4.0
 

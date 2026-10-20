@@ -1514,6 +1514,21 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   file.path(tempdir(), "metacheck-archives", unname(tools::md5sum(path)))
 }
 
+# Move the members extracted into `part` (a folder beside `dest`) into `dest`,
+# then remove `part`. Extracting straight into `dest` left a half-written file
+# there when the run was stopped, which the next run reused as complete
+# (U203); a member that was not extracted is simply not moved.
+.move_extracted <- function(part, dest, members) {
+  for (m in members) {
+    from <- file.path(part, m)
+    if (!file.exists(from)) next
+    to <- file.path(dest, m)
+    dir.create(dirname(to), recursive = TRUE, showWarnings = FALSE)
+    file.rename(from, to)
+  }
+  unlink(part, recursive = TRUE)
+}
+
 # Expand a downloaded zip and return rows for its DATA-type inner files, ready to
 # bind into data_check's `all_files`. The zip is extracted once to a cache dir
 # beside the zip; each inner file is classified, and only files whose type is
@@ -1546,9 +1561,12 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   unlink(file.path(dest, entries$Name[over]))
   want <- entries$Name[keep & !over]
   missing <- want[!file.exists(file.path(dest, want))]
-  if (length(missing) > 0)
-    tryCatch(utils::unzip(zip_path, files = missing, exdir = dest),
+  if (length(missing) > 0) {
+    part <- paste0(dest, ".part")
+    tryCatch(utils::unzip(zip_path, files = missing, exdir = part),
              error = function(e) NULL, warning = function(w) NULL)
+    .move_extracted(part, dest, missing)
+  }
 
   rows <- if (length(want) > 0) .archive_rows(dest, zip_row, basename(zip_path), skip_types)
           else empty
@@ -1585,9 +1603,12 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   unlink(file.path(dest, entries[over]))
   want <- entries[keep & !over]
   missing <- want[!file.exists(file.path(dest, want))]
-  if (length(missing) > 0)
-    tryCatch(utils::untar(tar_path, files = missing, exdir = dest),
+  if (length(missing) > 0) {
+    part <- paste0(dest, ".part")
+    tryCatch(utils::untar(tar_path, files = missing, exdir = part),
              error = function(e) NULL, warning = function(w) NULL)
+    .move_extracted(part, dest, missing)
+  }
   # sizes only known once unpacked (compressed tar)
   got <- file.path(dest, want)
   big <- file.exists(got) & file.size(got) > max_bytes
@@ -1631,10 +1652,13 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   if (!file.exists(out)) {
     # In a function of its own, so both connections are closed before a
     # partial copy is deleted (an open file cannot be deleted on Windows).
+    # written beside `dest` and moved in when complete: a decompression
+    # that was stopped left a partial file, reused as complete (U203)
+    part <- file.path(paste0(dest, ".part"), inner_name)
     decompress <- function() {
-      if (!dir.exists(dest)) dir.create(dest, recursive = TRUE, showWarnings = FALSE)
+      dir.create(dirname(part), recursive = TRUE, showWarnings = FALSE)
       con <- open_con(gz_path, "rb"); on.exit(close(con), add = TRUE)
-      oc  <- file(out, "wb"); on.exit(close(oc), add = TRUE)
+      oc  <- file(part, "wb"); on.exit(close(oc), add = TRUE)
       written <- 0
       repeat {
         chunk <- readBin(con, "raw", n = 1048576L)
@@ -1647,10 +1671,11 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     status <- tryCatch(decompress(), error = function(e) "failed",
                        warning = function(w) "failed")
     if (!identical(status, "ok")) {
-      unlink(out)
+      unlink(dirname(part), recursive = TRUE)
       return(if (identical(status, "over"))
         .with_oversize(empty, gz_row, basename(gz_path), inner_name, NA) else empty)
     }
+    .move_extracted(dirname(part), dest, inner_name)
   }
 
   .archive_rows(dest, gz_row, basename(gz_path), skip_types)

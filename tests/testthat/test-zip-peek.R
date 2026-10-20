@@ -1005,6 +1005,30 @@ test_that(".expand_compressed decompresses only a kept file, and only up to the 
   expect_equal(attr(rows, "oversize")$file_name, "results.csv")
 })
 
+test_that("a stopped extraction is not reused as complete (U203)", {
+  # extraction went straight into "<archive>.contents", so a half-written file
+  # there was reused by the next run; a stopped run now leaves it in ".part"
+  d <- withr::local_tempdir()
+  writeLines(c("id,x", "1,2", "2,3"), file.path(d, "study.csv"))
+  z <- file.path(d, "a.zip")
+  withr::with_dir(d, utils::zip("a.zip", "study.csv", flags = "-q"))
+  skip_if_not(file.exists(z), "zip utility unavailable")
+  row <- .archive_row_472()
+  dest <- metacheck:::.archive_dest(z)
+  dir.create(paste0(dest, ".part"))
+  writeLines("id,x", file.path(paste0(dest, ".part"), "study.csv"))   # cut short
+  rows <- metacheck:::.expand_zip(z, row)
+  expect_equal(readLines(rows$file_location), c("id,x", "1,2", "2,3"))
+  expect_false(dir.exists(paste0(dest, ".part")))
+
+  gz <- file.path(d, "notes.csv.gz")
+  con <- gzfile(gz, "w"); writeLines(c("a", "b"), con); close(con)
+  gdest <- metacheck:::.archive_dest(gz)
+  rows <- metacheck:::.expand_compressed(gz, row)
+  expect_equal(readLines(rows$file_location), c("a", "b"))
+  expect_false(dir.exists(paste0(gdest, ".part")))
+})
+
 test_that("an archive of the user's own is extracted into the temporary folder (U214)", {
   # extracting beside it wrote into the user's folder, and the next run
   # counted every extracted file twice
