@@ -57,6 +57,16 @@ psychds_file_plan <- function(structure_df, group_no_evidence = FALSE) {
 
   n_files <- nrow(structure_df)
 
+  # A missing file name falls back to the path's file name; a file with
+  # neither is excluded below. A missing name became the target "unknown/NA",
+  # and a structure without a file_name column stopped (U113).
+  if (is.null(structure_df$file_name))
+    structure_df$file_name <- rep(NA_character_, n_files)
+  name_missing <- is.na(structure_df$file_name) | !nzchar(structure_df$file_name)
+  path_given <- structure_df$file_path %||% rep(NA_character_, n_files)
+  structure_df$file_name[name_missing] <- basename(path_given[name_missing])
+  no_name <- is.na(structure_df$file_name)
+
   # Psych-DS's OWN validator rule for a datafile name is the regex
   # '([a-z]+-[a-zA-Z0-9]+)(_[a-z]+-[a-zA-Z0-9]+)*_data\.(csv|tsv)' (schema_model/
   # versions/*/rules/files/tabular_data/data.yaml, "Datafile", verified directly
@@ -162,6 +172,7 @@ psychds_file_plan <- function(structure_df, group_no_evidence = FALSE) {
     }
   }
   target_path  <- vapply(seq_len(n_files), target_of, character(1))
+  target_path[no_name] <- NA_character_   # neither name nor path: excluded (U113)
   current_path <- gsub("\\\\", "/", structure_df$file_path %||% structure_df$file_name)
   current_path <- ifelse(is.na(current_path), structure_df$file_name, current_path)
   # target_of() always returns a real path now (consumed archive containers

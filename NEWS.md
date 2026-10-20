@@ -33,6 +33,7 @@
 * `github_files()` no longer stops on an empty folder or when given a single file, passes `dir` on when listing several repositories (each was listed from its root), and `github_languages()` no longer reads an error answer's fields as languages (#507: U48)
 * `repo_check` reports an OSF link with an invalid id as "not a valid OSF link" (#507: U122); alone it got dplyr's error text as its reason, and beside valid links it vanished from the report. A platform file without a name no longer stops the file-naming check
 * `power`'s fallback for providers without structured output uses the module's own schema instead of downloading it from scienceverse.org, so it works offline, and a field that no answer gives now counts as missing, so an incomplete power analysis is no longer reported as complete (#507: U108)
+* `psychds_check` (and `reproducibility_check`'s package layout) take a missing file name from the file's path, exclude a file with neither, and no longer stop on a file list without a `file_name` column; a missing name became the target "unknown/NA" (#507: U113, part)
 
 # metacheck 0.4.0
 
