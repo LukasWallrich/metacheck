@@ -658,6 +658,16 @@ test_that("the write-call scan stays fast on a large script with a non-ASCII cha
   expect_equal(nrow(res2), 1)
 })
 
+test_that(".repro_redirect_writes keeps a named argument's name (U134)", {
+  # `save(a, b, file = "ab.RData")` became `save(a, b, "<out>/ab.RData")`, so
+  # save() took the path for another object to save
+  res <- .repro_redirect_writes(c('save(a, b, file = "ab.RData")',
+                                  'write.csv(df, "out.csv")'), "R")
+  expect_equal(res$replacement,
+               c('save(a, b, file = "{{REPRO_OUTPUT}}ab.RData")',
+                 'write.csv(df, "{{REPRO_OUTPUT}}out.csv")'))
+})
+
 test_that("repro_write_scripts redirects a literal write target into output/", {
   code_list <- list("analysis.R" = 'write.csv(x, "results/out.csv")')
   rewrite_list <- list("analysis.R" = data.frame(
@@ -849,6 +859,21 @@ test_that("repro_run_scripts classifies an undefined-variable error and captures
   expect_equal(out$outcome, "errored")
   expect_equal(out$error_type, "undefined_variable")
   expect_equal(out$undefined_var, "some_var_no_script_defines")
+})
+
+test_that("repro_run_scripts reads a missing package in curly quotes as dependency_unavailable (U132)", {
+  # in a UTF-8 locale R writes "there is no package called \u2018x\u2019";
+  # only ASCII quotes were matched, so the script was "errored". The script
+  # writes the message itself, so the test does not depend on the locale.
+  skip_if_not_installed("callr")
+  root <- withr::local_tempdir()
+  writeLines('stop("there is no package called \\u2018pkgxyz123\\u2019")',
+             file.path(root, "needs_pkg.R"))
+  run_tbl <- data.frame(file_name = "needs_pkg.R",
+                        script_path = file.path(root, "needs_pkg.R"), run_dir = root)
+  out <- repro_run_scripts(run_tbl, order = "needs_pkg.R", timeout = 60,
+                           failed_deps = "pkgxyz123")
+  expect_equal(out$outcome, "dependency_unavailable")
 })
 
 test_that("repro_run_scripts marks a skipped file without running it", {

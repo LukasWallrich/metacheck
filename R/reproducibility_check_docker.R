@@ -697,7 +697,10 @@ repro_run_scripts_docker <- function(run_tbl, order, sandbox_root, lib_dir = NUL
             regmatches(undef_src, regexpr(fn_pat, undef_src)))
         else NA_character_
 
-      nopkg_pat <- "there is no package called ['\"]([^'\"]+)['\"]"
+      # curly quotes too: in a UTF-8 locale R writes them around the name,
+      # which the ASCII-only quotes missed, so the script was "errored", not
+      # dependency_unavailable (U132)
+      nopkg_pat <- "there is no package called ['\"\u2018]([^'\"\u2019]+)['\"\u2019]"
       nopkg_src <- if (grepl(nopkg_pat, se)) se else NA_character_
       nopkg_var <- if (!is.na(nopkg_src))
         sub(paste0(".*", nopkg_pat, ".*"), "\\1",

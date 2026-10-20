@@ -500,6 +500,12 @@ repro_dependencies <- function(code_text, lang = "R") {
     args_list <- .repro_split_args(args_text)
     hit <- NULL
     for (arg in args_list) {
+      # the argument's name, kept in the replacement: dropped, `save(a, b, file
+      # = "ab.RData")` became `save(a, b, "<out>/ab.RData")`, and save() took
+      # the path for another object to save (U134)
+      name_m <- regexpr("^[.a-zA-Z][.a-zA-Z0-9_]*\\s*=\\s*(?!=)", trimws(arg$text), perl = TRUE)
+      arg_name <- paste0(sub("^(\\s*).*$", "\\1", arg$text),
+                         if (name_m > 0) regmatches(trimws(arg$text), name_m) else "")
       val <- sub("^[.a-zA-Z][.a-zA-Z0-9_]*\\s*=\\s*(?!=)", "", trimws(arg$text), perl = TRUE)
       val <- trimws(val)
 
@@ -550,7 +556,7 @@ repro_dependencies <- function(code_text, lang = "R") {
     }
     if (is.null(hit)) return(NULL)   # no argument resolves to a file target — leave alone
 
-    replacement_arg <- sprintf('"{{REPRO_OUTPUT}}%s"', hit$redirected)
+    replacement_arg <- paste0(arg_name, sprintf('"{{REPRO_OUTPUT}}%s"', hit$redirected))
     new_args <- paste0(substr(args_text, 1, hit$start - 1L), replacement_arg,
                        substr(args_text, hit$end + 1L, nchar(args_text)))
     data.frame(call_text = call_text,
@@ -2729,7 +2735,10 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
       # form; match it against failed_deps rather than trusting the message's
       # wording alone, so a script that merely REFERENCES an unavailable
       # package's name elsewhere is not misclassified.
-      nopkg_pat <- "there is no package called ['\"]([^'\"]+)['\"]"
+      # curly quotes too: in a UTF-8 locale R writes them around the name,
+      # which the ASCII-only quotes missed, so the script was "errored", not
+      # dependency_unavailable (U132)
+      nopkg_pat <- "there is no package called ['\"\u2018]([^'\"\u2019]+)['\"\u2019]"
       nopkg_src <- if (grepl(nopkg_pat, msg)) msg else
         if (grepl(nopkg_pat, se)) se else NA_character_
       nopkg_var <- if (!is.na(nopkg_src))
