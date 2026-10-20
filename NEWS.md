@@ -28,6 +28,7 @@
 * `json_expand()` returns a table without rows unchanged instead of stopping ("Join columns in `y` must be present") (#507: U151)
 * `causal_claims` no longer stops on a paper without a title, and checks the title of every paper in a paper list (a list has no `$info`, so its titles were never checked) (#507: U84). `causal_relations()` no longer sends a missing sentence as the text "NA"
 * `coi_check` no longer stops when a short heading such as "Conflict of interest" is the last sentence, and no longer pastes "NA" into a statement whose follow-up runs past the end of the text (#507: U97)
+* `funding_check` no longer stops (for the whole paper list) when two lines match a funding, grant, support or acknowledgement title ("Funding" and "Funding:"), and no longer pastes "NA" into the statement when the line after a title is past the end (#507: U103)
 
 # metacheck 0.4.0
 

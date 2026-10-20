@@ -968,6 +968,23 @@ get_fund_1 <- function(article) {
   return(grep(pattern, article, perl = TRUE))
 }
 
+# Each title line in `a` with the line after it (or the one after that, when
+# the next is empty), only lines that exist. With two title lines ("Funding"
+# and "Funding:") the if() on a vector stopped funding_check for the whole
+# paper list, and a line past the end pasted "NA" into the statement (U103).
+.title_lines_with_next <- function(a, article) {
+  n <- length(article)
+  nxt <- vapply(a, function(i) {
+    if (i + 1 > n) return(NA_integer_)
+    if (nchar(article[i + 1]) == 0) {
+      if (i + 2 <= n) as.integer(i + 2) else NA_integer_
+    } else {
+      as.integer(i + 1)
+    }
+  }, integer(1))
+  sort(unique(c(a, nxt[!is.na(nxt)])))
+}
+
 get_fund_2 <- function(article) {
   stopifnot(is.character(article))
   synonyms <- .create_synonyms()
@@ -979,15 +996,7 @@ get_fund_2 <- function(article) {
   a <- grep(pattern, article, perl = TRUE)
 
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     p2 <- lapply(synonyms[words], .title, within_text = TRUE)
     p2 <- lapply(p2, .encase)
@@ -1049,15 +1058,7 @@ get_financial_1 <- function(article) {
   a <- grep(pattern, article, perl = TRUE)
 
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     p2 <- lapply(synonyms[words], .title, within_text = TRUE)
     p2 <- lapply(p2, .encase)
@@ -1131,15 +1132,7 @@ get_grant_1 <- function(article) {
   a <- grep(pattern, article, perl = TRUE)
 
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     grant <- c("G(?i)rant ", "^[A-Z](?i)\\w+ grant ", "Contract grant ")
 
@@ -1314,15 +1307,7 @@ get_acknow_1 <- function(article) {
   indicator_regex <- paste0(total_txt, collapse = " ")
   a <- grep(indicator_regex, article, perl = TRUE, ignore.case = TRUE)
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     return(a)
   }
