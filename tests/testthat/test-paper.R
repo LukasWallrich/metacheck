@@ -353,3 +353,20 @@ test_that(".per_paper_table() has one row per paper, none for no papers (U79)", 
   st <- metacheck:::.per_paper_table(p, repo_n = 0)
   expect_equal(st, data.frame(paper_id = paper_id(p), repo_n = 0))
 })
+
+test_that("papers sharing a paper_id are renamed where a list comes in (U208, U101)", {
+  # a shared id doubled rows (sentences joined to the other paper's sections)
+  # and stopped ethics_check and open_practices
+  llm_use(FALSE)
+  a <- test_paper(text = c("We found t(28) = 2.4, p = .03.", "And p = .04."))
+  b <- test_paper(text = c("Here F(1, 20) = 5.1, p = .02.", "Finally p = .01."))
+  a$paper_id <- b$paper_id <- "same_id"
+  expect_warning(pl <- paperlist(a, b), "same_id~2")
+  expect_equal(names(pl), c("same_id", "same_id~2"))
+  expect_equal(nrow(module_run(pl, "all_p_values")$table), 4)
+  expect_no_error(suppressMessages(module_run(pl, "ethics_check")))
+  # a list that did not come through paperlist()
+  raw_list <- structure(list(a, b), class = c("scivrs_paperlist", "list"))
+  expect_warning(mo <- module_run(raw_list, "all_p_values"), "renamed")
+  expect_equal(mo$summary_table$paper_id, c("same_id", "same_id~2"))
+})

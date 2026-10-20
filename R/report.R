@@ -141,6 +141,10 @@ report <- function(paper,
     # treat length-1 paperlist like 1 paper
     paper <- paper[[1]]
   } else if (.is_paper_list(paper)) {
+    # papers sharing a paper_id are renamed "~2", ... (U208); each report's
+    # file is named after its paper, so one overwrote the other
+    paper <- .unique_paper_ids(paper)
+
     ## set up progress bar ----
     pb <- pb(
       length(paper),

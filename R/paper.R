@@ -116,6 +116,8 @@ paperlist <- function(..., merge_duplicates = FALSE) {
   }
 
   class(paperlist) <- c("scivrs_paperlist", "list")
+  # papers left sharing an id are renamed "~2", ... (U208)
+  paperlist <- .unique_paper_ids(paperlist)
 
   invisible(paperlist)
 }
@@ -579,6 +581,29 @@ paper_id <- function(paper) {
   cols <- list(...)
   for (nm in names(cols)) out[[nm]] <- rep(cols[[nm]], length.out = nrow(out))
   out
+}
+
+# Papers in a list that share a paper_id: the second and later get "~2",
+# "~3", ... (with a warning naming them). Tables are joined and grouped on
+# paper_id, so a shared id mixed the papers: sentences joined to the other
+# paper's sections (every row twice), summaries with more rows than papers,
+# references pooled, and ethics_check and open_practices stopped ("factor
+# level [2] is duplicated") (U208, U101). Applied where a list comes in:
+# paperlist(), module_run() and report().
+.unique_paper_ids <- function(paper) {
+  if (!.is_paper_list(paper) || length(paper) < 2) return(paper)
+  ids <- vapply(paper, \(x) as.character(x$paper_id %||% NA_character_)[1], character(1))
+  dup <- duplicated(ids) & !is.na(ids)
+  if (!any(dup)) return(paper)
+  occurrence <- vapply(seq_along(ids), \(i) sum(ids[seq_len(i)] %in% ids[i]), integer(1))
+  new_ids <- ifelse(dup, paste0(ids, "~", occurrence), ids)
+  for (i in which(dup)) paper[[i]]$paper_id <- new_ids[i]
+  names(paper) <- new_ids
+  warning(sprintf(
+    "%d paper%s shared a paper_id with an earlier paper and %s renamed: %s",
+    sum(dup), plural(sum(dup)), plural(sum(dup), "was", "were"),
+    paste(new_ids[dup], collapse = ", ")), call. = FALSE)
+  paper
 }
 
 # TRUE when a paper or paper list has no text and no references, so a module

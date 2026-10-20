@@ -43,6 +43,8 @@ module_run <- function(paper, module, ...) {
     prev$prev_outputs <- NULL
     .__mc__prev_outputs[[prev$module]] <- prev
   } else if (.is_paper_list(paper)) {
+    # papers sharing a paper_id are renamed "~2", ... (U208)
+    paper <- .unique_paper_ids(paper)
     # names(list()) is NULL, which gave a table without a paper_id column, and
     # the join with the module's summary stopped (U79)
     summary_table <- data.frame(paper_id = names(paper) %||% character(0))
