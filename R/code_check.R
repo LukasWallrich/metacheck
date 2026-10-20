@@ -30,10 +30,19 @@ code_read <- function(file_path) {
   # windows-1252 (which has no character 0x81), was enough; on metacheck's
   # SURF server a README in the freetype sources of a Zenodo repository
   # stopped the whole check. iconv() writes such a byte as "<81>" instead.
+  #
+  # curl_fetch_memory() does not fail on an HTTP error, so the status is
+  # checked here: else a missing file's error page was read as its code (a
+  # github.com 404 gave 682 lines of HTML), where readLines() used to stop and
+  # code_check recorded the file as not read.
   raw <- if (file.exists(file_path)) {
     readBin(file_path, "raw", file.size(file_path))
   } else {
-    curl::curl_fetch_memory(file_path)$content
+    resp <- curl::curl_fetch_memory(file_path)
+    if (resp$status_code >= 400)
+      stop(sprintf("cannot open URL '%s': HTTP status was %d",
+                   file_path, resp$status_code), call. = FALSE)
+    resp$content
   }
   if (!length(raw)) return(character(0))
   enc <- readr::guess_encoding(raw)$encoding

@@ -425,7 +425,6 @@ test_that("code_check records failed code-file downloads in the manifest, with f
   )
   mdir <- withr::local_tempdir()
 
-  expect_warning(
   mo <- with_mocked_bindings(
     module_run(fake_repo_check, "code_check", manifest = mdir),
     download_repo_files = function(files, ...) {
@@ -438,7 +437,6 @@ test_that("code_check records failed code-file downloads in the manifest, with f
       files
     },
     .package = "metacheck"
-  )
   )
 
   mf <- list.files(mdir, pattern = "\\.manifest\\.json$", full.names = TRUE)
