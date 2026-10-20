@@ -22,7 +22,9 @@ osf_api_check <- function(osf_api = getOption("metacheck.osf.api"),
   on_error <- match.arg(on_error)
   status_code <- 0
   status <- tryCatch({
-    if (!curl::has_internet()) return("no internet")
+    # stop(), not return(): a return() here left osf_api_check() at once, so
+    # offline it never got to `on_error` below (U53)
+    if (!curl::has_internet()) stop("no internet")
     resp <- .mc_request(osf_api) |>
       .osf_headers() |>
       httr2::req_error(is_error = \(resp) FALSE) |>
@@ -1612,11 +1614,11 @@ osf_file_download <- function(osf_id,
       ret <- dplyr::left_join(ret, copied, by = "osf_id")
       ret$downloaded <- ifelse(ret$downloaded %in% TRUE, TRUE, FALSE)
     } else {
-      ret$path <- NA_character_
-      ret$downloaded <- FALSE
+      ret$path <- rep(NA_character_, nrow(ret))
+      ret$downloaded <- rep(FALSE, nrow(ret))
     }
   } else {
-    ret$downloaded <- FALSE
+    ret$downloaded <- rep(FALSE, nrow(ret))
   }
 
   # Where the project landed and which project it was, so the result can be
@@ -1625,9 +1627,11 @@ osf_file_download <- function(osf_id,
   # name rather than overwriting it. `download_path` is absolute -- `folder` is
   # only the basename, which is not enough to find the files again from a
   # different working directory.
-  ret$download_path <- download_to
-  ret$osf_project <- osf_id
-  ret$osf_url <- paste0("https://osf.io/", osf_id)
+  # rep(): a project with only folders has no file rows, and a single value
+  # in a 0-row table stopped with "replacement has 1 row, data has 0" (U53)
+  ret$download_path <- rep(download_to, nrow(ret))
+  ret$osf_project <- rep(osf_id, nrow(ret))
+  ret$osf_url <- rep(paste0("https://osf.io/", osf_id), nrow(ret))
 
   ## the parts of the project that are not files ----
   # Wikis, the activity log, and the descriptive metadata. A project is often a

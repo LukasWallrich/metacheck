@@ -427,3 +427,26 @@ test_that(".osf_parse_response keeps the reason a lookup failed (#501)", {
   # a private project is not a failure
   expect_equal(parse(403)$osf_type, "private")
 })
+
+test_that("osf_file_download on a folders-only project, and osf_api_check offline (U53)", {
+  # a single value into the 0-row result stopped with "replacement has 1
+  # row, data has 0"
+  contents <- data.frame(osf_id = c("proj1", "fold1"), name = c("Project", "Data"),
+    osf_type = c("nodes", "files"), kind = c(NA, "folder"), parent = c(NA, "proj1"),
+    size = NA, provider = c(NA, "osfstorage"), download_url = NA_character_,
+    public = TRUE, filetype = NA_character_, downloads = NA_integer_)
+  local_mocked_bindings(osf_info = function(...) contents, osf_api_check = function(...) "OK")
+  for (mode in c("select", "zip")) {
+    dl <- suppressWarnings(suppressMessages(
+      osf_file_download("proj1", download_to = withr::local_tempdir(), mode = mode)))
+    expect_equal(nrow(dl), 0, label = mode)
+  }
+})
+
+test_that("osf_api_check applies on_error when offline (U53)", {
+  # return() inside tryCatch() left the function before on_error was read
+  local_mocked_bindings(has_internet = function() FALSE, .package = "curl")
+  expect_error(osf_api_check(on_error = "stop"), "no internet")
+  expect_warning(osf_api_check(on_error = "warn"), "no internet")
+  expect_equal(osf_api_check(on_error = "ignore"), "no internet")
+})
