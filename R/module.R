@@ -1,6 +1,7 @@
 #' Run a module
 #'
-#' @param paper a paper object or a list of paper objects
+#' @param paper a paper object or a list of paper objects, or NULL to check
+#'   only local files (a module's `local_path` argument)
 #' @param module the name of a module or path to a module to run on this object
 #' @param ... further arguments to the module (e.g., arguments for the `llm()` function like `params`); these will override any arguments in the module
 #'
@@ -14,6 +15,15 @@
 #' }
 module_run <- function(paper, module, ...) {
   module_path <- module_find(module)
+
+  # paper = NULL is documented for checking local files only (local_path):
+  # an empty paper of unknown id, which every module can run on.
+  # paper_id(NULL) stopped repo_check, and so every module that runs it, with
+  # "paper must be a paper or paperlist object" (U78).
+  if (is.null(paper)) {
+    paper <- paper()
+    paper$paper_id <- NA_character_
+  }
   info <- module_info(module_path)
   .module_check_version(info, module)
 
@@ -130,7 +140,9 @@ module_run <- function(paper, module, ...) {
     if (!is.null(results$na_replace)) {
       # replace NAs
       narep <- results$na_replace
-      cols <- colnames(summary_table)
+      # never the paper id: an unknown id (paper = NULL, local files only)
+      # became the text "0" (U78)
+      cols <- setdiff(colnames(summary_table), "paper_id")
       if (is.null(names(narep))) {
         narep <- rep_len(narep, length(cols))
         names(narep) <- cols

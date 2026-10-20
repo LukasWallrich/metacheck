@@ -259,3 +259,21 @@ test_that("every module runs on an empty paper or paper list and reports na (U79
     }
   }
 })
+
+test_that("paper = NULL checks only a local folder (U78)", {
+  # documented as allowed, but paper_id(NULL) stopped repo_check and every
+  # module that runs it; the unknown id also became "0" through na_replace
+  skip_if_quick()
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  write.csv(data.frame(id = 1:3, score = c(4, 5, 6)), file.path(d, "data.csv"),
+            row.names = FALSE)
+  writeLines(c("# analysis", "d <- read.csv(\"data.csv\")"), file.path(d, "analysis.R"))
+  for (m in c("repo_check", "code_check", "data_check")) {
+    mo <- suppressWarnings(suppressMessages(module_run(NULL, m, local_path = d)))
+    expect_equal(nrow(mo$summary_table), 1, label = m)
+    expect_true(is.na(mo$summary_table$paper_id), label = m)
+  }
+  mo <- suppressWarnings(suppressMessages(module_run(NULL, "repo_check", local_path = d)))
+  expect_setequal(mo$table$file_name, c("analysis.R", "data.csv"))
+})
