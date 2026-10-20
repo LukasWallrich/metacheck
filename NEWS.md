@@ -88,6 +88,7 @@
 * `text_search(return = "section")` keeps each section's header; it was NA, so `coi_check_oi` tables named no section (#507: U80)
 * An SPSS box plot drawn from case data is decoded; the decoder always stopped (it took the absolute value of the text category column), so such box plots were dropped with a warning (#507: U144)
 * `match_reported_output()` counts the exponent in a reported number's decimals: "1.5e-05" had one decimal, so its tolerance (0.05) matched almost any small output value. A table's own caption is used whenever it has one, also for an older-format paper (#507: U143)
+* `json_expand()` keeps a `_row` key as a column (jsonlite read it as row names, so it was lost) and gives nested objects columns of their own (`v.k`); each row of a nested object read "c(1, NA)" (#507: U9)
 
 # metacheck 0.4.0
 
