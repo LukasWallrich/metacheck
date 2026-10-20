@@ -30,6 +30,7 @@
 * `coi_check` no longer stops when a short heading such as "Conflict of interest" is the last sentence, and no longer pastes "NA" into a statement whose follow-up runs past the end of the text (#507: U97)
 * `funding_check` no longer stops (for the whole paper list) when two lines match a funding, grant, support or acknowledgement title ("Funding" and "Funding:"), and no longer pastes "NA" into the statement when the line after a title is past the end (#507: U103)
 * `ref_pubpeer` reports "PubPeer could not be reached" (traffic light "fail") when PubPeer answers with an error, instead of stopping ("`x` and `y` must share the same src") (#507: U23)
+* `github_files()` no longer stops on an empty folder or when given a single file, passes `dir` on when listing several repositories (each was listed from its root), and `github_languages()` no longer reads an error answer's fields as languages (#507: U48)
 
 # metacheck 0.4.0
 

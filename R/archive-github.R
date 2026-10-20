@@ -235,7 +235,8 @@ github_files <- function(repo, dir = "",
   if (length(repo) > 1) {
     unique_repos <- unique(repo) |> setdiff(NA)
 
-    file_lists <- lapply(unique_repos, github_files, recursive = recursive)
+    # dir passed on: each repository was listed from its root (U48)
+    file_lists <- lapply(unique_repos, github_files, dir = dir, recursive = recursive)
     info <- do.call(dplyr::bind_rows, args = file_lists)
     orig <- data.frame(repo = repo)
     df <- dplyr::left_join(orig, info, by = "repo")
@@ -275,6 +276,11 @@ github_files <- function(repo, dir = "",
     # return NULL instead of error to handle rate limit exceeding at end of file list, will still return files up to that point
     return(NULL)
   }
+
+  # a single file comes back as one object, not a list of them, and an
+  # empty folder as an empty list; both stopped the listing (U48)
+  if (!is.null(contents$name)) contents <- list(contents)
+  if (length(contents) == 0) return(NULL)
 
   files <- lapply(contents, \(file) {
     data.frame(
@@ -532,6 +538,8 @@ github_languages <- function(repo) {
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()
   languages <- tryCatch(httr2::resp_body_json(resp), error = \(e) list())
+  # an error answer's fields ("message", "documentation_url") are no languages (U48)
+  if (httr2::resp_status(resp) != 200) languages <- list()
   if (length(languages)) {
     lang_df <- data.frame(
       repo = repo,

@@ -274,3 +274,16 @@ test_that("github_links keeps a linked GitHub account address (#485)", {
   obs <- github_links(paper)
   expect_setequal(obs$href, c("https://github.com/OneZoom/", "https://github.com/a/b"))
 })
+
+test_that("github_files: empty folder and single file; github_languages on an error (U48)", {
+  answer <- NULL; status <- 200
+  local_mocked_bindings(github_repo = function(repo, ...) "owner/repo")
+  local_mocked_bindings(req_perform = function(req, ...) httr2::response_json(status, body = answer),
+                        .package = "httr2")
+  answer <- list()
+  expect_null(github_files("owner/repo"))
+  answer <- list(name = "a.csv", path = "a.csv", download_url = "u", type = "file", size = 3)
+  expect_equal(github_files("owner/repo", dir = "a.csv")$name, "a.csv")
+  answer <- list(message = "Not Found", documentation_url = "x"); status <- 404
+  expect_true(is.na(github_languages("owner/repo")$language))
+})
