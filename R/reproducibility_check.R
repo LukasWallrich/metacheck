@@ -395,8 +395,8 @@ repro_dependencies <- function(code_text, lang = "R") {
 #'   names matched, and (for the path-like-variable scan) the assignment
 #'   operator recognised: R's `<-`/`<<-`/`=` vs. Python's `=` only. Python's
 #'   `open(path, "w")` is deliberately NOT included in `write_fns` here even
-#'   though it is a write call (see [repro_file_io()]'s own `open_write_mode`
-#'   handling): `open()` returns a file HANDLE, not the path itself — the
+#'   though it is a write call (see [.py_open_writes()], which [repro_file_io()]
+#'   uses): `open()` returns a file HANDLE, not the path itself — the
 #'   call that actually names the path to redirect — so this function instead
 #'   matches the handle variable's own `.write(...)`/`.writelines(...)` calls
 #'   is out of scope for a text-level, no-interpreter rewrite (which handle
@@ -1268,10 +1268,8 @@ repro_file_io <- function(code_text_list, lang = "R") {
     Python = "\\b(to_[A-Za-z_0-9]+|savetxt|savefig|dump|save)\\s*\\("
   )
   # open(...) is BOTH a read call (code_file_refs()'s Python branch) and a
-  # potential write call, decided only by its own mode argument -- "r"/"rb"
-  # (or no mode at all, Python's own read default) is a read, "w"/"a"/"x"/
-  # any mode containing "w"/"a"/"x" is a write.
-  open_write_mode <- "open\\s*\\([^)]*['\"][a-zA-Z]*[wax][a-zA-Z]*['\"]"
+  # potential write call, decided only by its own mode argument (see
+  # .py_open_writes()).
   src_pat <- "source\\s*\\(\\s*['\"]([^'\"]+)['\"]"
 
   rows <- lapply(seq_along(code_text_list), function(k) {
@@ -1296,7 +1294,7 @@ repro_file_io <- function(code_text_list, lang = "R") {
       lines <- grep(all_refs[i], nc, fixed = TRUE, value = TRUE)
       w <- grepl(write_fns, lines, perl = TRUE, ignore.case = TRUE)
       if (identical(fn_lang, "Python"))
-        w <- w | grepl(open_write_mode, lines, perl = TRUE)
+        w <- w | vapply(lines, .py_open_writes, logical(1), USE.NAMES = FALSE)
       is_write[i] <- any(w)
       is_read[i]  <- any(!w)
     }
@@ -1325,6 +1323,53 @@ repro_file_io <- function(code_text_list, lang = "R") {
               d$sources <- list(unique(srcs)); d })()
   })
   dplyr::bind_rows(rows)
+}
+
+#' Whether a line of Python opens a file for writing
+#'
+#' Only the mode argument of an `open()` call counts: the second positional
+#' argument, or `mode =`. A mode is a write when it is `w`, `a`, `x` or `r+`,
+#' with `b`, `t` or `+`. Any quoted word with a w, a or x in it used to count,
+#' so `open(p, encoding = "ascii")` was a write and `open(p, "r+")` was not
+#' (U240).
+#'
+#' @param line one line of Python code, comments removed
+#'
+#' @returns TRUE when an `open()` call on the line has a write mode
+#' @keywords internal
+.py_open_writes <- function(line) {
+  starts <- gregexpr("\\bopen\\s*\\(", line, perl = TRUE)[[1]]
+  if (starts[1] == -1) return(FALSE)
+  chars <- strsplit(line, "", fixed = TRUE)[[1]]
+  first <- starts + attr(starts, "match.length")   # first character after "("
+  for (k in seq_along(starts)) {
+    # the call's closing parenthesis, skipping quoted text and nested brackets
+    depth <- 1L; in_str <- NA_character_; end <- NA_integer_; i <- first[k]
+    while (i <= length(chars)) {
+      ch <- chars[i]
+      if (!is.na(in_str)) {
+        if (ch == "\\") i <- i + 1L
+        else if (ch == in_str) in_str <- NA_character_
+      } else if (ch %in% c("'", '"')) in_str <- ch
+      else if (ch %in% c("(", "[", "{")) depth <- depth + 1L
+      else if (ch %in% c(")", "]", "}")) {
+        depth <- depth - 1L
+        if (depth == 0L) { end <- i; break }
+      }
+      i <- i + 1L
+    }
+    if (is.na(end) || end == first[k]) next
+    args <- vapply(.repro_split_args(paste(chars[first[k]:(end - 1L)], collapse = "")),
+                   function(a) trimws(a$text), character(1))
+    named <- grepl("^[A-Za-z_][A-Za-z0-9_]*\\s*=(?!=)", args, perl = TRUE)
+    is_mode <- named & grepl("^mode\\s*=", args)
+    mode <- if (any(is_mode)) sub("^mode\\s*=\\s*", "", args[is_mode][1])
+            else args[!named][2]
+    if (!is.na(mode) &&
+        grepl("^(['\"])(?=[^'\"]*[wax+])[rwaxbt+]+\\1$", mode, perl = TRUE))
+      return(TRUE)
+  }
+  FALSE
 }
 
 #' Find the variables each script defines at top level

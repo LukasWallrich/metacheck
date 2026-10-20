@@ -379,6 +379,22 @@ test_that("repro_file_io returns an empty frame for no files", {
   expect_equal(nrow(io), 0)
 })
 
+test_that("Python open() is a write only by its mode argument (U240)", {
+  # any quoted word with a w, a or x in it counted, so an encoding made a
+  # write, and "r+" did not
+  lines <- c('open(p, encoding="ascii")', 'open("raw")', 'open("x.csv", "rb")',
+             'open("x.csv", "w")', 'open("x.csv", "r+")',
+             'open("x.csv", encoding="utf-8", mode="at")',
+             'open(os.path.join(d, "x.csv"), "wb")')
+  expect_equal(vapply(lines, .py_open_writes, logical(1), USE.NAMES = FALSE),
+               c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE))
+  io <- repro_file_io(list(a.py = c('with open("out.txt", "w") as f:',
+                                    'with open("in.txt", encoding="ascii") as g:')),
+                      lang = "Python")
+  expect_equal(io$reads[[1]], "in.txt")
+  expect_equal(io$writes[[1]], "out.txt")
+})
+
 
 # repro_defined_vars() ----
 
