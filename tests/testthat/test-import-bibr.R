@@ -243,7 +243,7 @@ test_that("convert_bibr auto-detects backend", {
   withr::local_envvar(SCIVRS_API_KEY = "", BIBR_API_URL = "", SURF_API_URL = "")
 
   # match the default URLs resolved inside convert_bibr()
-  surf_url <- "https://metacheckserve.src-training-01.src.surf-hosted.nl/api"
+  surf_url <- "https://metacheckserve.metacheck.src.surf-hosted.nl/api"
   scivrs_url <- "https://platform.metacheck.app"
   selfhosted_url <- "http://localhost:8000"
 
@@ -368,7 +368,7 @@ test_that("convert_bibr surf backend errors", {
 })
 
 test_that("convert_bibr surf backend converts", {
-  surf_url <- "https://metacheckserve.src-training-01.src.surf-hosted.nl/api"
+  surf_url <- "https://metacheckserve.metacheck.src.surf-hosted.nl/api"
   skip_api(paste0(surf_url, "/health"))
   skip_if_quick()
 
