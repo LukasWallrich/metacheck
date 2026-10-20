@@ -61,7 +61,7 @@ zenodo_links <- function(paper) {
   }
 
   if (length(zenodo_url) > 1) {
-    return(vapply(zenodo_url, .zenodo_id, character(1)))
+    return(vapply(zenodo_url, .zenodo_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single zenodo_url ----
@@ -264,7 +264,8 @@ zenodo_info <- function(zenodo_url, id_col = 1, pb = NULL, cache = FALSE) {
 
   resp <- .batch_query(zenodo_api_url, msg = NULL)[[1]]
 
-  if (httr2::resp_status(resp) != 200) {
+  # a connection failure comes back from .batch_query() as NULL (U33)
+  if (is.null(resp) || httr2::resp_status(resp) != 200) {
     warning(zenodo_id, " could not be found", call. = FALSE)
     return(.zenodo_unread(zenodo_id, "unfound"))
   }

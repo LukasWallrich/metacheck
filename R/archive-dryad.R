@@ -108,8 +108,11 @@ dryad_links <- function(paper) {
     return(character(0))
   }
 
+  # USE.NAMES = FALSE (also in the other repositories' id helpers): named by
+  # the URLs, an NA name became an NA row name in *_info()'s data.frame(),
+  # which stopped with "row names contain missing values" (U33)
   if (length(dryad_url) > 1) {
-    return(vapply(dryad_url, .dryad_doi, character(1)))
+    return(vapply(dryad_url, .dryad_doi, character(1), USE.NAMES = FALSE))
   }
 
   # handle single dryad_url ----

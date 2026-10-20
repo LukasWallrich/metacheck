@@ -85,7 +85,7 @@ researchdata4tu_links <- function(paper) {
   }
 
   if (length(researchdata4tu_url) > 1) {
-    return(vapply(researchdata4tu_url, .researchdata4tu_id, character(1)))
+    return(vapply(researchdata4tu_url, .researchdata4tu_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single researchdata4tu_url ----
@@ -191,12 +191,17 @@ researchdata4tu_links <- function(paper) {
 #' }
 researchdata4tu_info <- function(researchdata4tu_url, id_col = 1, pb = NULL,
                                  cache = FALSE) {
-  raw_url <- if (is.data.frame(researchdata4tu_url)) {
-    researchdata4tu_url[[id_col]]
+  # As the other *_info() functions: a table keeps its columns, a vector is
+  # de-duplicated without NAs (it kept only the id column, and c(id, NA)
+  # stopped, U33)
+  if (is.data.frame(researchdata4tu_url)) {
+    table <- researchdata4tu_url
+    table$researchdata4tu_url <- table[[id_col]]
+    table$researchdata4tu_id <- NULL
   } else {
-    researchdata4tu_url
+    table <- data.frame(researchdata4tu_url = unique(researchdata4tu_url) |>
+                          stats::na.omit())
   }
-  table <- data.frame(researchdata4tu_url = raw_url)
 
   # figshare_info() resolves ids via .figshare_id(), which only recognises
   # figshare.com/10.6084 patterns -- a 10.4121 DOI (4TU's own prefix) would

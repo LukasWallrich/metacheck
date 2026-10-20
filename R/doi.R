@@ -98,7 +98,8 @@ doi_resolves <- function(doi, timeout = 10) {
     resps <- .batch_query(urls, batch_size = batch_size, msg = msg, delay = 0)
 
     check_res <- vapply(resps, \(resp) {
-      if (inherits(resp, "error")) return(NA)
+      # a connection failure comes back from .batch_query() as NULL (U33)
+      if (is.null(resp) || inherits(resp, "error")) return(NA)
       if (!resp$status_code %in% 200L) return(FALSE)
 
       body <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
@@ -157,7 +158,7 @@ doi_lookup <- function(doi) {
     i <- valid_idx[j]
     bibdata[[i]] <- tryCatch({
       resp <- resps[[j]]
-      if (inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
+      if (is.null(resp) || inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
         return(NULL)
       }
       httr2::resp_body_json(resp)

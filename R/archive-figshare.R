@@ -277,7 +277,7 @@ figshare_links <- function(paper) {
   }
 
   if (length(figshare_url) > 1) {
-    return(vapply(figshare_url, .figshare_id, character(1)))
+    return(vapply(figshare_url, .figshare_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single figshare_url ----
@@ -438,7 +438,7 @@ figshare_links <- function(paper) {
 .figshare_doi_lookup_doi <- function(figshare_url) {
   if (length(figshare_url) == 0) return(character(0))
   if (length(figshare_url) > 1) {
-    return(vapply(figshare_url, .figshare_doi_lookup_doi, character(1)))
+    return(vapply(figshare_url, .figshare_doi_lookup_doi, character(1), USE.NAMES = FALSE))
   }
 
   prefix_regex <- paste(gsub("\\.", "\\\\.", .figshare_doi_lookup_fallback_prefixes()), collapse = "|")
@@ -495,7 +495,7 @@ figshare_links <- function(paper) {
 # happens to share the same numeric id) rather than erroring clearly.
 .figshare_project_id <- function(figshare_url) {
   if (length(figshare_url) == 0) return(character(0))
-  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_project_id, character(1)))
+  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_project_id, character(1), USE.NAMES = FALSE))
 
   figshare_url <- trimws(as.character(figshare_url))
   if (is.na(figshare_url) || !nzchar(figshare_url)) return(NA_character_)
@@ -591,7 +591,7 @@ figshare_links <- function(paper) {
 # same way.
 .figshare_collection_id <- function(figshare_url) {
   if (length(figshare_url) == 0) return(character(0))
-  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_collection_id, character(1)))
+  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_collection_id, character(1), USE.NAMES = FALSE))
 
   figshare_url <- trimws(as.character(figshare_url))
   if (is.na(figshare_url) || !nzchar(figshare_url)) return(NA_character_)

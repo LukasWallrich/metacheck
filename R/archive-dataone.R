@@ -150,7 +150,7 @@ dataone_links <- function(paper) {
 #' @keywords internal
 .dataone_host <- function(dataone_url) {
   if (length(dataone_url) == 0) return(character(0))
-  if (length(dataone_url) > 1) return(vapply(dataone_url, .dataone_host, character(1)))
+  if (length(dataone_url) > 1) return(vapply(dataone_url, .dataone_host, character(1), USE.NAMES = FALSE))
 
   dataone_url <- trimws(as.character(dataone_url))
   if (is.na(dataone_url) || !nzchar(dataone_url)) return(NA_character_)
@@ -178,7 +178,7 @@ dataone_links <- function(paper) {
 #' @keywords internal
 .dataone_pid <- function(dataone_url) {
   if (length(dataone_url) == 0) return(character(0))
-  if (length(dataone_url) > 1) return(vapply(dataone_url, .dataone_pid, character(1)))
+  if (length(dataone_url) > 1) return(vapply(dataone_url, .dataone_pid, character(1), USE.NAMES = FALSE))
 
   dataone_url <- trimws(as.character(dataone_url))
   if (is.na(dataone_url) || !nzchar(dataone_url)) return(NA_character_)

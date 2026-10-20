@@ -82,7 +82,7 @@ reshare_links <- function(paper) {
   }
 
   if (length(reshare_url) > 1) {
-    return(vapply(reshare_url, .reshare_id, character(1)))
+    return(vapply(reshare_url, .reshare_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single reshare_url ----

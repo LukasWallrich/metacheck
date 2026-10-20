@@ -89,7 +89,7 @@ mendeley_links <- function(paper) {
   }
 
   if (length(mendeley_url) > 1) {
-    return(vapply(mendeley_url, .mendeley_id, character(1)))
+    return(vapply(mendeley_url, .mendeley_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single mendeley_url ----

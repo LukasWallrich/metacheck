@@ -39,7 +39,7 @@ datacite_doi <- function(doi) {
     i <- valid_idx[j]
     bibdata[[i]] <- tryCatch({
       resp <- resps[[j]]
-      if (inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
+      if (is.null(resp) || inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
         return(NULL)
       }
       ct <- httr2::resp_content_type(resp)
@@ -231,7 +231,7 @@ crossref_doi <- function(doi, select = c(
     valid_results <- lapply(seq_along(valid_idx), \(j) {
       tryCatch({
         resp <- resps[[j]]
-        if (inherits(resp, "error")) {
+        if (is.null(resp) || inherits(resp, "error")) {
           return(data.frame(DOI = doi[valid_idx[j]], error = "connection error"))
         }
         if (httr2::resp_status(resp) >= 400) {
@@ -748,7 +748,7 @@ openalex_doi <- function(doi, select = NULL) {
     i <- valid_idx[j]
     oa[[i]] <- tryCatch({
       resp <- resps[[j]]
-      if (inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
+      if (is.null(resp) || inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
         return(list(DOI = doi[i], error = "not found"))
       }
       info <- httr2::resp_body_json(resp)
