@@ -1,3 +1,13 @@
+# A paper's url table with its href as the text to search. Without a text
+# column, text_search() searches the table's first column, which in a bibr
+# 12.x paper is the integer url_id, so no GitHub or GitLab link was ever
+# found (U196).
+.url_hrefs <- function(paper) {
+  urls <- paper_table(paper, "url")
+  if ("href" %in% names(urls)) urls$text <- urls$href
+  urls
+}
+
 #' Find GitHub Links in Papers
 #'
 #' GitHub links can be in PDFs in several ways.
@@ -22,7 +32,7 @@ github_links <- function(paper) {
   github_regex <- "(?:https?://)?github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
   # found_gh <- text_search(strip_text, github_regex, return = "match", perl = TRUE)
 
-  found_gh <- paper_table(paper, "url") |>
+  found_gh <- .url_hrefs(paper) |>
     text_search(github_regex, perl = TRUE) |>
     dplyr::select(href, text_id, paper_id)
 
@@ -30,7 +40,7 @@ github_links <- function(paper) {
   # but is kept so repo_check can report it as an account rather than drop it
   # without a word (see .github_account_name(), #485).
   account_regex <- "^(?:https?://)?(?:www\\.)?github\\.com/(?:orgs/)?[A-Za-z0-9-]+/?[.,;:)]*$"
-  found_account <- paper_table(paper, "url") |>
+  found_account <- .url_hrefs(paper) |>
     text_search(account_regex, perl = TRUE) |>
     dplyr::select(href, text_id, paper_id)
   found_account <- found_account[

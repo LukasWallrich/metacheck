@@ -84,6 +84,8 @@
 * Reading R output: an output line that starts with "+" stays output; every line starting with ">" or "+" was counted as part of the statement, so output lines before it were lost (#507: U140). An untitled one-line result takes the source label as its analysis, a notebook line without a `*Result` class has `call_fn` "", and an SPSS sub-heading, table or chart without `commandName` keeps the enclosing command: these fallbacks never applied, because `%||%` replaces NULL but not NA (#507: U139)
 * `link(type = "doi")` gives no link for a missing DOI; it linked to https://doi.org/NA (#507: U8)
 * `stat_output_validate()` reads a JSON document given as a string; every string was reported as "Input is not valid JSON." (#507: U136)
+* `github_links()` and `gitlab_links()` find hyperlinks in papers read from a bibr 12.x export or converted with `grobid_to_bibr(schema_version = "12.0")`: they searched the url table's first column, which in those papers is the number `url_id`, so no link was found and `repo_check` missed every GitHub and GitLab repository linked there (#507: U196)
+* `text_search(return = "section")` keeps each section's header; it was NA, so `coi_check_oi` tables named no section (#507: U80)
 
 # metacheck 0.4.0
 

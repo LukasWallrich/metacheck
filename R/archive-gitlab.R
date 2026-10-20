@@ -67,7 +67,7 @@ gitlab_links <- function(paper) {
 
   gitlab_regex <- "(?:https?://)?gitlab\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
 
-  found_gl <- paper_table(paper, "url") |>
+  found_gl <- .url_hrefs(paper) |>
     text_search(gitlab_regex, perl = TRUE) |>
     dplyr::select(href, text_id, paper_id)
 

@@ -287,3 +287,9 @@ test_that("github_files: empty folder and single file; github_languages on an er
   answer <- list(message = "Not Found", documentation_url = "x"); status <- 404
   expect_true(is.na(github_languages("owner/repo")$language))
 })
+
+test_that("github_links finds hyperlinks in a bibr 12.x paper (U196)", {
+  # text_search() searched the url table's first column, the integer url_id
+  p <- suppressWarnings(.grobid_to_bibr(demofile("xml"), schema_version = "12.0"))
+  expect_true(any(grepl("github.com", github_links(p)$href, fixed = TRUE)))
+})
