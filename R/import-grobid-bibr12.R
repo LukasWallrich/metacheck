@@ -138,7 +138,9 @@
   # the text table, and the TEI markup of each row to find <ref>s in
   n_body <- nrow(body)
   n_cap <- sum(has_caption)
-  text <- c(body$text, bib$bib_text %||% character(0), caption[has_caption],
+  # body rows squished like captions, notes and the abstract: they kept runs
+  # of spaces (U27)
+  text <- c(squish(body$text), bib$bib_text %||% character(0), caption[has_caption],
             note_text)
   markup <- c(body$formatted, rep(NA_character_, n_bib),
               vapply(desc[has_caption], as.character, character(1)),
@@ -240,7 +242,7 @@
     dplyr::tibble(
       type = xml2::xml_attr(r, "type"),
       target = xml2::xml_attr(r, "target"),
-      contents = xml2::xml_text(r),
+      contents = squish(xml2::xml_text(r)),   # as the text is (U27)
       text_id = tid
     )
   }, markup, text_id, SIMPLIFY = FALSE) |>
@@ -275,8 +277,13 @@
   link_text <- urls$contents
   same <- gsub("^https?://", "", href) ==
     gsub("^https?://", "", gsub("\\s", "", link_text))
+  # only in the URL's own row, once: replaced in every row, a short link text
+  # ("osf") was also replaced inside other links, and a link without a target
+  # made every row printing its text NA (U28)
   for (i in seq_along(same)) {
-    text <- gsub(link_text[[i]], href[[i]], text, fixed = TRUE)
+    tid <- urls$text_id[[i]]
+    if (is.na(href[[i]]) || is.na(link_text[[i]]) || !nzchar(link_text[[i]])) next
+    text[tid] <- sub(link_text[[i]], href[[i]], text[tid], fixed = TRUE)
   }
   link_text[same] <- NA_character_
 
@@ -301,9 +308,10 @@
   aff_text <- unique(aff[!is.na(aff)])
   orcid <- as.character(au_col("orcid"))
   orcid_pattern <- "[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[0-9X]"
+  # the first ORCID: the greedy ".*(" kept an author's last one (U28)
   orcid <- ifelse(grepl(orcid_pattern, orcid),
-                  sub(paste0(".*(", orcid_pattern, ").*"),
-                      "https://orcid.org/\\1", orcid),
+                  sub(paste0("^.*?(", orcid_pattern, ").*$"),
+                      "https://orcid.org/\\1", orcid, perl = TRUE),
                   NA_character_)
 
   author <- list(

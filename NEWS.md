@@ -63,6 +63,9 @@
 * `dataverse_info()` asks the right Dataverse installation for each URL (#507: U31, U155). The hosts found were put back by position, so a URL without a host name (a bare DOI) took the next URL's host, and the next URL a later one's; and "dataverse.no" matched the start of a longer host name such as dataverse.northwestern.edu
 * A download, an extraction or a decompression that is stopped half way, or a download that comes back empty, no longer leaves a file in the cache that the next run reuses as complete (#507: U75, U203). Downloads are written to "<file>.part" and renamed when complete, archives are extracted into a ".part" folder beside their destination and moved in when done, and a ResearchBox box is unzipped into "unzipped.part" and renamed
 * `stats()` keeps a sentence's statcheck results when statcheck warns about another part of it: one unparseable p-value ("p = .05-.10") dropped every valid result next to it (#507: U4). An argument `statcheck()` does not have is now an error (it made every call fail silently, so `stats()` returned an empty table), and a character vector is accepted
+* Grobid import keeps the space between a number and a tag that follows it ("Table 1", "Hamilton 1964", "Fig. 1</ref>" had become "Table1", "Hamilton1964", "Fig.1"), joins omega's partial eta ("ω p 2" gives "ωp²"; the rule was written so that it rewrote "<p2" instead) and Hedges' "g z" (the rule turned "dgz" into "gz") (#507: U16)
+* Grobid 12.0 conversion squishes runs of spaces in body text, as it already did for captions, notes and the abstract (#507: U27)
+* Grobid import replaces a URL's link text only in the row the link is in, once: a short link text such as "osf" was also replaced in every other row, inside other links ("https://https://osf.io/q2.io/48ncu"), and in the 12.0 conversion a link without a target turned every row printing its text into NA. An author with several ORCIDs keeps the first, not the last (#507: U28)
 
 # metacheck 0.4.0
 

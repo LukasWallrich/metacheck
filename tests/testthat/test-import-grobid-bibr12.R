@@ -157,3 +157,27 @@ test_that("the same PDF through bibr and Grobid has the same source.sha256", {
   expect_equal(.grobid_to_bibr(tei("preprint"), schema_version = "12.0")$info$title,
                read(bibr_path)$info$title)
 })
+
+test_that("a URL's link text is replaced only in its own row, and body text is squished (U27, U28)", {
+  # the link text "osf" was replaced in every row, also inside other links
+  # ("https://https://osf.io/q2.io/48ncu"), a link without a target made every
+  # row printing its text NA, and 12.0 body rows kept runs of spaces
+  x <- xml2::read_xml(demofile("xml"))
+  xml2::xml_ns_strip(x)
+  div <- xml2::xml_add_child(xml2::xml_find_first(x, "//body"), "div")
+  p1 <- xml2::xml_add_child(div, "p", "Data are on ")
+  xml2::xml_add_child(p1, "ref", "osf", type = "url", target = "https://osf.io/q2")
+  p2 <- xml2::xml_add_child(div, "p", "The osf project   has   spaces and a link ")
+  xml2::xml_add_child(p2, "ref", "here", type = "url")
+  f <- withr::local_tempfile(fileext = ".tei.xml")
+  xml2::write_xml(x, f)
+
+  for (sv in list(NULL, "12.0")) {
+    txt <- suppressWarnings(.grobid_to_bibr(f, schema_version = sv))$text$text
+    expect_false(any(is.na(txt)))
+    expect_false(any(grepl("https://https://", txt, fixed = TRUE)))
+    expect_true("Data are on https://osf.io/q2" %in% txt)
+  }
+  txt12 <- suppressWarnings(.grobid_to_bibr(f, schema_version = "12.0"))$text$text
+  expect_true("The osf project has spaces and a link here" %in% txt12)
+})

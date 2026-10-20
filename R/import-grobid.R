@@ -482,9 +482,12 @@ grobid_to_bibr <- function(xml_path,
   # made every sentence NA (U17)
   for (i in which(!is.na(paper$url$link_text) & nzchar(paper$url$link_text %||% "") &
                     !is.na(paper$url$href))) {
-    paper$text$text <- gsub(paper$url$link_text[[i]],
+    # only in the URL's own row, once: replaced in every row, a short link
+    # text ("osf") was also replaced inside other links (U28)
+    row <- which(paper$text$text_id == paper$url$text_id[[i]])
+    paper$text$text[row] <- sub(paper$url$link_text[[i]],
          paper$url$href[[i]],
-         paper$text$text, fixed = TRUE)
+         paper$text$text[row], fixed = TRUE)
   }
   paper$url$link_text[same] <- NA_character_
 

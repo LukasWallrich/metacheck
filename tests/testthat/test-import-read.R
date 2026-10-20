@@ -67,7 +67,8 @@ test_that("read - recursive", {
   expect_equal(paper_id(paper), paper_id(psychsci[1:3]))
 
   # recursive ----
-  paper <- read(a, recursive = TRUE)
+  # the same paper in two folders: the second copy is renamed "~2" (U208)
+  expect_warning(paper <- read(a, recursive = TRUE), "shared a paper_id")
   expect_equal(length(paper), 5)
   # read(recursive = TRUE) lists files via list.files(..., recursive = TRUE),
   # which returns paths in alphabetical order -- derive the expectation the
@@ -76,6 +77,7 @@ test_that("read - recursive", {
     sort() |>
     basename() |>
     gsub("\\.json$", "", x = _)
+  exp <- ifelse(duplicated(exp), paste0(exp, "~2"), exp)
   expect_equal(paper_id(paper), exp)
 })
 
