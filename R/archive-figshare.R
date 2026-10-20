@@ -1115,7 +1115,17 @@ figshare_file_download <- function(figshare_id,
                                    unzip_types = NULL,
                                    host = "api.figshare.com",
                                    pb = NULL) {
-  figshare_id <- .figshare_id(figshare_id) |>
+  # 4TU.ResearchData's API takes a record's uuid as its id, but
+  # .figshare_id() drops a uuid, so an article known only by its uuid was
+  # not downloaded (U41)
+  given <- as.character(figshare_id)
+  figshare_id <- .figshare_id(given)
+  if (identical(host, "data.4tu.nl")) {
+    is_uuid <- grepl("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                     given, ignore.case = TRUE)
+    figshare_id[is_uuid] <- given[is_uuid]
+  }
+  figshare_id <- figshare_id |>
     stats::na.omit() |>
     unique()
   if (length(figshare_id) == 0) return(NULL)

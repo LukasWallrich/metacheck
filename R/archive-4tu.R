@@ -107,12 +107,17 @@ researchdata4tu_links <- function(paper) {
   # 10.4121/ce413614-1c82-4e81-90c0-323aa7d2fabd) -- so the uuid itself is
   # extracted and passed straight through in either case; the API accepts it
   # just as well.
+  # uuids before the numeric DOI: a uuid that starts with digits
+  # ("10.4121/7f866e02-...") gave the id "7" (U41). The article address may
+  # be the short form ("articles/_/<id>/<version>") or name any item type
+  # ("articles/software/<title>/<id>"); only "dataset" gave an id (U156).
   patterns <- c(
     "10\\.4121/uuid:([0-9a-f-]{36})",
-    "10\\.4121/([0-9]+)",
-    "10\\.4121/([0-9a-f-]{36})",
+    "10\\.4121/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    "^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
     "data\\.4tu\\.nl/datasets/([0-9a-f-]{36})",
-    "data\\.4tu\\.nl/articles/(?:dataset/[^/]+/)?([0-9]+)"
+    "10\\.4121/([0-9]+)",
+    "data\\.4tu\\.nl/articles/(?:_/|[^/]+/[^/]+/)?([0-9]+)"
   )
 
   for (pattern in patterns) {

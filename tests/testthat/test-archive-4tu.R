@@ -195,3 +195,17 @@ test_that("researchdata4tu_file_download resolves a 'uuid:' DOI, and only that",
   expect_equal(unname(passed),
                c("12675218", "ce413614-1c82-4e81-90c0-323aa7d2fabd", "16766929"))
 }))
+
+test_that(".researchdata4tu_id reads uuid DOIs and every article address form (U41, U156)", {
+  # a uuid starting with digits gave its first digits as the id, and the
+  # short "_/" and software addresses gave no id
+  expect_equal(
+    .researchdata4tu_id(c("10.4121/7f866e02-1c82-4e81-90c0-323aa7d2fabd",
+                          "https://data.4tu.nl/articles/_/12675218/1",
+                          "https://data.4tu.nl/articles/software/my_tool/12675218",
+                          "https://data.4tu.nl/articles/dataset/name/12675218",
+                          "10.4121/12675218.v1",
+                          "ce413614-1c82-4e81-90c0-323aa7d2fabd")),
+    c("7f866e02-1c82-4e81-90c0-323aa7d2fabd", "12675218", "12675218", "12675218",
+      "12675218", "ce413614-1c82-4e81-90c0-323aa7d2fabd"))
+})
