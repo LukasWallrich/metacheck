@@ -244,6 +244,8 @@ ethics_check <- function(paper) {
   }
 
   # report ----
+  # each statement quoted once: one found at several text_ids was quoted
+  # each time (U102)
   report <- NULL
 
   if (nrow(summary_table) == 1) {
@@ -255,7 +257,7 @@ ethics_check <- function(paper) {
       if (approved) {
         report <- sprintf(
           "An ethics approval statement was detected, based on the following text:\n\n> %s",
-          paste(table$text[table$ethics], collapse = "\n\n> ")
+          paste(unique(table$text[table$ethics]), collapse = "\n\n> ")
         )
       } else {
         report <- "We did not detect an ethics approval statement, and this paper does not appear to involve live data collection from human or animal participants. Ethics approval is typically not required for theoretical work, simulations, reviews, meta-analyses, or secondary analyses of published data."
@@ -266,7 +268,7 @@ ethics_check <- function(paper) {
         report <- sprintf(
           "Based on the following text, we would expect an ethics approval statement, and it was present:\n\n> %s\n\nEthics approval statement:\n\n> %s",
           live_quote,
-          paste(table$text[table$ethics], collapse = "\n\n> ")
+          paste(unique(table$text[table$ethics]), collapse = "\n\n> ")
         )
       } else {
         report <- sprintf(

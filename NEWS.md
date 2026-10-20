@@ -92,6 +92,7 @@
 * Reading statistics tables from HTML output: a short row without content is dropped like an empty row (it became a row of NAs), and table fields are read by their exact name, so a table with only `line_seq` no longer gets a locator from it as if it were `line` (#507: U141)
 * `causal_claims` finds randomisation written with an s ("randomised"), leaves out negated statements ("not randomized", "non-randomized"), and counts a sentence that describes random assignment next to random effects ("randomly assigned ... random intercepts"), which was dropped whole (#507: U85)
 * `coi_check` keeps a statement that ends with "Nil.", "No.", "None mentioned." or "Nothing to declare.": these were emptied and dropped, so the paper got a red light (#507: U95)
+* `paper_id()` takes each paper's own id, so a paper whose info table has no rows keeps its id in a paper list (it was read from the info tables, so the id was lost and its rows got paper_id NA in `ethics_check` and elsewhere). `ethics_check` quotes each ethics statement once; one found in several places was quoted each time (#507: U102)
 
 # metacheck 0.4.0
 
