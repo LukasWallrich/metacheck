@@ -99,12 +99,14 @@ prereg_check <- function(paper) {
 
   # have to iterate, process then merge
   # because pagination > 10 usually returns unmergeable dfs
-  ps <- lapply(urls, \(url) {
-    reg_info <- osf_get_all_pages(url)
+  ps <- lapply(seq_along(urls), \(i) {
+    reg_info <- osf_get_all_pages(urls[i])
 
     if (length(reg_info) == 0) {
+      # named by the paper's own link, not the API address (U110)
       if (!is.null(attr(reg_info, "osf_error"))) {
-        inaccessible_regs <<- c(inaccessible_regs, url)
+        own <- links_osf$href[osf_check_id(links_osf$href) %in% reg_ids[i]][1]
+        inaccessible_regs <<- c(inaccessible_regs, if (is.na(own)) urls[i] else own)
       }
       return(NULL)
     }
@@ -154,13 +156,24 @@ prereg_check <- function(paper) {
   }
 
   if (nrow(prereg_info)) {
+    # Joined by OSF id, or by the AsPredicted address without scheme, "www."
+    # and case: http://, upper-case, view_only and path links matched no
+    # paper (paper_id NA, every paper counting 0), and a link given twice in
+    # a paper counted its registration twice (U110).
+    link_key <- function(x) {
+      id <- suppressWarnings(osf_check_id(x))
+      osf <- !is.na(id)
+      key <- tolower(sub("/+$", "", sub("^(https?://)?(www\\.)?", "", x)))
+      key[osf] <- paste0("osf:", tolower(sub("[?#/].*$", "", id[osf])))
+      key
+    }
     paper_ids <- data.frame(
       paper_id = c(links_ap$paper_id, links_osf$paper_id),
-      link = c(links_ap$href, links_osf$href)
-    )
-    paper_ids$link <- gsub("^(https://)?", "https://", paper_ids$link)
-
-    prereg_info <- dplyr::left_join(prereg_info, paper_ids, by = "link")
+      key = link_key(c(links_ap$href, links_osf$href))
+    ) |> dplyr::distinct()
+    prereg_info$key <- link_key(prereg_info$link)
+    prereg_info <- dplyr::left_join(prereg_info, paper_ids, by = "key")
+    prereg_info$key <- NULL
   }
 
   # traffic light ----
@@ -512,7 +525,8 @@ osf_pages_labels <- function(pages) {
 # names so the same concept lines up across templates; unmapped labels fall
 # back to a slugified version so no information is dropped.
 osf_label_to_field <- function(label) {
-  key <- tolower(trimws(label))
+  # U+FFFE/U+FFFF (non-characters) made tolower() stop the module (U111)
+  key <- tolower(trimws(gsub("\uFFFE|\uFFFF", "", label)))
   if (key %in% names(osf_label_field)) {
     return(unname(osf_label_field[[key]]))
   }
@@ -665,7 +679,11 @@ withdrawn <- function(info) {
 ## Pre-Registration in Social Psychology (van 't Veer & Giner-Sorolla, 2016): Pre-Registration ----
 prsp <- function(info) {
   ra <- info$attributes
-  prereg_answers <- ra$registration_responses
+  # read through an environment, where `$` matches a key exactly: on the list
+  # it matched partially, so a missing "84-5" returned "84-56" (U111)
+  rr <- ra$registration_responses
+  if (!is.list(rr) || is.null(names(rr))) rr <- list()
+  prereg_answers <- list2env(rr[nzchar(names(rr))], parent = emptyenv())
 
   common <- common_osf(info)
 

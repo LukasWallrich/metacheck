@@ -268,3 +268,26 @@ test_that("AsPredicted preregistrations: one row each, AsPredicted-only papers, 
   mo <- suppressMessages(module_run(test_paper(url = "https://osf.io/abcde"), "prereg_check"))
   expect_equal(called, 0)
 })
+
+test_that("a registration is joined to its paper by OSF id, and counted once (U110)", {
+  # an http:// or upper-case link matched no paper, and a link given twice
+  # counted the registration twice
+  paper <- test_paper(url = c("https://osf.io/r5bme", "https://osf.io/r5bme",
+                              "http://OSF.IO/r5bme/"))
+  mo <- module_run(paper, "prereg_check")
+  expect_equal(nrow(mo$table), 1)
+  expect_equal(mo$table$paper_id, paper$paper_id)
+  expect_equal(mo$summary_table$preregistration, 1)
+}, "mock")
+
+test_that("prsp reads response keys exactly, and a U+FFFE label does not stop the module (U111)", {
+  # `$` on the list matched partially ("84-5" returned "84-56"), and
+  # tolower() stopped on U+FFFE
+  env <- new.env(parent = asNamespace("metacheck"))
+  sys.source(metacheck:::module_find("prereg_check"), envir = env)
+  info <- list(id = "abcde", attributes = list(
+    registration_responses = list(`84-56` = "an answer to another question")))
+  expect_false(grepl("another question", env$prsp(info)$research_questions))
+  expect_equal(env$osf_label_to_field("Study Design\ufffe"),
+               env$osf_label_to_field("Study Design"))
+})

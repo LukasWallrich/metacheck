@@ -70,6 +70,8 @@
 * `code_check` scans every R file for a groundhog or checkpoint date-pin: the texts were kept by file name, so of two files with the same name (in different folders) only the last was scanned, as was only the last file of a paper without a paper id; a located renv.lock or sessionInfo file is copied back to its own row, not only to the first file of that name (#507: U89)
 * `codebook_check` on a paper list keeps a definition that is identical to one in another paper's codebook (it was dropped, so that column was reported as undocumented and `codebook_var_n` was too low), and sends each data file's own paper's sentences when it asks the language model to name a scale (it sent none for a paper list) (#507: U91)
 * `codebook_check` merges scale labels that differ only in capitals and extra words ("Emotion Recognition", "emotion recognition task"): capitals were removed before the labels were lower-cased. With `codebook_max_calls = 0` (or when the call cap is reached), the scale groups of every file are still listed; the listing stopped after the first file (#507: U92)
+* `prereg_check` joins an OSF registration to its paper by the OSF id: a link written with http://, in capitals, with a view_only key or with a path matched no paper (paper_id NA, every paper counting 0), and a link given twice counted its registration twice. A registration that cannot be fetched is named by the paper's own link, not the OSF API address (#507: U110)
+* `prereg_check` reads the answers of the "Pre-Registration in Social Psychology" template by their exact key: a missing answer took the answer of a longer key that starts the same ("84-5" read "84-56"). A template label containing U+FFFE or U+FFFF no longer stops the module (#507: U111)
 
 # metacheck 0.4.0
 
