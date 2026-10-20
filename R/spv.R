@@ -1717,6 +1717,10 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
   out
 }
 
+# `x`, or `fallback` when `x` is NA (xml_attr() of a missing attribute):
+# %||% replaces only NULL (U139)
+.na_or <- function(x, fallback) if (length(x) == 0 || is.na(x)) fallback else x
+
 # Depth-first walk of one root_heading/heading element's children
 # (structure-xml.grammar: `(container | heading)*`), threading down the
 # nearest enclosing commandName and the most recent SPSS syntax text seen (a
@@ -1741,8 +1745,11 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
       # A subheading: its OWN commandName (if any) becomes the enclosing one
       # for everything nested under it; syntax carries through unchanged
       # until a new log container is seen at this level or below.
+      # a sub-heading without commandName keeps the enclosing command:
+      # xml_attr() gives NA, which %||% does not replace (U139)
       sub_cmd <- xml2::xml_attr(child, "commandName")
-      sub <- .spvsx_walk_heading(child, command_name = sub_cmd %||% command_name,
+      if (is.na(sub_cmd)) sub_cmd <- command_name
+      sub <- .spvsx_walk_heading(child, command_name = sub_cmd,
                                  syntax = syntax)
       out <- c(out, sub$rows)
       command_name <- sub$command_name
@@ -1782,7 +1789,7 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
       } else NA_character_
 
       out[[length(out) + 1L]] <- list(
-        command_name = xml2::xml_attr(content, "commandName") %||% command_name,
+        command_name = .na_or(xml2::xml_attr(content, "commandName"), command_name),
         syntax = syntax,
         subtype = xml2::xml_attr(content, "subType"),
         bin_member = bin_member,
@@ -1806,7 +1813,7 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
       dp <- xml2::xml_find_first(content, "./*[local-name()='dataPath']")
       p  <- xml2::xml_find_first(content, "./*[local-name()='path']")
       out[[length(out) + 1L]] <- list(
-        command_name = xml2::xml_attr(content, "commandName") %||% command_name,
+        command_name = .na_or(xml2::xml_attr(content, "commandName"), command_name),
         syntax = syntax,
         subtype = NA_character_,
         bin_member = if (!is.na(dp)) xml2::xml_text(dp) else NA_character_,

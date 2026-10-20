@@ -185,7 +185,11 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
 
   chunks <- lapply(seq_along(starts), function(k) {
     seg <- lines[starts[k]:ends[k]]
-    prompt_n <- sum(grepl("^(>|\\+) ?", seg))
+    # The statement is the ">" line and the "+" lines right after it: every
+    # line starting with ">" or "+" was counted, so output lines starting
+    # with "+ " were taken as statement text and lost (U140)
+    is_prompt <- grepl("^(>|\\+) ?", seg)
+    prompt_n <- if (length(seg) && is_prompt[1]) rle(is_prompt)$lengths[1] else 0L
     stmt <- norm(sub("^(>|\\+) ?", "", seg[seq_len(prompt_n)]))
     output <- if (prompt_n < length(seg)) seg[(prompt_n + 1L):length(seg)] else character(0)
     first_stmt_line <- stmt[nzchar(stmt)][1]
@@ -454,9 +458,13 @@ read_r_output <- function(text, source_label = NA_character_, code_lines = NULL)
     val  <- vapply(cur, `[[`, character(1), "val")
     df   <- data.frame(as.list(stats::setNames(val, make.unique(stat))),
                        check.names = FALSE, stringsAsFactors = FALSE)
+    # cur_title starts as NA, which %||% does not replace, so an untitled
+    # result never took source_label (U139)
+    no_title <- is.null(cur_title) || is.na(cur_title)
+    label <- if (is.null(source_label) || is.na(source_label)) "R output" else source_label
     results[[length(results) + 1L]] <<- list(
-      analysis = cur_title %||% (source_label %||% "R output"),
-      title = cur_title %||% NA_character_, data = df)
+      analysis = if (no_title) label else cur_title,
+      title = if (no_title) NA_character_ else cur_title, data = df)
   }
 
   for (ln in lines) {

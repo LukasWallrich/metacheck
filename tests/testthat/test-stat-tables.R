@@ -367,3 +367,13 @@ test_that("read_stat_tables of a path that is not a zip has no tables (U137)", {
   expect_equal(read_stat_tables(f), list())
   expect_equal(read_stat_tables(withr::local_tempdir()), list())
 })
+
+test_that("R output: a '+' output line stays output, and an untitled result takes the source label (U139, U140)", {
+  # every line starting with ">" or "+" counted as statement text, so
+  # "Formula:" was lost; cur_title started as NA, which %||% did not replace
+  ch <- .r_echo_chunks(c("> summary(m)", "Formula:", "+ y ~ x", "Estimate 1.2"),
+                       code_lines = "summary(m)")
+  expect_equal(ch[[1]]$output, c("Formula:", "+ y ~ x", "Estimate 1.2"))
+  o <- .r_output_oneline("t = 2.31, df = 28, p-value = 0.028", source_label = "analysis.R")
+  expect_equal(o[[1]]$analysis, "analysis.R")
+})

@@ -793,7 +793,9 @@ read_stat_tables <- function(path) {
 # text column instead of losing the output.
 .ipynb_stat_line <- function(lines) {
   out <- lapply(lines, function(ln) {
-    cls <- .ipynb_result_class(ln) %||% ""
+    # NA when the line names no *Result class, which %||% does not replace (U139)
+    cls <- .ipynb_result_class(ln)
+    if (is.null(cls) || is.na(cls)) cls <- ""
     ln <- .ipynb_strip_numpy_scalars(ln)
     parsed <- .r_output_oneline(ln, source_label = NA_character_)
     if (!length(parsed)) return(NULL)
