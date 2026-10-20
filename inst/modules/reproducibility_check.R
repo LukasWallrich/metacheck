@@ -27,10 +27,12 @@
 #' filesystem or network. Installs (when `install_missing = TRUE`) and the
 #' throwaway run library never touch your main R library. Each script's outcome
 #' is one of `ran_ok`, `errored`, `timed_out`, `skipped_missing_inputs`,
-#' `dependency_unavailable`, `not_parsed`, or `run_by_source` (an R script
+#' `dependency_unavailable`, `not_parsed`, `run_by_source` (an R script
 #' another script runs with `source()`, which is run only inside that script,
 #' since on its own it lacks the packages and objects the sourcing script sets
-#' up first); a timeout means "still running at
+#' up first), or `run_by_import` (a Python file other files import, a module
+#' rather than a script, unless it has an `if __name__ == "__main__":`
+#' block); a timeout means "still running at
 #' the cutoff", not a failure, so raise `timeout` for legitimately long-running
 #' (e.g. Bayesian) scripts. `dependency_unavailable` means the script's own
 #' package could not be installed from live CRAN, the CRAN Archive, or a named
@@ -88,7 +90,8 @@
 #'   upstream modules whose study grouping the path rewrite relies on)
 #' @param params a named list passed to `llm()`, used only when `llm_use(TRUE)`
 #' @param execute if TRUE, actually RUN the paper's code (against a throwaway
-#'   copy of the Psych-DS layout). This runs downloaded code on your machine
+#'   copy of the package or the Psych-DS layout, see `layout`). This runs
+#'   downloaded code on your machine
 #'   and is off by default; it is a deliberate, opt-in action. See `sandbox`
 #'   for how it is isolated.
 #' @param sandbox how `execute = TRUE` runs each script. `"process"`
@@ -107,6 +110,16 @@
 #'   Python code runs in `ghcr.io/scienceverse/metacheck_py_small:latest`.
 #'   `"process"` needs `callr` for R code and `processx` and a Python
 #'   interpreter for Python code; `"docker"` needs `processx`.
+#' @param layout the files the code runs against when `execute = TRUE`.
+#'   `"package"` copies every file the run has (every file of a local folder;
+#'   of a repository, every file that was downloaded, see `download`) to its
+#'   own path, so the code finds the folders and files it reads where they
+#'   are in the package, and only a path that does not work there (an
+#'   absolute path on the author's computer, a file in another folder) is
+#'   rewritten. `"psychds"` copies only the data files, laid out as a
+#'   Psych-DS release, and rewrites the code's paths to match. `"auto"` (the
+#'   default) uses `"package"` for a local folder (`local_path`) and
+#'   `"psychds"` otherwise.
 #' @param docker_use_declared_version if TRUE (and `sandbox = "docker"`), use
 #'   the R version `code_check`'s version-pinning detection found declared in
 #'   the repository (an `renv.lock`/`sessionInfo()` record) instead of the
@@ -211,6 +224,7 @@
 reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                                   model = llm_model(), params = list(),
                                   execute = FALSE, sandbox = c("process", "docker"),
+                                  layout = c("auto", "package", "psychds"),
                                   docker_use_declared_version = FALSE,
                                   install_missing = FALSE,
                                   cran_install_main = FALSE,
@@ -227,6 +241,11 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                                   results_dir = NULL) {
   # paper <- psychsci[[233]] # to test (many code files, several issues)
   sandbox <- match.arg(sandbox)
+  layout <- match.arg(layout)
+  # A local folder has every file on disk: run the code in a copy of the
+  # package as it is (see .repro_package_plan()).
+  if (layout == "auto") layout <- if (!is.null(local_path)) "package" else "psychds"
+  layout_name <- if (layout == "package") "the package" else "the Psych-DS layout"
 
   # ── Paperlist + workers > 1: run papers CONCURRENTLY ────────────────────────
   # Every argument above is still just for ONE paper's own reproducibility
@@ -387,6 +406,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # data_check the way going through the psychds_check module used to.
     plan <- psychds_file_plan(structure_df, group_no_evidence)$table
   }
+  if (layout == "package") plan <- .repro_package_plan(structure_df)
   if (is.null(code_tbl)) {
     cc <- run_missing("code_check"); code_tbl <- cc$table
     version_pin <- cc$version_pin
@@ -1247,10 +1267,13 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     repro_rewrite_paths(code_text_list[[i]], r_files$file_name[i], plan, "R",
                        structure_df = structure_df))
   names(rewrite_list) <- r_files$file_name
+  # the package layout leaves a reference that works as written as it is
+  if (layout == "package") rewrite_list <- stats::setNames(lapply(seq_along(rewrite_list), function(i)
+    .repro_keep_working_refs(rewrite_list[[i]], plan, r_files$file_path[i])), names(rewrite_list))
 
   # Per-file rewrite counts + unresolved reads (referenced, not matched in plan).
   rewrites_n  <- vapply(rewrite_list, function(d)
-    if (nrow(d)) sum(d$matched & !d$ambiguous) else 0L, integer(1))
+    if (nrow(d)) sum(d$matched & !d$ambiguous & !(d$as_written %||% FALSE)) else 0L, integer(1))
   ambiguous_n <- vapply(rewrite_list, function(d)
     if (nrow(d)) sum(d$ambiguous) else 0L, integer(1))
   unresolved_refs <- unlist(lapply(rewrite_list, function(d)
@@ -1460,7 +1483,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     .dbg("  materialised ", sum(attr(ml, "materialised")$ok %||% FALSE), "/",
          nrow(attr(ml, "materialised") %||% data.frame()), " files.")
     .dbg("writing ", n_code, " rewritten script(s) into the layout ...")
-    run_tbl <- repro_write_scripts(code_text_list, rewrite_list, plan, sandbox_root)
+    run_tbl <- repro_write_scripts(code_text_list, rewrite_list, plan, sandbox_root,
+                                   script_paths = if (layout == "package") r_files$file_path,
+                                   writes_in_place = layout == "package")
     .dbg("  wrote ", nrow(run_tbl), " script(s).")
 
     # 2. Optionally install dependencies. sandbox = "process": CRAN sources
@@ -1648,7 +1673,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
         # as before (inject_libs only touches files named in it).
         run_tbl2 <- if (length(library_injections) > 0)
           repro_write_scripts(code_text_list, rewrite_list, plan, sandbox_root,
-                              inject_libs = library_injections) else run_tbl
+                              inject_libs = library_injections,
+                              script_paths = if (layout == "package") r_files$file_path,
+                              writes_in_place = layout == "package") else run_tbl
         .dbg("re-running ", length(run_order2), " script(s) in corrected order",
              if (length(library_injections) > 0) sprintf(
                " (with %d library() injection(s): %s)",
@@ -1831,7 +1858,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   ## Path rewriting ----
   total_rewrites <- sum(rewrites_n)
   total_ambiguous <- sum(ambiguous_n)
-  report_paths <- sprintf(
+  report_paths <- if (layout == "package") sprintf(
+    "To run against the package, %d referenced data path%s that do%s not work as written would be rewritten to where the file is in the package.",
+    total_rewrites, plural(total_rewrites), plural(total_rewrites, "es", "")) else sprintf(
     "To run against the Psych-DS layout, %d referenced data path%s would be rewritten to %s new location%s.",
     total_rewrites, plural(total_rewrites),
     plural(total_rewrites, "its", "their"), plural(total_rewrites))
@@ -1915,7 +1944,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     n_by_src  <- sum(oc == "run_by_source")
     report_exec <- sprintf(
       paste0("**The code was run.** Each script ran in an isolated %s ",
-             "against a throwaway copy of the Psych-DS layout, in the run order ",
+             "against a throwaway copy of ", layout_name, ", in the run order ",
              "above, with a %d-second per-script timeout. Of %d script%s: %d ran ",
              "without error, %d errored, %d timed out, %d %s skipped (inputs ",
              "unavailable), %d could not run because one of its own ",
@@ -2486,9 +2515,11 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     repro_rewrite_paths(py_code_text_list[[i]], py_files$file_name[i], plan, "Python",
                        structure_df = structure_df))
   names(py_rewrite_list) <- py_files$file_name
+  if (layout == "package") py_rewrite_list <- stats::setNames(lapply(seq_along(py_rewrite_list), function(i)
+    .repro_keep_working_refs(py_rewrite_list[[i]], plan, py_files$file_path[i])), names(py_rewrite_list))
 
   py_rewrites_n <- vapply(py_rewrite_list, function(d)
-    if (nrow(d)) sum(d$matched & !d$ambiguous) else 0L, integer(1))
+    if (nrow(d)) sum(d$matched & !d$ambiguous & !(d$as_written %||% FALSE)) else 0L, integer(1))
   py_ambiguous_n <- vapply(py_rewrite_list, function(d)
     if (nrow(d)) sum(d$ambiguous) else 0L, integer(1))
   py_unresolved_refs <- unlist(lapply(py_rewrite_list, function(d)
@@ -2581,7 +2612,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
 
     .dbg("[repro/py] writing ", n_py_code, " rewritten script(s) into the layout ...")
     py_run_tbl <- repro_write_scripts(py_code_text_list, py_rewrite_list, plan,
-                                      sandbox_root, lang = "Python")
+                                      sandbox_root, lang = "Python",
+                                      script_paths = if (layout == "package") py_files$file_path,
+                                      writes_in_place = layout == "package")
     .dbg("[repro/py]   wrote ", nrow(py_run_tbl), " script(s).")
 
     # The process sandbox needs a Python interpreter on this computer (looked
@@ -2619,6 +2652,13 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     py_parses_named <- stats::setNames(py_parses, py_files$file_name)
     py_skip_files <- py_files$file_name[py_file_unresolved]
     py_run_order_names <- py_order_tbl$file_name[order(py_order_tbl$order)]
+    # A module other files import is not run on its own (see
+    # .repro_py_imported()), like an R script another script source()s.
+    py_imported <- .repro_py_imported(py_code_text_list, py_files$file_path)
+    if (length(py_imported))
+      .dbg("[repro/py] imported by other files, not run on their own: ",
+           paste(names(py_imported), collapse = ", "))
+    py_run_order_names <- setdiff(py_run_order_names, names(py_imported))
     if (is.null(py_exec_error)) {
       .dbg("[repro/py] running ", length(py_run_order_names), " script(s) in order: ",
            paste(py_run_order_names, collapse = " -> "))
@@ -2641,6 +2681,12 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
           py_exec_error <<- conditionMessage(e)
           NULL
         })
+    }
+    if (!is.null(py_run_results) && length(py_imported)) {
+      py_run_results <- py_run_results[!py_run_results$file_name %in% names(py_imported), , drop = FALSE]
+      py_run_results <- dplyr::bind_rows(py_run_results, data.frame(
+        file_name = names(py_imported), outcome = "run_by_import",
+        error = "", stdout = "", stderr = ""))
     }
     if (!is.null(py_run_results))
       .dbg("[repro/py] execution finished. outcomes: ",
@@ -2787,7 +2833,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   py_total_rewrites <- sum(py_rewrites_n)
   py_total_ambiguous <- sum(py_ambiguous_n)
-  py_report_paths <- sprintf(
+  py_report_paths <- if (layout == "package") sprintf(
+    "To run against the package, %d referenced data path%s that do%s not work as written would be rewritten to where the file is in the package.",
+    py_total_rewrites, plural(py_total_rewrites), plural(py_total_rewrites, "es", "")) else sprintf(
     "To run against the Psych-DS layout, %d referenced data path%s would be rewritten to %s new location%s.",
     py_total_rewrites, plural(py_total_rewrites),
     plural(py_total_rewrites, "its", "their"), plural(py_total_rewrites))
@@ -2838,20 +2886,28 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     n_py_skipped <- sum(py_oc == "skipped_missing_inputs")
     n_py_noparse <- sum(py_oc == "not_parsed")
     n_py_nodep   <- sum(py_oc == "dependency_unavailable")
+    n_py_import  <- sum(py_oc == "run_by_import")
     py_report_exec <- sprintf(
       paste0("**The Python code was run.** Each script ran in an isolated ",
-             "%s against a throwaway copy of the Psych-DS layout, in the run ",
+             "%s against a throwaway copy of %s, in the run ",
              "order above, with a %d-second per-script timeout. Of %d script%s: ",
              "%d ran without error, %d errored, %d timed out, %d %s skipped ",
              "(inputs unavailable), %d could not run because one of its own ",
-             "dependencies is unavailable, and %d did not parse. Running ",
+             "dependencies is unavailable, and %d did not parse.%s Running ",
              "against current package versions: a break can reflect version ",
              "drift, which argues for pinning versions (e.g. in a ",
              "`requirements.txt`)."),
       if (sandbox == "docker") "Docker container" else "subprocess",
-      timeout, nrow(py_run_results), plural(nrow(py_run_results)),
+      layout_name, timeout, nrow(py_run_results), plural(nrow(py_run_results)),
       n_py_ran_ok, n_py_errored, n_py_timeout, n_py_skipped,
-      plural(n_py_skipped, "was", "were"), n_py_nodep, n_py_noparse)
+      plural(n_py_skipped, "was", "were"), n_py_nodep, n_py_noparse,
+      if (n_py_import) sprintf(
+        " %d %s not run on %s own, because other files import %s: %s.",
+        n_py_import, plural(n_py_import, "file was", "files were"),
+        plural(n_py_import, "its", "their"), plural(n_py_import, "it", "them"),
+        paste(sprintf("%s (by %s)", names(py_imported),
+                      vapply(py_imported, paste, character(1), collapse = ", ")),
+              collapse = "; ")) else "")
 
     py_setwd_rows <- if (exists("py_run_tbl", inherits = FALSE) &&
                          "setwd_removed" %in% names(py_run_tbl))
@@ -3008,9 +3064,16 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     if (n_py_dup > 0) sprintf(
       "%d Python file%s skipped as byte-identical duplicate%s of another file already in the run.",
       n_py_dup, plural(n_py_dup), plural(n_py_dup)),
-    if (isTRUE(execute) && !is.null(py_run_results)) sprintf(
-      "%d of %d Python script%s ran without error when executed.",
-      n_py_ran_ok_sum, nrow(py_run_results), plural(nrow(py_run_results))),
+    # Files other files import are not counted, as R's sourced scripts are not.
+    if (isTRUE(execute) && !is.null(py_run_results)) {
+      n_py_imp <- sum(py_run_results$outcome == "run_by_import")
+      n_py_own <- nrow(py_run_results) - n_py_imp
+      sprintf("%d of %d Python script%s ran without error when executed%s.",
+              n_py_ran_ok_sum, n_py_own, plural(n_py_own),
+              if (n_py_imp > 0) sprintf(" (%d more %s imported by other files, not run on %s own)",
+                                        n_py_imp, plural(n_py_imp, "file is", "files are"),
+                                        plural(n_py_imp, "its", "their")) else "")
+    },
     if (n_py_missing_inputs > 0) sprintf(
       "%d referenced Python input%s unavailable (%d withheld due to size).",
       n_py_missing_inputs, plural(n_py_missing_inputs), n_py_withheld),

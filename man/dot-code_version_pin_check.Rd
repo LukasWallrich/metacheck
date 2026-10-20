@@ -42,6 +42,11 @@ a list:
 \code{renv_packages} (data frame \code{file_name}, \code{package}, \code{version}, \code{source}
 — one row per locked package, across all \code{renv.lock} files found),
 \code{sessioninfo_files} (character vector of matched file_names),
+\code{python_files} (character vector of the file_names of Python package
+lists: \code{requirements*.txt}, \code{environment.yml}, \code{Pipfile(.lock)},
+\code{poetry.lock}, \code{uv.lock}, \code{pyproject.toml}),
+\code{python_pinned} (logical, TRUE if any Python package list was found;
+\code{pinned} stays about R only),
 \code{file_location} (named character vector, file_name -> resolved local
 path, for every candidate file this call downloaded — a caller
 re-checking a SUBSET of \code{all_files} per paper can splice these back

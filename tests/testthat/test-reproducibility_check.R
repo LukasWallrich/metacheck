@@ -1225,3 +1225,168 @@ test_that("a script that writes a file succeeds in the Docker sandbox (#502)", {
   # written inside the container, found in the host's output folder
   expect_true(file.exists(file.path(root, "output", "means.csv")))
 })
+
+# -- the package layout ---------------------------------------------------------
+# The Psych-DS layout gives the code only the data files it recognised, moved
+# into Psych-DS folders, so code that reads a folder of scan files, or imports
+# its own helper module from a subfolder, failed for files that are in the
+# package. The package layout copies every file to its own path.
+
+test_that(".repro_package_plan gives every file its own path", {
+  structure_df <- data.frame(
+    file_name = c("log.csv", "log.csv", "helpers.py", "a.csv"),
+    file_path = c("raw_data/scan1/log.csv", "raw_data/scan2/log.csv",
+                  "code/utils/helpers.py", NA),
+    file_location = c("/x/1/log.csv", "/x/2/log.csv", "/x/helpers.py", "/x/a.csv"))
+  plan <- .repro_package_plan(structure_df)
+  expect_equal(plan$target_path, c("raw_data/scan1/log.csv", "raw_data/scan2/log.csv",
+                                   "code/utils/helpers.py", "a.csv"))
+  # each row keeps its own file, also when names repeat
+  expect_equal(plan$source[1:2], c("/x/1/log.csv", "/x/2/log.csv"))
+  expect_equal(nrow(.repro_package_plan(NULL)), 0)
+})
+
+test_that("repro_materialize_layout copies each file of the package layout from its own source", {
+  d <- withr::local_tempdir()
+  dir.create(file.path(d, "1")); dir.create(file.path(d, "2"))
+  writeLines("one", file.path(d, "1", "log.csv"))
+  writeLines("two", file.path(d, "2", "log.csv"))
+  structure_df <- data.frame(file_name = c("log.csv", "log.csv"),
+                             file_path = c("scan1/log.csv", "scan2/log.csv"),
+                             file_location = file.path(d, c("1", "2"), "log.csv"))
+  root <- withr::local_tempdir()
+  repro_materialize_layout(.repro_package_plan(structure_df), structure_df, root)
+  # looked up by name, both got the first file's content
+  expect_equal(readLines(file.path(root, "scan1/log.csv")), "one")
+  expect_equal(readLines(file.path(root, "scan2/log.csv")), "two")
+})
+
+test_that("repro_write_scripts writes a script to its own path when given one", {
+  root <- withr::local_tempdir()
+  code <- list(`__init__.py` = "x = 1", `__init__.py` = "y = 2")
+  rw <- list(`__init__.py` = repro_rewrite_paths("", "x", NULL))
+  out <- repro_write_scripts(code, rw, NULL, root, lang = "Python",
+                             script_paths = c("a/__init__.py", "b/__init__.py"))
+  expect_equal(readLines(file.path(root, "a/__init__.py")), "x = 1")
+  expect_equal(readLines(file.path(root, "b/__init__.py")), "y = 2")
+})
+
+test_that(".repro_keep_working_refs leaves a path that works in the package as written", {
+  plan <- data.frame(file_name = c("log.csv", "log.csv", "notes.txt"),
+                     target_path = c("raw_data/scan1/log.csv", "raw_data/scan2/log.csv",
+                                     "raw_data/notes.txt"))
+  code <- c("a = open('raw_data/scan1/log.csv')",
+            "b = open('C:/Users/author/project/raw_data/notes.txt')")
+  rw <- repro_rewrite_paths(code, "code/main.py", plan, "Python")
+  rw <- .repro_keep_working_refs(rw, plan)
+  works <- rw[rw$ref == "raw_data/scan1/log.csv", ]
+  expect_true(works$as_written)
+  expect_false(works$ambiguous)       # 2 files are named log.csv
+  expect_equal(works$target, "raw_data/scan1/log.csv")
+  abs <- rw[rw$basename == "notes.txt", ]
+  expect_false(abs$as_written)        # rewritten to where the file is
+  expect_equal(abs$target, "raw_data/notes.txt")
+})
+
+test_that(".repro_py_imported finds modules, not scripts", {
+  code <- list(
+    main.py = c("import os", "from utils import helpers", "from modules.math_class import Math"),
+    helpers.py = "def f(): return 1",
+    `__init__.py` = character(0),
+    math_class.py = "class Math: pass",
+    tool.py = c("def g(): pass", "if __name__ == '__main__':", "    g()"),
+    alone.py = "print(1)")
+  paths <- c("code/main.py", "code/utils/helpers.py", "code/utils/__init__.py",
+             "code/modules/math_class.py", "code/tool.py", "code/alone.py")
+  imp <- .repro_py_imported(code, paths)
+  expect_setequal(names(imp), c("helpers.py", "__init__.py", "math_class.py"))
+  expect_equal(imp[["helpers.py"]], "main.py")
+  # a file with a __main__ block, or that nothing imports, is a script
+  code$main.py <- c(code$main.py, "import tool")
+  expect_false("tool.py" %in% names(.repro_py_imported(code, paths)))
+})
+
+test_that("the package layout runs code that reads folders and imports its own modules", {
+  skip_if_quick()
+  skip_if_not(nzchar(Sys.which("python")) || nzchar(Sys.which("python3")),
+              "no python interpreter available")
+  llm_use(FALSE)
+  pkg <- withr::local_tempdir()
+  w <- function(path, lines) {
+    dir.create(dirname(file.path(pkg, path)), recursive = TRUE, showWarnings = FALSE)
+    writeLines(lines, file.path(pkg, path))
+  }
+  w("raw_data/scan1/log.csv", c("a,b", "1,2"))
+  w("raw_data/scan2/log.csv", c("a,b", "3,4"))
+  w("raw_data/notes.txt", "some notes")
+  w("code/utils/__init__.py", "")
+  w("code/utils/helpers.py", c("def first_log():",
+                               "    return open('raw_data/scan1/log.csv').read().splitlines()[1]"))
+  w("code/main.py", c("import os", "from utils import helpers",
+                      "print(sorted(os.listdir('raw_data/scan1')))", "print(helpers.first_log())"))
+  w("code/other.py", "print(open('C:/Users/author/project/raw_data/notes.txt').read())")
+
+  mo <- suppressMessages(module_run(test_paper(), "reproducibility_check", local_path = pkg,
+                                    local_only = TRUE, execute = TRUE))
+  oc <- stats::setNames(mo$run_results$outcome, mo$run_results$file_name)
+  expect_equal(oc[["main.py"]], "ran_ok")
+  expect_equal(oc[["other.py"]], "ran_ok")      # absolute path rewritten
+  expect_equal(oc[["helpers.py"]], "run_by_import")
+  expect_match(mo$summary_text, "2 of 2 Python scripts ran without error", fixed = TRUE)
+
+  # the Psych-DS layout moves the helper module, so the import fails
+  mo <- suppressMessages(module_run(test_paper(), "reproducibility_check", local_path = pkg,
+                                    local_only = TRUE, execute = TRUE, layout = "psychds"))
+  oc <- stats::setNames(mo$run_results$outcome, mo$run_results$file_name)
+  expect_equal(oc[["main.py"]], "errored")
+})
+
+test_that(".repro_keep_working_refs rewrites only what cannot work as written", {
+  plan <- data.frame(file_name = c("x.csv", "helpers.R", "scores.csv"),
+                     target_path = c("processed_data/fig7/x.csv", "code/helpers.R",
+                                     "raw_data/scores.csv"))
+  code <- c("a <- read.csv(file.path(base, 'fig7/x.csv'))",
+            "source('helpers.R')",
+            "d <- read.csv('../raw_data/scores.csv')")
+  rw <- repro_rewrite_paths(code, "analysis.R", plan, "R")
+  rw <- .repro_keep_working_refs(rw, plan, "code/analysis.R")
+  # a partial path the code joins with a folder: left as written (rewriting
+  # it gave processed_data/fig7/processed_data/fig7/x.csv)
+  part <- rw[rw$ref == "fig7/x.csv", ]
+  expect_true(part$as_written)
+  expect_equal(part$target, "fig7/x.csv")
+  # relative to the script's own folder: the path from the top
+  expect_equal(rw$target[rw$ref == "helpers.R"], "code/helpers.R")
+  expect_equal(rw$target[rw$ref == "../raw_data/scores.csv"], "raw_data/scores.csv")
+  expect_false(any(rw$as_written[rw$ref %in% c("helpers.R", "../raw_data/scores.csv")]))
+})
+
+test_that(".repro_norm_rel resolves . and ..", {
+  expect_equal(.repro_norm_rel("code/../raw_data/./x.csv"), "raw_data/x.csv")
+  expect_equal(.repro_norm_rel("code\\x.R"), "code/x.R")
+  expect_true(is.na(.repro_norm_rel("../x.csv")))
+})
+
+test_that("repro_write_scripts leaves writes in place in the package layout", {
+  root <- withr::local_tempdir()
+  code <- list(a.R = c("write.csv(d, 'raw_data/made.csv')",
+                       "write.csv(d, 'C:/Users/author/out.csv')"))
+  rw <- list(a.R = repro_rewrite_paths(code$a.R, "a.R", NULL))
+  repro_write_scripts(code, rw, NULL, root, writes_in_place = TRUE)
+  txt <- readLines(file.path(root, "a.R"))
+  expect_match(txt[1], "'raw_data/made.csv'", fixed = TRUE)
+  expect_false(grepl("C:/Users/author", txt[2], fixed = TRUE))
+  expect_match(txt[2], "output/", fixed = TRUE)
+})
+
+test_that("repro_materialize_layout makes the copy writable", {
+  skip_on_os("windows")   # file modes
+  d <- withr::local_tempdir()
+  writeLines("x", file.path(d, "a.csv"))
+  Sys.chmod(file.path(d, "a.csv"), "0444")
+  structure_df <- data.frame(file_name = "a.csv", file_path = "raw_data/a.csv",
+                             file_location = file.path(d, "a.csv"))
+  root <- withr::local_tempdir()
+  repro_materialize_layout(.repro_package_plan(structure_df), structure_df, root)
+  expect_equal(as.character(file.mode(file.path(root, "raw_data/a.csv"))), "666")
+})

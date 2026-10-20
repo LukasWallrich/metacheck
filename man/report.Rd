@@ -31,7 +31,9 @@ sections), or \code{"simple"} for a static report with none of that -- plain
 tables, stacked headings instead of tabs, a single theme, no embedded
 JavaScript at all. Use \code{"simple"} for a report you plan to email: mail
 clients and scanners routinely flag the JavaScript a full report embeds
-(even though it is inert without a browser). See \code{\link[=report_type]{report_type()}}.}
+(even though it is inert without a browser). \code{"checklist"} sorts every
+check by its result (to fix, to improve, ...), with what was found and
+what to do on separate lines; it is static too. See \code{\link[=report_type]{report_type()}}.}
 
 \item{args}{a list of arguments to pass to modules (see Details)}
 }

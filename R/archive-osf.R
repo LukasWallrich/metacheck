@@ -1341,7 +1341,7 @@ osf_file_download <- function(osf_id,
     }
 
     # OSF's download_url redirects (per file) to a pre-signed cloud-storage URL
-    # (Google Cloud Storage), not a shared, rate-limited endpoint -- a live burst
+    # (Google Cloud Storage until 2026-10, Oracle Cloud since, #508), not a shared, rate-limited endpoint -- a live burst
     # of 23 concurrent requests returned all-200 with no rate-limit headers
     # (checked 2026-08-08; see .download_many_parallel()'s comment in
     # repo-download.R for the same finding). Fetch in parallel instead of one

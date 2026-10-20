@@ -40,6 +40,15 @@ test_that("code_read", {
   bom_path <- withr::local_tempfile()
   writeBin(c(as.raw(c(0xef, 0xbb, 0xbf)), charToRaw("x <- 1\r\ny <- 2\rz <- 3\n")), bom_path)
   expect_equal(code_read(bom_path), c("x <- 1", "y <- 2", "z <- 3"))
+
+  # a URL that answers with an HTTP error stops, instead of its error page
+  # being read as the file's code
+  local_mocked_bindings(
+    curl_fetch_memory = function(url, ...)
+      list(status_code = 404L, content = charToRaw("404: Not Found")),
+    .package = "curl")
+  expect_error(code_read("https://example.org/analysis.R"),
+               "HTTP status was 404", fixed = TRUE)
 })
 
 

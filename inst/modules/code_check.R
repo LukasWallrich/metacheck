@@ -560,12 +560,12 @@ code_check <- function(paper, local_path = NULL,
   install_packages_issues <- if ("code_install_packages" %in% names(code_files))
     code_files$file_name[which(code_files$code_install_packages > 0)] else character(0)
   if (length(install_packages_issues) == 0) {
-    report_install_packages <- "Best programming practice is to avoid `install.packages()` in analysis code: it installs software on whoever runs the script without asking, which is at minimum disruptive (an unexpected install, network access, a package version the author never tested against) and at worst a security risk if it points at an untrusted repository. Document required packages instead (a README, a `renv.lock`/`DESCRIPTION`). No `install.packages()` calls were found in any of the code files."
+    report_install_packages <- "Best programming practice is to avoid `install.packages()` in analysis code: it installs software on whoever runs the script without asking, which is at minimum disruptive (an unexpected install, network access, a package version the author never tested against) and at worst a security risk if it points at an untrusted repository. Document required packages instead (a README, or a list of them: an `renv.lock`/`DESCRIPTION` for R, a `requirements.txt` for Python). No `install.packages()` calls were found in any of the code files."
     summary_install_packages <- "No install.packages() calls were found."
     report_table_install_packages <- NULL
   } else {
     report_install_packages <- sprintf(
-      "Best programming practice is to avoid `install.packages()` in analysis code: it installs software on whoever runs the script without asking, which is at minimum disruptive (an unexpected install, network access, a package version the author never tested against) and at worst a security risk if it points at an untrusted repository. Document required packages instead (a README, a `renv.lock`/`DESCRIPTION`). `install.packages()` calls were found in %d code file%s.",
+      "Best programming practice is to avoid `install.packages()` in analysis code: it installs software on whoever runs the script without asking, which is at minimum disruptive (an unexpected install, network access, a package version the author never tested against) and at worst a security risk if it points at an untrusted repository. Document required packages instead (a README, or a list of them: an `renv.lock`/`DESCRIPTION` for R, a `requirements.txt` for Python). `install.packages()` calls were found in %d code file%s.",
       length(install_packages_issues),
       plural(length(install_packages_issues))
     )
@@ -756,8 +756,13 @@ code_check <- function(paper, local_path = NULL,
     all_files$file_location[m[hit]] <- version_pin$file_location[hit]
   }
 
+  # R advice for R code, Python advice for Python code: the R part is shown
+  # when there is R code, or when there is neither R nor Python code (as
+  # before); the Python part when there is Python code.
+  code_langs <- code_files$language
+  show_r <- "R" %in% code_langs || !"Python" %in% code_langs
   if (!version_pin$pinned) {
-    report_version_pin <- "No `renv.lock` file, `sessionInfo()`/`session_info()` record, or `groundhog`/`checkpoint` date-pin call was found anywhere in the repository. Without one of these, the exact R and package versions used for the analysis are not recoverable, and package versions may drift between when this analysis was run and any later reproduction attempt. Consider depositing an `renv.lock` (via the `renv` package), a `sessionInfo()` text dump, or (for R) a `groundhog`/`checkpoint` date-pin alongside the code — or, for Python code, a `requirements.txt` (not currently checked for by this module, but still good practice to include)."
+    report_version_pin <- "No `renv.lock` file, `sessionInfo()`/`session_info()` record, or `groundhog`/`checkpoint` date-pin call was found anywhere in the repository. Without one of these, the exact R and package versions used for the analysis are not recoverable, and package versions may drift between when this analysis was run and any later reproduction attempt. Consider depositing an `renv.lock` (via the `renv` package), a `sessionInfo()` text dump, or a `groundhog`/`checkpoint` date-pin alongside the code."
     summary_version_pin <- "No pinned R/package environment (renv.lock, sessionInfo(), or groundhog/checkpoint) was found. Consider adding a solution to improve computational reproducibility."
     report_table_version_pin <- NULL
   } else {
@@ -783,6 +788,25 @@ code_check <- function(paper, local_path = NULL,
       tb
     } else NULL
   }
+  if (!show_r) {
+    report_version_pin <- summary_version_pin <- character(0)
+    report_table_version_pin <- NULL
+  }
+  if ("Python" %in% code_langs) {
+    if (version_pin$python_pinned) {
+      py_files <- paste0("`", version_pin$python_files, "`", collapse = ", ")
+      report_version_pin <- c(report_version_pin, sprintf(
+        "The repository lists the Python packages the code needs in %s.", py_files))
+      summary_version_pin <- c(summary_version_pin, sprintf(
+        "A list of Python packages was found (%s).",
+        paste(basename(version_pin$python_files), collapse = ", ")))
+    } else {
+      report_version_pin <- c(report_version_pin, "No list of the Python packages the code needs (a `requirements.txt`, `environment.yml`, `Pipfile.lock`, `poetry.lock`, `uv.lock` or `pyproject.toml`) was found anywhere in the repository. Without one, the package versions used for the analysis are not recoverable, and they may drift between when this analysis was run and any later reproduction attempt. Consider depositing a `requirements.txt` that lists each package with its version (for example the output of `pip freeze`).")
+      summary_version_pin <- c(summary_version_pin, "No list of Python package versions (requirements.txt or similar) was found. Consider adding one to improve computational reproducibility.")
+    }
+  }
+  report_version_pin <- paste(report_version_pin, collapse = "\n\n")
+  env_pinned <- .code_env_pinned(version_pin, code_langs)
 
   ## merge packages and failed downloads into the manifest, one file per paper ----
   # code_check downloads its own subset of files (predownload + the catch-up
@@ -909,7 +933,7 @@ code_check <- function(paper, local_path = NULL,
       length(install_packages_issues) == 0 &&
       length(library_issue) == 0 &&
       parse_issues == 0 &&
-      version_pin$pinned) {
+      env_pinned) {
     tl <- "green"
   } else {
     tl <- "yellow"
@@ -968,17 +992,19 @@ code_check <- function(paper, local_path = NULL,
       split(seq_len(nrow(all_files)), all_files$paper_id),
       function(rows) {
         pid_here <- as.character(all_files$paper_id[rows[1]])
-        isTRUE(.code_version_pin_check(
-          all_files[rows, , drop = FALSE],
-          code_text_list = r_text_by_paper[[pid_here]] %||% list(),
-          skip_on_api_limit = skip_on_api_limit,
-          max_files_per_repo = max_files_per_repo)$pinned)
+        .code_env_pinned(
+          .code_version_pin_check(
+            all_files[rows, , drop = FALSE],
+            code_text_list = r_text_by_paper[[pid_here]] %||% list(),
+            skip_on_api_limit = skip_on_api_limit,
+            max_files_per_repo = max_files_per_repo),
+          code_files$language[as.character(code_files$paper_id) == pid_here])
       },
       logical(1))
     summary_table$code_version_pinned <-
       pin_by_paper[as.character(summary_table$paper_id)] |> unname()
   } else {
-    summary_table$code_version_pinned <- version_pin$pinned
+    summary_table$code_version_pinned <- env_pinned
   }
   summary_table$code_version_pinned[is.na(summary_table$code_version_pinned)] <- FALSE
 

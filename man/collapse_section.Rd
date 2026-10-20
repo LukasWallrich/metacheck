@@ -36,6 +36,8 @@ passes an unrecognised attribute straight through as a literal (invisible)
 HTML attribute rather than rendering it as content, and
 expanding/collapsing needs Bootstrap's collapse JavaScript, which a simple
 report never includes. The content is always shown inline, uncollapsed.
+In a \code{"checklist"} report it is a \verb{<details>} box instead, which folds
+without JavaScript.
 }
 \examples{
 text <- c("Paragraph 1...", "Paragraph 2...")

@@ -24,8 +24,9 @@ exist.}
 \item{output_format}{the format to create the report in, \code{"html"} (the
 default) or \code{"qmd"}}
 
-\item{report_type}{\code{"full"} (the default) or \code{"simple"} (a static,
-email-safe report with no embedded JavaScript) -- see \code{\link[=report]{report()}} and
+\item{report_type}{\code{"full"} (the default), \code{"simple"} (a static,
+email-safe report with no embedded JavaScript) or \code{"checklist"} (every
+check sorted by its result, also static) -- see \code{\link[=report]{report()}} and
 \code{\link[=report_type]{report_type()}}.}
 
 \item{modules}{the modules to run. Defaults to the four repository modules,

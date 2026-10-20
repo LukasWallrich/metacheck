@@ -7,7 +7,9 @@
 repro_materialize_layout(plan, structure_df, root)
 }
 \arguments{
-\item{plan}{the \code{psychds_check} table (\code{file_name}, \code{target_path})}
+\item{plan}{the \code{psychds_check} table (\code{file_name}, \code{target_path}), or the
+package layout's plan (\code{\link[=.repro_package_plan]{.repro_package_plan()}}), whose \code{source} column
+names each row's own file}
 
 \item{structure_df}{the \code{data_check} structure table (\code{file_name},
 \code{file_location})}

@@ -61,7 +61,9 @@
 #'   tables, stacked headings instead of tabs, a single theme, no embedded
 #'   JavaScript at all. Use `"simple"` for a report you plan to email: mail
 #'   clients and scanners routinely flag the JavaScript a full report embeds
-#'   (even though it is inert without a browser). See [report_type()].
+#'   (even though it is inert without a browser). `"checklist"` sorts every
+#'   check by its result (to fix, to improve, ...), with what was found and
+#'   what to do on separate lines; it is static too. See [report_type()].
 #' @param args a list of arguments to pass to modules (see Details)
 #'
 #' @return the module output, invisibly, with the report's file path in its
@@ -115,8 +117,8 @@ report <- function(paper,
   ## Restored on exit, including on error, so it never leaks into the
   ## caller's session.
   report_type <- tolower(report_type[[1]])
-  if (!report_type %in% c("full", "brief", "simple", "simple_brief")) {
-    stop("The report_type must be one of 'full', 'brief', 'simple', or 'simple_brief'.",
+  if (!report_type %in% c("full", "brief", "simple", "simple_brief", "checklist")) {
+    stop("The report_type must be one of 'full', 'brief', 'simple', 'simple_brief', or 'checklist'.",
       call. = FALSE
     )
   }
@@ -321,8 +323,9 @@ report <- function(paper,
 #'   exist.
 #' @param output_format the format to create the report in, `"html"` (the
 #'   default) or `"qmd"`
-#' @param report_type `"full"` (the default) or `"simple"` (a static,
-#'   email-safe report with no embedded JavaScript) -- see [report()] and
+#' @param report_type `"full"` (the default), `"simple"` (a static,
+#'   email-safe report with no embedded JavaScript) or `"checklist"` (every
+#'   check sorted by its result, also static) -- see [report()] and
 #'   [report_type()].
 #' @param modules the modules to run. Defaults to the four repository modules,
 #'   in the order they depend on each other. Change it to run fewer.
@@ -508,6 +511,11 @@ report_module_run <- function(paper, modules, args = list()) {
 #' @returns report text
 #' @export
 report_qmd <- function(module_output, paper = list()) {
+  # the checklist report has its own template and layout (report-checklist.R)
+  if (report_type() == "checklist") {
+    return(.report_checklist_qmd(module_output, paper))
+  }
+
   ## read in report template ----
   # report_type() (set for the call's duration by report(), or directly by
   # the caller -- see its own docs) picks which template builds the header:
@@ -958,6 +966,72 @@ report_qmd <- function(module_output, paper = list()) {
     gsub("[^a-z0-9_-]", "", x = _)
 }
 
+# A module's "How It Works" text, from its documentation: its description and
+# details, who developed it, and where it came from (an installed module's
+# repository and commit, or a built-in module's chapter in the manual), as
+# `text` (paragraphs); and its validation statement as a fenced div, as
+# `validation` (NULL when it has none). NULL when the module has no
+# documentation to read. Used by module_report() and the checklist report.
+.report_how_it_works <- function(module) {
+  tryCatch(
+    {
+      validation <- NULL
+      info <- module_info(module)
+
+      # set up validation section if tagged. Emit a native Quarto fenced div, not
+      # a raw <p>: raw HTML gets passed through by Pandoc wrapped in
+      # \if{html}{\out{...}}, and that wrapper leaked into the rendered report as
+      # literal "}}" / "\if{html}{\out{" around the validation text. A fenced div
+      # renders to <div class="validation"> cleanly and keeps the CSS hook.
+      m <- gregexpr("<validation>.*?</validation>", info$details)
+      if (m[[1]][1] > -1) {
+        validation <- regmatches(info$details, m) |>
+          _[[1]] |>
+          sub("<validation>\\s*", "::: {.validation}\nValidation: ", x = _) |>
+          sub("\\s*</validation>", "\n:::", x = _)
+      }
+
+      # get authors
+      author_ack <- tryCatch({
+        if (!is.null(info$author)) {
+          a <- info$author |>
+            gsub("\\s*\\(.*email\\{.+\\})", "", x = _)
+          authors <- if (length(a) < 3) {
+            paste(a, collapse = " and ")
+          } else {
+            n <- length(a)
+            paste0(paste(a[-n], collapse = ", "), " and ", a[n])
+          }
+          sprintf("This module was developed by %s", authors)
+        }
+      })
+
+      # remove validation section
+      details <- gsub("\\s*<validation>.*</validation>\\s*", "", info$details)
+
+      # a module from module_install() names its repository and commit, and
+      # has no chapter in the metacheck manual
+      if (is.null(info$source)) {
+        source_note <- NULL
+        chapter_link <- .module_chapter_link(module)
+      } else {
+        source_note <- sprintf(
+          "This module was installed from [%s](https://github.com/%s/tree/%s) (commit %s).",
+          info$source$repo, info$source$repo, info$source$sha,
+          substr(info$source$sha, 1, 7)
+        )
+        chapter_link <- NULL
+      }
+
+      list(text = c(info$description, details, author_ack, source_note, chapter_link),
+           validation = validation)
+    },
+    error = \(e) {
+      return(NULL)
+    }
+  )
+}
+
 #' Report from module output
 #'
 #' @param module_output the output of a `module_run()`
@@ -1002,63 +1076,12 @@ module_report <- function(module_output,
 
 
   # how it works
-  hiw <- tryCatch(
-    {
-      validation <- NULL
-      info <- module_info(module_output$module)
-
-      # set up validation section if tagged. Emit a native Quarto fenced div, not
-      # a raw <p>: raw HTML gets passed through by Pandoc wrapped in
-      # \if{html}{\out{...}}, and that wrapper leaked into the rendered report as
-      # literal "}}" / "\if{html}{\out{" around the validation text. A fenced div
-      # renders to <div class="validation"> cleanly and keeps the CSS hook.
-      m <- gregexpr("<validation>.*?</validation>", info$details)
-      if (m[[1]][1] > -1) {
-        validation <- regmatches(info$details, m) |>
-          _[[1]] |>
-          sub("<validation>\\s*", "::: {.validation}\nValidation: ", x = _) |>
-          sub("\\s*</validation>", "\n:::", x = _)
-      }
-
-      # get authors
-      author_ack <- tryCatch({
-        if (!is.null(info$author)) {
-          a <- info$author |>
-            gsub("\\s*\\(.*email\\{.+\\})", "", x = _)
-          authors <- if (length(a) < 3) {
-            paste(a, collapse = " and ")
-          } else {
-            n <- length(a)
-            paste0(paste(a[-n], collapse = ", "), " and ", a[n])
-          }
-          sprintf("This module was developed by %s", authors)
-        }
-      })
-
-      # remove validation section
-      details <- gsub("\\s*<validation>.*</validation>\\s*", "", info$details)
-
-      # a module from module_install() names its repository and commit, and
-      # has no chapter in the metacheck manual
-      if (is.null(info$source)) {
-        source_note <- NULL
-        chapter_link <- .module_chapter_link(module_output$module)
-      } else {
-        source_note <- sprintf(
-          "This module was installed from [%s](https://github.com/%s/tree/%s) (commit %s).",
-          info$source$repo, info$source$repo, info$source$sha,
-          substr(info$source$sha, 1, 7)
-        )
-        chapter_link <- NULL
-      }
-
-      c(info$description, details, author_ack, source_note, chapter_link) |>
-        collapse_section("How It Works", callout = "note")
-    },
-    error = \(e) {
-      return(NULL)
-    }
-  )
+  validation <- NULL
+  hiw <- .report_how_it_works(module_output$module)
+  if (!is.null(hiw)) {
+    validation <- hiw$validation
+    hiw <- collapse_section(hiw$text, "How It Works", callout = "note")
+  }
 
   # create collapsible boxes around substantial reports (> 300 char)
   # No inner <div> wrapper: it serves no CSS/JS purpose (confirmed against

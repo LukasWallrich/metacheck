@@ -231,36 +231,37 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
   if (grepl("osf\\.io", url, ignore.case = TRUE)) {
     pat <- tryCatch(osf_pat(), error = \(e) "")
     if (nzchar(pat %||% "")) {
-      # unrestricted_auth is what makes the token survive the redirect, and
-      # without it the token is useless for a private file.
+      # osf.io/download/<id>/ answers 302 to a REGIONAL file server --
+      # files.de-1.osf.io for a European project, files.osf.io for others --
+      # which needs the token for a private file (403 without it, verified
+      # 2026-08-13 on osf.io/download/854te/), and which redirects again, to
+      # a pre-signed address on the cloud storage (Oracle since 2026-10,
+      # #508). curl drops the Authorization header when a redirect crosses to
+      # another host, so the token would not reach the file server.
       #
-      # osf.io/download/<id>/ answers 302 to a REGIONAL storage host --
-      # files.de-1.osf.io for a European project, files.osf.io for others.
-      # curl drops the Authorization header when a redirect crosses to a
-      # different host (a sensible default: it stops a token leaking to
-      # wherever a redirect points). The OSF relies on that header being kept,
-      # so the storage host then answers 403 and the file never arrives.
-      #
-      # Verified 2026-08-13 on a real private file (osf.io/download/854te/,
-      # 30,461 bytes): 403 without this option, HTTP 200 and the full file
-      # with it. Public files are unaffected either way.
-      #
-      # The token is only sent to hosts matched above, all of them OSF's own,
-      # so allowing it to follow their internal redirect does not expose it to
-      # a third party.
+      # This used unrestricted_auth = TRUE, which made curl send the token to
+      # EVERY host a redirect led to, the cloud storage included: the token
+      # left the OSF, and Oracle refuses a pre-signed address that also has
+      # an Authorization header (HTTP 400, "The authorization mechanism you
+      # have provided is not supported"), so every OSF-stored file failed for
+      # a user with a token. Now the first redirect is asked for here, with
+      # the token and without following it, and the request goes straight to
+      # the file server, with the token; curl drops it at the storage host.
+      # The hop to the file server was made anyway, so the number of requests
+      # stays the same.
       req <- req |>
-        httr2::req_headers(Authorization = sprintf("Bearer %s", pat)) |>
-        httr2::req_options(unrestricted_auth = TRUE)
+        httr2::req_url(.osf_file_server_url(url, pat)) |>
+        httr2::req_headers(Authorization = sprintf("Bearer %s", pat))
     }
   } else if (grepl("zenodo\\.org", url, ignore.case = TRUE)) {
     sandbox <- grepl("sandbox\\.zenodo\\.org", url, ignore.case = TRUE)
     pat <- tryCatch(zenodo_pat(sandbox = sandbox), error = \(e) "")
     if (nzchar(pat %||% "")) {
-      # Zenodo also redirects a file request to its own storage host, so the
-      # token needs to survive that hop for the same reason as the OSF above.
+      # Zenodo serves a file itself (HTTP 200, no redirect; checked
+      # 2026-10-19), so the token reaches it without unrestricted_auth, which
+      # would also send it to any other host a redirect led to (#508).
       req <- req |>
-        httr2::req_headers(Authorization = sprintf("Bearer %s", pat)) |>
-        httr2::req_options(unrestricted_auth = TRUE)
+        httr2::req_headers(Authorization = sprintf("Bearer %s", pat))
     }
   } else if (grepl(.dataverse_host_regex(), url, ignore.case = TRUE)) {
     # Dataverse's token is per-installation (see .dataverse_pat()), unlike
@@ -300,6 +301,28 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
     }
   }
   req
+}
+
+# The OSF file server a download address on osf.io itself redirects to
+# (osf.io/download/<id>/ -> files.osf.io/v1/resources/...), asked for with the
+# token and without following the redirect, so the download can go there
+# directly with the token (see .auth_for_url()). Any other address -- the
+# file servers, the API, a redirect that leaves the OSF, no redirect, or a
+# failed request -- is returned as it is.
+.osf_file_server_url <- function(url, pat) {
+  host <- tolower(httr2::url_parse(url)$hostname %||% "")
+  if (!host %in% c("osf.io", "www.osf.io")) return(url)
+  resp <- tryCatch(
+    .mc_request(url) |>
+      httr2::req_headers(Authorization = sprintf("Bearer %s", pat)) |>
+      httr2::req_options(followlocation = FALSE) |>
+      httr2::req_error(is_error = \(resp) FALSE) |>
+      httr2::req_perform(),
+    error = \(e) NULL)
+  if (is.null(resp) || !httr2::resp_status(resp) %in% c(301, 302, 303, 307, 308)) return(url)
+  location <- httr2::resp_header(resp, "location") %||% ""
+  to <- tolower(tryCatch(httr2::url_parse(location)$hostname, error = \(e) "") %||% "")
+  if (grepl("(^|\\.)osf\\.io$", to)) location else url
 }
 
 # A 401 from Dryad almost always means the same thing: no API key was set, and
@@ -712,7 +735,7 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
 # Download several files in parallel, with no proactive throttle. Only used for
 # hosts verified not to need one: OSF's `download_url` and Zenodo's file `self`
 # links both resolve (after a redirect through the host's own API) to
-# pre-signed URLs on a cloud storage backend (OSF: Google Cloud Storage; the
+# pre-signed URLs on a cloud storage backend (OSF: Google Cloud Storage, Oracle Cloud since 2026-10, #508; the
 # redirect is per-file, so there is no shared per-host bottleneck the way
 # api.osf.io or Waterbutler's own listing endpoints have). A live burst of 23
 # concurrent OSF download_url requests returned all-200 with no rate-limit
