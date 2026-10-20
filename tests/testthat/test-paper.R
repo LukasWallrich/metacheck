@@ -149,9 +149,11 @@ test_that("paperlist", {
                       merge_duplicates = TRUE)
   expect_equal(names(merged), names(psychsci[1:3]))
 
-  # don't merge duplicate papers
+  # don't merge duplicate papers; the second copy is renamed "~2" (U208)
   merged <- paperlist(psychsci[1:2], psychsci[2:3])
-  expect_equal(names(merged), names(psychsci)[c(1:2,2:3)])
+  expect_equal(names(merged), c(names(psychsci)[1:2],
+                                paste0(names(psychsci)[2], "~2"),
+                                names(psychsci)[3]))
 })
 
 

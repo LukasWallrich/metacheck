@@ -61,12 +61,16 @@ extract_p_values <- function(paper) {
     "\u226B" # >>
   ) |> paste(collapse = "")
 
+  # p may be written "ps", "p's" or "p-values", and scientific notation may
+  # use the multiplication sign, leave out "^" and use the Unicode minus:
+  # "ps < .05" gave no row, and "p = 1.8 \u00d7 10 -6" was read as 1.8
+  # (U204, U205)
   pattern <- paste0(
-    "\\b[pP]-?(value)?\\s*", # ways to write p (or P)
+    "\\b[pP](?:-?values?|s|['\u2019]s)?\\s*", # ways to write p (or P)
     "[", operators, "]{1,2}\\s*", # 1-2 operators
     "(n\\.?s\\.?|\\d?\\.\\d+)", # ns or valid numbers
-    "\\s*(e\\s*-\\d+)?", # also match scientific notation
-    "(\\s*[x\\*]\\s*10\\s*\\^\\s*-\\d+)?"
+    "\\s*(e\\s*[-\u2212]\\d+)?", # also match scientific notation
+    "(\\s*[x\\*\u00d7]\\s*10\\s*\\^?\\s*[-\u2212]\\s*\\d+)?"
   )
 
   p <- text_search(paper, pattern,
@@ -83,7 +87,8 @@ extract_p_values <- function(paper) {
   s <- strsplit(p$text, paste0("\\s*[", operators, "]{1,2}\\s*"))
   pvals <- sapply(s, \(x) x[[2]]) |>
     gsub("\\s", "", x = _) |>
-    gsub("[x*]10\\^", "e", x = _)
+    gsub("\u2212", "-", x = _) |>
+    gsub("[x*\u00d7]10\\^?", "e", x = _)
   p$p_value <- suppressWarnings(as.numeric(pvals))
 
   return(p)
@@ -166,7 +171,8 @@ extract_eq <- function(paper) {
   # precede a number ("sample size n = 40" -> "size n", "mean age years = 25"
   # -> "age years" -- confirmed these are what the engine already backtracks
   # to for the bare, unscoped case).
-  bare_subscript <- paste0("[gd]\\s+(?:av|z|rm|s)(?=\\s*[", op, "])")
+  # \\b: the g or d is a word of its own, else "and z = 3.1" was "d z" (U218)
+  bare_subscript <- paste0("\\b[gd]\\s+(?:av|z|rm|s)(?=\\s*[", op, "])")
   pattern <- paste0(
     "(?:(Hedge.{0,3}|Cronbach.{0,2}|Cohen.{0,2}|\\d{1,2}%)\\s+)?", # common prefix
     "(?:", bare_subscript, "|",
@@ -182,9 +188,12 @@ extract_eq <- function(paper) {
     "\\s*", # statistic name
     "(?:\\(", df_inner, "\\))?\\s*", # optional df-shaped parentheses
     "[", op , "]{1,3}\\s*", # 1-3 operators
-    "([0-9\\.,+-]*[0-9]|\\[[^\\]]+\\]|n\\.?\\s*s\\.?)", # valid numbers or anything in [] or NS
-    "\\s*(e\\s*-\\d+)?", # also match scientific notation
-    "(\\s*[x\\*]\\s*10\\s*\\^\\s*-\\d+)?"
+    # valid numbers or anything in [] or NS; a number may have the Unicode
+    # minus, a leading one with a space after it ("r = \u2212 0.12"): those
+    # statistics were lost (U205)
+    "((?:\u2212\\s?)?[0-9\\.,+\u2212-]*[0-9]|\\[[^\\]]+\\]|n\\.?\\s*s\\.?)",
+    "\\s*(e\\s*[-\u2212]\\d+)?", # also match scientific notation
+    "(\\s*[x\\*\u00d7]\\s*10\\s*\\^?\\s*[-\u2212]\\s*\\d+)?"
   )
 
   eq <- paper |>
@@ -229,7 +238,9 @@ extract_eq <- function(paper) {
   s <- strsplit(eq$text, paste0("\\s*[", op, "]{1,2}\\s*"))
   eq$lhs <- sapply(s, \(x) x[[1]]) |> trimws()
 
-  eq$rhs <- sapply(s, \(x) x[[2]]) |> trimws()
+  # the Unicode minus as "-" ("\u2212 0.12" gives "-0.12"; U205)
+  eq$rhs <- sapply(s, \(x) x[[2]]) |> trimws() |>
+    gsub("\u2212\\s?", "-", x = _)
   #   gsub("\\s", "", x = _) |>
   #   gsub("[x*]10\\^", "e", x = _)
   # eq$rhs <- suppressWarnings(as.numeric(rhs))

@@ -124,6 +124,21 @@ test_that("extract_p_values", {
 })
 
 
+test_that("extract_p_values reads ps, p's, x 10 and the Unicode minus (U204, U205)", {
+  # "ps < .05" gave no row, and "p = 1.8 x 10 -6" was read as 1.8
+  txt <- c("All ps < .05.", "Both p's > .10.", "Both p\u2019s > .10.",
+           "The p-values < .001.", "p = 1.8 \u00d7 10 -6", "p = 6.1 \u00d7 10\u22125",
+           "p=2.14e\u2212213", "p = 5.0 x 10^-2")
+  pv <- extract_p_values(txt)
+  expect_equal(pv$p_value, c(.05, .10, .10, .001, 1.8e-6, 6.1e-5, 2.14e-213, .05))
+})
+
+test_that("extract_eq reads the Unicode minus, and 'and z' is z (U205, U218)", {
+  eq <- extract_eq("t(28) = \u22122.15, r(98) = \u2212.32, r = \u2212 0.12, and z = 3.1.")
+  expect_equal(eq$lhs, c("t", "r", "r", "z"))
+  expect_equal(eq$rhs, c("-2.15", "-.32", "-0.12", "3.1"))
+})
+
 test_that("extract_eq", {
   expect_true(is.function(metacheck::extract_eq))
   expect_no_error(helplist <- help(extract_eq, metacheck))
