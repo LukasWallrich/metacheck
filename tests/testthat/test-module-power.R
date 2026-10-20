@@ -633,3 +633,28 @@ test_that("power reports paragraphs the LLM could not check (#475)", {
   expect_equal(mo$summary_table$power_unchecked[order(mo$summary_table$paper_id)],
                c(0, 1)[order(paper_id(paper))])
 })
+
+test_that("power's fallback uses the module's own schema, and a field no answer gives is missing (U108)", {
+  # the fallback downloaded its schema from scienceverse.org (failing
+  # offline); a field missing from every answer was skipped by any_of(),
+  # which could mark the analysis complete
+  llm_use(TRUE)
+  llm_model("groq/llama-3.3-70b-versatile")
+  withr::local_options(metacheck.llm.cache = FALSE)
+  paper <- test_paper(text = "An a priori power analysis indicated 64 participants per group, d = 0.5.")
+  prompts <- character(0)
+  testthat::local_mocked_bindings(
+    chat = function(..., system_prompt = NULL) {
+      prompts <<- c(prompts, system_prompt %||% "")
+      structure(list(
+        chat_structured = function(text, type) stop("HTTP 400: json_validate_failed"),
+        chat = function(text, echo = FALSE) paste0(
+          "```json\n[{\"power_type\":\"apriori\",\"statistical_test\":\"unpaired t-test\",",
+          "\"sample_size\":128,\"effect_size\":0.5,\"effect_size_metric\":\"Cohen's d\"}]\n```")
+      ), class = "Chat")
+    }, .package = "ellmer")
+  mo <- suppressWarnings(module_run(paper, "power"))
+  expect_equal(mo$table$power_type, "apriori")
+  expect_false(isTRUE(mo$table$complete))    # alpha, power and software were not given
+  expect_true(any(grepl("\"title\": \"Power Analyses\"", prompts, fixed = TRUE)))
+})

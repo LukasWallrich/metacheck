@@ -462,9 +462,9 @@ power <- function(paper, seed = 8675309) {
 
   ## fallback: prompt-instructed JSON + json_expand ----
   preface <- "Identify and classify power analyses from exerpts of scientific manuscripts. Use null when information is missing, do not invent values. Only use 'other' if a value not in the enumerated options can be identified. There may be no power analysis in the text, or more than one. If the paragraph only references a power analysis implied to be presented elsewhere in the paper, or explicitly states that no power analysis was run, classify power_type as 'none'. Return an array of objects, as defined by the JSON schema below, in the same order as in the paragraphs, bracketed by ```json and ```."
-  schema_text <- readLines("https://scienceverse.org/schema/power.json") |>
-    paste(collapse = "\n")
-  system_prompt <- paste(preface, schema_text, sep = "\n\n")
+  # the schema defined below, not a download from scienceverse.org: offline
+  # the fallback failed ("cannot open the connection", U108)
+  system_prompt <- paste(preface, schema, sep = "\n\n")
 
   llm_results <- llm(
     text = potential_power,
@@ -475,7 +475,11 @@ power <- function(paper, seed = 8675309) {
   )
 
   table <- llm_results |>
-    json_expand(suffix = c("", ".power")) |>
+    json_expand(suffix = c("", ".power"))
+  # a field missing from every answer is missing information, not complete:
+  # any_of() skipped it, which could give a wrong green (U108)
+  for (col in setdiff(llm_cols, names(table))) table[[col]] <- rep(NA, nrow(table))
+  table <- table |>
     dplyr::rowwise() |>
     dplyr::mutate(complete = !any(dplyr::across(dplyr::any_of(llm_cols), is.na))) |>
     dplyr::ungroup()
