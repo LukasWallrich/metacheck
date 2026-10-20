@@ -186,3 +186,20 @@ test_that("papers_metadata errors for an unknown corpus name", {
     "No metadata.json found"
   )
 }, "mock")
+
+test_that("papers_available without .rds assets, and convert() of XML offline (U18)", {
+  # a release without .rds files stopped papers_available(); convert() of XML
+  # looked up conversion servers it does not use, so it stopped offline
+  local({
+    local_mocked_bindings(req_perform = function(req, ...) httr2::response_json(body = list(
+      list(tag_name = "x-2026-01-01", published_at = "2026-01-01",
+           assets = list(list(name = "a.zip", size = 1, browser_download_url = "u"))))),
+      .package = "httr2")
+    expect_equal(nrow(papers_available()), 0)
+  })
+  xml <- list.files(c(system.file("extdata", package = "metacheck"), test_path("fixtures")),
+                    "\\.xml$", full.names = TRUE, recursive = TRUE)[1]
+  skip_if(is.na(xml), "no XML file to convert")
+  local_mocked_bindings(online = function(...) FALSE, .surf_isalive = function(...) FALSE)
+  expect_no_error(convert(xml, withr::local_tempfile(fileext = ".json")))
+})
