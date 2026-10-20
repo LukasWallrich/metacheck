@@ -148,6 +148,10 @@
   s <- sub("[^0-9.eE+-].*$", "", s)
   dm <- regmatches(s, regexpr("\\.[0-9]+", s))
   dec <- if (length(dm)) nchar(dm) - 1L else 0L
+  # the exponent counts: 1.5e-05 has 6 decimals, not 1, which gave a
+  # tolerance of 0.05 that matched almost any small value (U143)
+  ex <- regmatches(s, regexpr("[eE][+-]?[0-9]+$", s))
+  if (length(ex)) dec <- max(0L, dec - as.integer(sub("^[eE]", "", ex)))
   s2 <- sub("^(-?)\\.", "\\10.", s)
   num <- suppressWarnings(as.numeric(s2))
   list(num = num, dec = dec, censored = cens)

@@ -267,9 +267,12 @@
   out <- lapply(seq_len(nrow(paper$table)), function(i) {
     content <- paper$table$contents[[i]]
     if (is.null(content)) return(list())
-    caption <- if (.is_bibr12(paper)) {
+    # the table's own caption whenever it has one (U143); the text rows that
+    # share its section_id only for an older-format paper without one
+    own <- if ("caption" %in% names(paper$table)) paper$table$caption[[i]] else NA_character_
+    caption <- if (.is_bibr12(paper) || (!is.null(own) && !is.na(own) && nzchar(own))) {
       # bibr 12.x: section_id is the section the table is printed in
-      paper$table$caption[[i]]
+      own
     } else {
       .table_caption(paper, paper$table$section_id[[i]])
     }

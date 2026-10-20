@@ -385,3 +385,10 @@ test_that("stat_output_validate reads a JSON string (U136)", {
   expect_false(any(grepl("not valid JSON", v$issues)))
   expect_true(any(grepl("not valid JSON", stat_output_validate("not json")$issues)))
 })
+
+test_that(".norm_value counts the exponent in a number's decimals (U143)", {
+  # 1.5e-05 had 1 decimal, so its tolerance of 0.05 matched almost any small value
+  expect_equal(.norm_value("1.5e-05")$dec, 6L)
+  expect_equal(.norm_value("0.03")$dec, 2L)
+  expect_equal(.norm_value("2.5E+03")$dec, 0L)
+})

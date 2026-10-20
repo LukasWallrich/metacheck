@@ -87,6 +87,7 @@
 * `github_links()` and `gitlab_links()` find hyperlinks in papers read from a bibr 12.x export or converted with `grobid_to_bibr(schema_version = "12.0")`: they searched the url table's first column, which in those papers is the number `url_id`, so no link was found and `repo_check` missed every GitHub and GitLab repository linked there (#507: U196)
 * `text_search(return = "section")` keeps each section's header; it was NA, so `coi_check_oi` tables named no section (#507: U80)
 * An SPSS box plot drawn from case data is decoded; the decoder always stopped (it took the absolute value of the text category column), so such box plots were dropped with a warning (#507: U144)
+* `match_reported_output()` counts the exponent in a reported number's decimals: "1.5e-05" had one decimal, so its tolerance (0.05) matched almost any small output value. A table's own caption is used whenever it has one, also for an older-format paper (#507: U143)
 
 # metacheck 0.4.0
 
