@@ -225,3 +225,29 @@ test_that("zenodo_upload rejects a bad token before uploading anything", {
   expect_error(zenodo_upload(folder, ask = FALSE),
                "did not accept the token")
 })
+
+test_that("zenodo_upload(as_zip = TRUE) leaves skipped files out of the zip (U47)", {
+  # the zip was built from the whole folder, so files reported as skipped
+  # (upload_osf_metadata = FALSE, max_file_size) were uploaded inside it
+  withr::local_options(metacheck.zenodo.pat.sandbox = "fake-token")
+  folder <- file.path(withr::local_tempdir(), "Study")
+  dir.create(file.path(folder, "_osf_metadata"), recursive = TRUE)
+  writeLines("a,b", file.path(folder, "data.csv"))
+  writeLines(strrep("x", 3e6), file.path(folder, "big.txt"))
+  writeLines("{}", file.path(folder, "_osf_metadata", "project.json"))
+  unlink(file.path(tempdir(), "metacheck_zip_1"), recursive = TRUE)
+  httr2::local_mocked_responses(function(req) {
+    create <- identical(req$method, "POST") && grepl("deposit/depositions$", req$url)
+    body <- if (create)
+      '{"id": 1, "links": {"bucket": "https://sandbox.zenodo.org/api/files/b1"}, "metadata": {}}'
+    else '{"id": 1, "links": {}, "metadata": {}}'
+    httr2::response(if (create) 201 else 200,
+                    headers = list(`Content-Type` = "application/json"), body = charToRaw(body))
+  })
+  res <- suppressWarnings(suppressMessages(
+    zenodo_upload(folder, ask = FALSE, as_zip = TRUE, split_materials = FALSE,
+                  upload_osf_metadata = FALSE, max_file_size = 1, publish = FALSE)))
+  zf <- file.path(tempdir(), "metacheck_zip_1", "Study.zip")
+  expect_equal(utils::unzip(zf, list = TRUE)$Name, "Study/data.csv")
+  expect_equal(res$files_skipped, 1L)
+})
