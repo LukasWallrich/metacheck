@@ -242,3 +242,20 @@ test_that("all_urls", {
   ids <- mod_output$table$paper_id |> unique()
   expect_contains(names(paper), ids)
 })
+
+test_that("every module runs on an empty paper or paper list (U79)", {
+  # an empty paper list stopped nearly every module (paper_table() returned
+  # no columns, text_search() logical ones), and an empty paper stopped the
+  # repository modules, ethics_check, power and prereg_check
+  skip_if_quick()
+  llm_use(FALSE)
+  for (m in module_list()$name) {
+    for (input in list(paper(), paperlist(), list())) {
+      err <- tryCatch({
+        suppressWarnings(suppressMessages(module_run(input, m)))
+        NULL
+      }, error = function(e) conditionMessage(e))
+      expect_null(err, label = m)
+    }
+  }
+})

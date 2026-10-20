@@ -335,3 +335,21 @@ test_that("paper_write", {
   paper2 <- read(json_path)
   expect_setequal(names(paper), names(paper2))
 })
+
+test_that("paper_table() of an empty paper list has typed columns (U79)", {
+  tb <- paper_table(paperlist(), "text")
+  expect_equal(nrow(tb), 0)
+  expect_type(tb$text, "character")
+  expect_type(tb$paper_id, "character")
+  expect_equal(names(paper_table(paperlist(), "bib", c("bib_id", "doi"))),
+               c("bib_id", "doi", "paper_id"))
+})
+
+test_that(".per_paper_table() has one row per paper, none for no papers (U79)", {
+  st <- metacheck:::.per_paper_table(paperlist(), repo_n = 0, files_n = NA)
+  expect_equal(nrow(st), 0)
+  expect_named(st, c("paper_id", "repo_n", "files_n"))
+  p <- demopaper()
+  st <- metacheck:::.per_paper_table(p, repo_n = 0)
+  expect_equal(st, data.frame(paper_id = paper_id(p), repo_n = 0))
+})

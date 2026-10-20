@@ -33,7 +33,9 @@ module_run <- function(paper, module, ...) {
     prev$prev_outputs <- NULL
     .__mc__prev_outputs[[prev$module]] <- prev
   } else if (.is_paper_list(paper)) {
-    summary_table <- data.frame(paper_id = names(paper))
+    # names(list()) is NULL, which gave a table without a paper_id column, and
+    # the join with the module's summary stopped (U79)
+    summary_table <- data.frame(paper_id = names(paper) %||% character(0))
   } else {
     summary_table <- data.frame(paper_id = paper$paper_id)
   }

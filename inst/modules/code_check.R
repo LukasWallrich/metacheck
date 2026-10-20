@@ -234,9 +234,8 @@ code_check <- function(paper, local_path = NULL,
       # na_replace backfills the other normal-path count columns to 0 the
       # same way it already does for a paper with code_n = 0 sitting inside
       # a mixed paperlist that takes the normal path.
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        code_n = 0
+      summary_table = .per_paper_table(paper,
+                code_n = 0
       ),
       na_replace = c(code_n = 0)
     )

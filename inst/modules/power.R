@@ -169,9 +169,9 @@ power <- function(paper, seed = 8675309) {
     }
     report <- c(summary_text, collapse_section(guidance))
 
-    summary_table <- data.frame(paper_id = paper_id(paper))
-    summary_table$power_n <- 0
-    summary_table$power_complete <- NA_integer_
+    # no rows for an empty paper or list ("replacement has 1 row", U79)
+    summary_table <- .per_paper_table(paper, power_n = 0,
+                                      power_complete = NA_integer_)
   } else {
     ## power detected ----
     # check for observed power and add text/type

@@ -69,9 +69,8 @@ reg_check <- function(paper,
       traffic_light = "na",
       summary_text = "No preregistrations were found to compare with the paper.",
       na_replace = 0,
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        regcheck_deviations = 0
+      summary_table = .per_paper_table(paper,
+                regcheck_deviations = 0
       )
     )
     return(resp)
@@ -128,9 +127,8 @@ reg_check <- function(paper,
         ", but the RegCheck comparison failed",
         if (!is.null(rc_error)) paste0(": ", rc_error) else "", "."
       ),
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        regcheck_deviations = NA_real_
+      summary_table = .per_paper_table(paper,
+                regcheck_deviations = NA_real_
       )
     )
     return(resp)

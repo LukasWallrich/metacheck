@@ -37,9 +37,8 @@ prereg_check <- function(paper) {
     resp <- list(
       traffic_light = "na",
       summary_text = "No preregistration links were found.",
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        preregistration = 0
+      summary_table = .per_paper_table(paper,
+                preregistration = 0
       )
     )
     return(resp)
@@ -73,9 +72,8 @@ prereg_check <- function(paper) {
         nrow(links_osf), nrow(links_osf) |> plural()
       ),
       na_replace = 0,
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        preregistration = 0
+      summary_table = .per_paper_table(paper,
+                preregistration = 0
       )
     )
     return(resp)
@@ -131,9 +129,8 @@ prereg_check <- function(paper) {
         length(inaccessible_regs), length(inaccessible_regs) |> plural()
       ),
       na_replace = 0,
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        preregistration = 0
+      summary_table = .per_paper_table(paper,
+                preregistration = 0
       ),
       report = sprintf(
         "The following registration link%s could not be accessed and may be private, embargoed, or withdrawn: %s.",

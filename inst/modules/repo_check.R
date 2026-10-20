@@ -249,9 +249,15 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # PsychArchives with no OSF among them. Fall back to the paper's own id,
   # which is what this value is for anyway (it labels rows added back later)
   # and is exactly what every other row in `repos` carries.
+  # An empty paper or paper list has no id at all, and [[1]] stopped with
+  # "subscript out of bounds" (U79), so this is NA then.
+  first_paper_id <- function() {
+    ids <- paper_id(paper)
+    if (length(ids) > 0) ids[[1]] else NA_character_
+  }
   osf_paper_ids <- repos$paper_id[repos$repo_type == "osf"]
   osf_paper_id <- if (length(osf_paper_ids) > 0) osf_paper_ids[[1]] else
-    paper_id(paper)[[1]]
+    first_paper_id()
 
   osf_meta_df <- data.frame(repo_url = character(0), doi = character(0),
                             license = character(0))
@@ -1549,7 +1555,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       }, character(1))
     }
     local_repo <- data.frame(
-      paper_id = paper_id(paper)[[1]],
+      paper_id = first_paper_id(),
       repo_url = local_path,
       repo_type = "local",
       repo_error = NA_character_
@@ -1562,9 +1568,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     info <- list(
       traffic_light = "na",
       summary_text = "We found no links to repositories on the Open Science Framework, Github, ResearchBox, DSpace, Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, DataONE, or LDbase.",
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        repo_n = 0,
+      summary_table = .per_paper_table(paper,
+                repo_n = 0,
         files_n = NA,
         files_data = NA,
         files_code = NA,

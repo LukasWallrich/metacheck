@@ -526,6 +526,11 @@ paper_table <- function(paper, table, cols = NULL) {
     if (!.is_paper(paper)) stop("paper must be a paper or paperlist object.")
     paper <- list(paper)
   }
+  # An empty paper list has no tables to bind, so the result had no columns,
+  # or logical ones once text_search() added them: joins on paper_id and
+  # string functions on text stopped nearly every module (U79). An empty
+  # paper's tables are typed and have no rows.
+  if (length(paper) == 0) paper <- list(paper())
 
   # add paper_id to tables
   table_list <- lapply(paper, `[[`, table)
@@ -561,6 +566,19 @@ paper_table <- function(paper, table, cols = NULL) {
 #' }
 paper_id <- function(paper) {
   paper_table(paper, "info", "paper_id")$paper_id
+}
+
+# A module's summary table with one row per paper and the same value in every
+# row of each column: .per_paper_table(paper, repo_n = 0, files_n = NA). For
+# an empty paper or paper list it has no rows; data.frame(paper_id =
+# character(0), repo_n = 0) stopped with "arguments imply differing number of
+# rows: 0, 1" (U79).
+.per_paper_table <- function(paper, ...) {
+  out <- data.frame(paper_id = paper_id(paper) %||% character(0),
+                    stringsAsFactors = FALSE)
+  cols <- list(...)
+  for (nm in names(cols)) out[[nm]] <- rep(cols[[nm]], length.out = nrow(out))
+  out
 }
 
 #' Reference and DOI table
