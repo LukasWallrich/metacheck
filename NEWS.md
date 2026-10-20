@@ -49,6 +49,7 @@
 * An RTF codebook reaches the language model with its line breaks and its accented and escaped characters, without the font and colour tables; it was one line that began with the font table, with `\'e9`, `\u233` and escaped braces dropped (#507: U215)
 * `reproducibility_check()` reads R's "there is no package called" error with curly quotes, as R writes it in a UTF-8 locale, so a script that needs a package that failed to install is "dependency_unavailable", not "errored" (#507: U132)
 * `reproducibility_check()` keeps a named argument's name when it sends a write to the output folder: `save(a, b, file = "ab.RData")` had become `save(a, b, "<out>/ab.RData")`, which saves the path as another object (#507: U134)
+* `reproducibility_check()` finds the arguments after a file name in `paste()`, `paste0()`, `sprintf()` or `file.path()` where the file name ends, not where the call starts (#507: U133). `paste(wd, "data.csv", sep = "/")` was not recognised as a built path, so only its file name was replaced, giving "wd/<sandbox path>"; the whole call is now replaced. `paste0(path, ".R")` was taken as a reference to a file ".R"
 
 # metacheck 0.4.0
 

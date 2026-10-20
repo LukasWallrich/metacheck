@@ -286,10 +286,12 @@ repro_dependencies <- function(code_text, lang = "R") {
     # plain literal in a no-op wrapper — code_file_refs()'s plain-literal path
     # already handles it correctly, and there is no trailing-argument-orphaning
     # risk to fix. `args_text` still carries the quotes around fmt (unlike
-    # `fmt` itself, stripped above), so the remainder is found by skipping
-    # `quoted_len` characters rather than re-matching the (already-consumed)
-    # quoted text.
-    after_fmt <- substr(args_text, quoted_len + 1, nchar(args_text))
+    # `fmt` itself, stripped above), so the remainder starts where the quoted
+    # string ends. It was counted from the start of `args_text`, so a string
+    # that is not the first argument was misread: `paste(wd, "data.csv", sep =
+    # "/")` was not a format call (only its literal was rewritten, giving
+    # "wd/<target>"), and `paste0(path, ".R")` was one, for a file ".R" (U133)
+    after_fmt <- substr(args_text, as.integer(m) + quoted_len, nchar(args_text))
     if (!grepl("^\\s*,", after_fmt, perl = TRUE)) return(NULL)
 
     line <- 1L + lengths(regmatches(substr(joined, 1, starts[k]),

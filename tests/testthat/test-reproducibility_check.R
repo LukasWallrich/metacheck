@@ -668,6 +668,16 @@ test_that(".repro_redirect_writes keeps a named argument's name (U134)", {
                  'write.csv(df, "{{REPRO_OUTPUT}}out.csv")'))
 })
 
+test_that(".repro_format_call_refs reads the arguments after the file name, wherever it is (U133)", {
+  # the arguments after the quoted string were counted from the start of the
+  # call, so a file name that is not the first argument was misread
+  res <- .repro_format_call_refs(c('a <- read.csv(paste(wd, "data.csv", sep = "/"))',
+                                   'b <- source(paste0(path, ".R"))',
+                                   'c <- read.csv(sprintf("%s/x.csv", wd))'))
+  expect_equal(res$call_text, c('paste(wd, "data.csv", sep = "/")',
+                                'sprintf("%s/x.csv", wd)'))
+})
+
 test_that("repro_write_scripts redirects a literal write target into output/", {
   code_list <- list("analysis.R" = 'write.csv(x, "results/out.csv")')
   rewrite_list <- list("analysis.R" = data.frame(
