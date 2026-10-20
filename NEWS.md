@@ -72,6 +72,8 @@
 * `codebook_check` merges scale labels that differ only in capitals and extra words ("Emotion Recognition", "emotion recognition task"): capitals were removed before the labels were lower-cased. With `codebook_max_calls = 0` (or when the call cap is reached), the scale groups of every file are still listed; the listing stopped after the first file (#507: U92)
 * `prereg_check` joins an OSF registration to its paper by the OSF id: a link written with http://, in capitals, with a view_only key or with a path matched no paper (paper_id NA, every paper counting 0), and a link given twice counted its registration twice. A registration that cannot be fetched is named by the paper's own link, not the OSF API address (#507: U110)
 * `prereg_check` reads the answers of the "Pre-Registration in Social Psychology" template by their exact key: a missing answer took the answer of a longer key that starts the same ("84-5" read "84-56"). A template label containing U+FFFE or U+FFFF no longer stops the module (#507: U111)
+* `repo_check` de-duplicates files one by one: a remote file by its URL and path, a local file by its location. The URL and the path were tested separately, so a file was dropped when its URL appeared on one other row and its path on another (#507: U121)
+* `repo_check` leaves out every private OSF file, not only when it is the listing's one row; and a local file that `file_category()` cannot place takes its extension's type, so a local .zip or .tar.gz counts as an archive file, as the same file in a repository does (#507: U123)
 
 # metacheck 0.4.0
 

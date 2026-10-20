@@ -56,7 +56,13 @@ local_files <- function(path, recursive = FALSE) {
 
   file_names <- basename(all_paths)
   file_sizes <- file.size(all_paths)
+  # a file file_category() cannot place takes its extension's type, as a
+  # repository's listing does: a local .zip or .tar.gz was not counted as
+  # an archive (U123)
   file_types <- file_category(file_names)$file_category
+  ext_type <- metacheck::file_types$type[
+    match(tolower(tools::file_ext(file_names)), metacheck::file_types$ext)]
+  file_types <- ifelse(is.na(file_types), ext_type, file_types)
 
   data.frame(
     repo_url = path,

@@ -153,3 +153,12 @@ test_that("local_files file without extension gets NA type", {
   expect_true(is.na(make_row$file_type))
 })
 
+
+test_that("a local file file_category() cannot place takes its extension's type (U123)", {
+  # a local .zip or .tar.gz had file_type NA, so it was not counted as an archive
+  d <- withr::local_tempdir()
+  file.create(file.path(d, c("a.zip", "b.tar.gz", "c.png")))
+  lf <- local_files(d)
+  expect_equal(lf$file_type[match(c("a.zip", "b.tar.gz", "c.png"), lf$file_name)],
+               c("archive", "archive", "image"))
+})

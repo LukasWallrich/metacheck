@@ -741,3 +741,22 @@ test_that("an invalid OSF link is reported, and a nameless file does not stop th
   out <- check_file_naming(c(NA, "my file.csv"), c(NA, "my file.csv"))
   expect_equal(out$file_name, "my file.csv")
 })
+
+test_that("repo_check leaves out private files row by row, and keeps distinct files with repeated fields (U121, U123)", {
+  # !isFALSE(public) tested the whole column; and duplicated(url) &
+  # duplicated(path), tested separately, dropped one project's readme.txt
+  # because another project had a file with the same (missing) URL and path
+  osf_info_mock <- function(osf_url, recursive = TRUE, pb = NULL, cache = FALSE, ...) {
+    data.frame(osf_url = osf_url, osf_type = c("nodes", "files", "files"),
+               parent = NA_character_, kind = c(NA, "file", "file"),
+               public = c(TRUE, TRUE, FALSE), name = c(NA, "readme.txt", "secret.csv"),
+               path = c(NA, "/readme.txt", "/secret.csv"),
+               download_url = NA_character_, size = c(NA, 10, 10),
+               filetype = c(NA, "text", "data"), provider = c(NA, "osfstorage", "osfstorage"))
+  }
+  local_mocked_bindings(online = \(...) TRUE, osf_info = osf_info_mock)
+  paper <- test_paper(text = "Data: https://osf.io/aaaaa and https://osf.io/bbbbb")
+  mo <- module_run(paper, "repo_check", peek_zips = FALSE)
+  expect_false("secret.csv" %in% mo$table$file_name)
+  expect_equal(sum(mo$table$file_name == "readme.txt"), 2)
+})

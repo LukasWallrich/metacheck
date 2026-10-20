@@ -294,8 +294,10 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
 
       # "kind" only in table if there are files
       if ("kind" %in% names(osf_info)) {
+        # per row: !isFALSE(public) tested the whole column, so a private file
+        # was left out only when it was the listing's one row (U123)
         osf_file_list <- osf_info |>
-          dplyr::filter(kind == "file", !isFALSE(public))
+          dplyr::filter(kind == "file", !(public %in% FALSE))
 
         # Files found via a registration are attributed to the project it was
         # registered from (the real, reusable location), not the registration
@@ -410,7 +412,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         # (same repo_url + file_url + file_path).
         if ("kind" %in% names(parent_info)) {
           parent_file_list <- parent_info |>
-            dplyr::filter(kind == "file", !isFALSE(public))
+            dplyr::filter(kind == "file", !(public %in% FALSE))
           if (nrow(parent_file_list) > 0) {
             osf_files_df <- dplyr::bind_rows(
               osf_files_df,
@@ -1628,8 +1630,16 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (nrow(all_files) > 0) {
     file_path_dedup <- if ("file_path" %in% names(all_files))
       all_files$file_path else all_files$file_name
-    dupes <- duplicated(all_files$file_url) &
-      duplicated(file_path_dedup)
+    # Per file, not two separate tests: duplicated(url) & duplicated(path)
+    # dropped a file whose URL and path each appeared on OTHER rows (U121).
+    # A remote file is the same file when URL and path are; a local one when
+    # its location is.
+    loc <- all_files$file_location %||% rep(NA_character_, nrow(all_files))
+    dedup_key <- ifelse(!is.na(all_files$file_url),
+                        paste("url", all_files$file_url, file_path_dedup, sep = "\x01"),
+                 ifelse(!is.na(loc), paste("loc", loc, sep = "\x01"),
+                        paste("path", all_files$repo_url, file_path_dedup, sep = "\x01")))
+    dupes <- duplicated(dedup_key)
     all_files <- all_files[!dupes, ]
     # keep repos with explicit errors (e.g. gated/private) in summary/reporting
     in_files <- repos$repo_url %in% all_files$repo_url | !is.na(repos$repo_error)
