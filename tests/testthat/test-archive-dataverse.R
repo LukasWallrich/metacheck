@@ -97,6 +97,43 @@ test_that(".dataverse_info", {
   expect_equal(length(info$files[[1]]), 1)
 })
 
+test_that(".dataverse_info reads a plain-string licence and refuses a string data (U34)", {
+  # an older installation sends the licence as a string: $name on it stopped
+  # dataverse_info() for every dataset in the call
+  answer <- NULL
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls, msg = NULL, req_func = identity) {
+      list(structure(list(status = 200, body = charToRaw(
+        jsonlite::toJSON(answer, auto_unbox = TRUE))), class = "httr2_response"))
+    }
+  )
+  testthat::local_mocked_bindings(
+    resp_status = function(resp) resp$status,
+    resp_body_json = function(resp) jsonlite::fromJSON(rawToChar(resp$body), simplifyVector = FALSE),
+    .package = "httr2"
+  )
+  answer <- list(status = "OK", data = list(
+    persistentUrl = "https://doi.org/10.7910/DVN/ABC123",
+    latestVersion = list(license = "CC0 1.0")))
+  info <- .dataverse_info("dataverse.harvard.edu", "10.7910/DVN/ABC123")
+  expect_equal(info$license, "CC0 1.0")
+  expect_null(info$error)
+
+  answer <- list(status = "OK", data = "not a dataset")
+  info <- .dataverse_info("dataverse.harvard.edu", "10.7910/DVN/ABC123")
+  expect_equal(info$error, "parse_error")
+})
+
+test_that("a persistentId that decodes to invalid UTF-8 gives no DOI (U39)", {
+  # it stopped the parse for every URL in the call, and the bare-DOI fallback
+  # then cut the DOI at its "%" ("10.7910/DVN/AB")
+  urls <- c("https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/GGDUND",
+            "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/AB%FFCD",
+            "https://doi.org/10.18167/DVN1/T0DMFJ")
+  p <- .dataverse_parse(urls)
+  expect_equal(p$doi, c("10.7910/DVN/GGDUND", NA, "10.18167/DVN1/T0DMFJ"))
+})
+
 
 test_that(".dataverse_info reports not-found", {
   testthat::local_mocked_bindings(

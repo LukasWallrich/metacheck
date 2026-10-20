@@ -300,8 +300,8 @@ zenodo_info <- function(zenodo_url, id_col = 1, pb = NULL, cache = FALSE) {
   obj$resource_type <-    metadata$resource_type$type %empty_or% NA_character_
   obj$journal <-          list(metadata$journal) %||% list(c())
   obj$owners <-           list(rec$owners) %||% list(c())
-  obj$license <-          metadata$license$id %empty_or%
-                          metadata$license$title %empty_or%
+  obj$license <-          .field_or_value(metadata$license, "id") %empty_or%
+                          .field_or_value(metadata$license, "title") %empty_or%
                           metadata$license %empty_or%
                           NA_character_
   obj$downloads <-        rec$stats$downloads %empty_or% NA_real_

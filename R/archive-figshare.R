@@ -899,7 +899,7 @@ figshare_info <- function(figshare_url, id_col = 1, host = "api.figshare.com",
   obj$publication_date <- rec$published_date %empty_or% NA_character_
   obj$updated_date <-     rec$modified_date %empty_or% NA_character_
   obj$authors <-          list(authors)
-  obj$license <-          rec$license$name %empty_or% NA_character_
+  obj$license <-          .field_or_value(rec$license, "name") %empty_or% NA_character_
 
   files <- rec$files %||% list()
 

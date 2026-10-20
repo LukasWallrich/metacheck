@@ -568,10 +568,16 @@ dataverse_links <- function(paper) {
 
   # The label's ":" may be percent-encoded ("persistentId=doi%3A10.7910..."),
   # as a copied link often has it; the value is decoded below.
+  # A value whose %-escapes decode to invalid UTF-8 ("%FF") is no DOI: kept,
+  # it stopped the later string functions for every URL in the call (U39).
+  decode <- function(x) {
+    d <- utils::URLdecode(x)
+    if (validUTF8(d)) d else NA_character_
+  }
   doi_pattern <- "persistentId=doi(?::|%3A)([^&\\s\"']+)"
   doi_m <- regmatches(url, regexec(doi_pattern, url, ignore.case = TRUE, perl = TRUE))
   doi <- vapply(doi_m, function(m) {
-    if (length(m) < 2) NA_character_ else utils::URLdecode(m[[2]])
+    if (length(m) < 2) NA_character_ else decode(m[[2]])
   }, character(1))
 
   # A dataset with a Handle instead of a DOI ("?persistentId=hdl:10411/B2VWDH"
@@ -582,7 +588,8 @@ dataverse_links <- function(paper) {
   hdl_m <- regmatches(url, regexec("persistentId=hdl(?::|%3A)([^&\\s\"']+)", url,
                                    ignore.case = TRUE, perl = TRUE))
   hdl <- vapply(hdl_m, function(m) {
-    if (length(m) < 2) NA_character_ else paste0("hdl:", utils::URLdecode(m[[2]]))
+    h <- if (length(m) < 2) NA_character_ else decode(m[[2]])
+    if (is.na(h)) NA_character_ else paste0("hdl:", h)
   }, character(1))
   doi[is.na(doi)] <- hdl[is.na(doi)]
 
@@ -593,7 +600,11 @@ dataverse_links <- function(paper) {
   # host-resolved (a real dataset.xhtml page can incidentally contain a
   # 10.xxxx-shaped substring elsewhere that isn't the dataset's own DOI, so
   # this fallback is deliberately host-scoped, not a blanket second attempt).
-  bare_doi_needed <- is.na(doi) & has_url
+  # Not for a URL WITH a persistentId that could not be decoded (U39): the
+  # bare pattern stopped at its "%" and gave a cut-off DOI ("10.7910/DVN/AB"
+  # for "...DVN/AB%FFCD"), possibly another dataset's.
+  has_pid <- grepl("persistentId=(doi|hdl)(:|%3A)", url, ignore.case = TRUE)
+  bare_doi_needed <- is.na(doi) & has_url & !has_pid
   if (any(bare_doi_needed)) {
     bare_m <- regmatches(url, regexec("(10\\.\\d+/[A-Za-z0-9/._-]+)", url, perl = TRUE))
     bare_doi <- vapply(bare_m, function(m) if (length(m) < 2) NA_character_ else m[[2]], character(1))
@@ -769,7 +780,9 @@ dataverse_info <- function(dataverse_url, id_col = 1, pb = NULL, cache = FALSE) 
   }
 
   rec <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
-  if (is.null(rec) || is.null(rec$data)) {
+  # data given as a plain string is not a dataset record: data$latestVersion
+  # stopped on it (U34)
+  if (is.null(rec) || !is.list(rec$data)) {
     obj$error <- "parse_error"
     return(obj)
   }
@@ -809,7 +822,7 @@ dataverse_info <- function(dataverse_url, id_col = 1, pb = NULL, cache = FALSE) 
   obj$publication_date <- version$releaseTime %empty_or% data$publicationDate %empty_or% NA_character_
   obj$updated_date <-     version$lastUpdateTime %empty_or% NA_character_
   obj$authors <-          list(authors)
-  obj$license <-          version$license$name %empty_or% NA_character_
+  obj$license <-          .field_or_value(version$license, "name") %empty_or% NA_character_
   obj$files <-            list(version$files %||% list())
 
   return(obj)

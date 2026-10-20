@@ -406,7 +406,7 @@ github_tree_files <- function(repo) {
   # %empty_or% (not %||%) because spdx_id can come back as a length-zero
   # value rather than NULL, which would otherwise propagate as a
   # length-zero "license" into the caller's vapply(..., character(1)).
-  license <- meta$license$spdx_id %empty_or% NA_character_
+  license <- .field_or_value(meta$license, "spdx_id") %empty_or% NA_character_
 
   # ── 2. Git tree (recursive, 1 request) ──────────────────────────────────────
   tree_resp <- tryCatch(
