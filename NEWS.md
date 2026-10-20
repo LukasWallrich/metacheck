@@ -34,6 +34,7 @@
 * `repo_check` reports an OSF link with an invalid id as "not a valid OSF link" (#507: U122); alone it got dplyr's error text as its reason, and beside valid links it vanished from the report. A platform file without a name no longer stops the file-naming check
 * `power`'s fallback for providers without structured output uses the module's own schema instead of downloading it from scienceverse.org, so it works offline, and a field that no answer gives now counts as missing, so an incomplete power analysis is no longer reported as complete (#507: U108)
 * `psychds_check` (and `reproducibility_check`'s package layout) take a missing file name from the file's path, exclude a file with neither, and no longer stop on a file list without a `file_name` column; a missing name became the target "unknown/NA" (#507: U113, part)
+* The API's `/paper/search` takes its documented `section` parameter: a comma-separated list of section types (`method,results`, any case; `references` is the reference list), and searches only those sections. It was passed on to `text_search()`, which has no such argument, so every request using it failed (#507: U2)
 
 # metacheck 0.4.0
 
