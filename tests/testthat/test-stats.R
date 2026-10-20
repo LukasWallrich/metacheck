@@ -53,3 +53,12 @@ test_that("error", {
   expect_no_error( stats <- stats(paper) )
 })
 
+
+test_that("stats keeps a sentence's results after a statcheck warning, and checks its arguments (U4)", {
+  # one unparseable p-value dropped every valid result of the sentence, an
+  # unknown argument gave an empty table, and a string stopped
+  s <- "It was significant, t(28) = 2.20, p = .036, and the trend was not, p = .05-.10."
+  expect_equal(stats(test_paper(s))$raw, "t(28) = 2.20, p = .036")
+  expect_equal(nrow(stats(s)), 1)
+  expect_error(stats(test_paper(s), alfa = .01), "named statcheck() arguments", fixed = TRUE)
+})

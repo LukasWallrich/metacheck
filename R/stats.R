@@ -10,6 +10,20 @@
 #' paper <- demopaper()
 #' stats(paper)
 stats <- function(text, ...) {
+  # An argument statcheck() does not have made every call fail, and the
+  # error was swallowed, so stats() returned an empty table (U4)
+  args <- list(...)
+  allowed <- setdiff(names(formals(statcheck::statcheck)), c("texts", "messages"))
+  bad <- setdiff(names(args) %||% rep("", length(args)), allowed)
+  if (length(args) && (is.null(names(args)) || length(bad)))
+    stop("stats() passes only named statcheck() arguments: ",
+         paste(allowed, collapse = ", "), call. = FALSE)
+
+  # a character vector is searched as a text table, one row per string; it
+  # stopped with "argument is of length zero" (U4)
+  if (is.character(text))
+    text <- data.frame(text = text, text_id = seq_along(text))
+
   # lines with stats must have at least one number
   text <- text_search(text, "[0-9]")
 
@@ -26,11 +40,16 @@ stats <- function(text, ...) {
     subtext <- text$text[[i]]
 
     # statcheck uses cat() to output messages :(
+    # A warning is muffled, not caught: catching it returned nothing for
+    # the sentence, so one unparseable p-value ("p = .05-.10") dropped every
+    # valid result next to it (U4)
     sink_output <- utils::capture.output(
-      sc <- tryCatch(statcheck::statcheck(subtext, messages = FALSE, ...),
+      sc <- tryCatch(
+        withCallingHandlers(statcheck::statcheck(subtext, messages = FALSE, ...),
+                            warning = function(w) invokeRestart("muffleWarning")),
         error = function(e) {
           return(NULL)
-        }, warning = function(w) {}
+        }
       )
     )
     if (verbose()) pb$tick()
