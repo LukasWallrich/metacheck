@@ -909,12 +909,6 @@ zenodo_upload <- function(folders,
       # parent needs "Study/Data/b.csv" or it finds nothing to do.
       rels <- list.files(folder, recursive = TRUE, all.files = FALSE)
       rels <- rels[!dir.exists(file.path(folder, rels))]
-      # only the files kept above (upload_osf_metadata, max_file_size): the
-      # zip was built from the whole folder, so files reported as skipped
-      # were uploaded inside it (U47)
-      kept <- normalizePath(file.path(folder, rels), winslash = "/", mustWork = FALSE) %in%
-        normalizePath(file_lists[[i]], winslash = "/", mustWork = FALSE)
-      rels <- rels[kept]
       rels <- file.path(root, rels)
       abs <- file.path(parent, rels)
 

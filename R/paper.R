@@ -713,12 +713,16 @@ paper_write <- function(paper, file_name = NULL, save_path = ".",
   json_path <- file.path(save_path, paste0(file_name, ".json"))
 
   if (!is.null(schema_version)) {
-    jsonlite::write_json(.paper_to_bibr12(paper), json_path,
+    # digits = NA writes 15 significant digits, so rewriting a bibr export
+    # changed values such as 0.9411764705882353 (U22); those are written with
+    # the digits they need
+    jsonlite::write_json(.json_exact_doubles(.paper_to_bibr12(paper)), json_path,
                          na = "null",
                          null = "null",
                          auto_unbox = TRUE,
                          pretty = TRUE,
-                         digits = NA)
+                         digits = NA,
+                         json_verbatim = TRUE)
     return(invisible(json_path))
   }
 
@@ -729,6 +733,42 @@ paper_write <- function(paper, file_name = NULL, save_path = ".",
                        pretty = TRUE)
 
   invisible(json_path)
+}
+
+
+# A double that 15 significant digits would change, as the shortest JSON text
+# that reads back as exactly that double (class "json", for write_json()'s
+# json_verbatim); NULL for any other value.
+.exact_double_json <- function(v) {
+  if (!is.double(v) || length(v) != 1 || !is.finite(v)) return(NULL)
+  if (as.numeric(sprintf("%.15g", v)) == v) return(NULL)
+  s <- sprintf("%.16g", v)
+  if (as.numeric(s) != v) s <- sprintf("%.17g", v)
+  structure(s, class = "json")
+}
+
+# Every double in `x` (lists, data frame columns, vectors) that 15
+# significant digits would change is replaced by .exact_double_json(); the
+# rest is left as it is. A vector with such a value becomes a list, which
+# write_json() writes as the same array.
+.json_exact_doubles <- function(x) {
+  if (is.data.frame(x)) {
+    x[] <- lapply(x, \(col) {
+      out <- .json_exact_doubles(col)
+      if (is.double(col) && length(col) == 1 && !is.double(out)) list(out) else out
+    })
+    return(x)
+  }
+  if (is.list(x)) {
+    x[] <- lapply(x, .json_exact_doubles)
+    return(x)
+  }
+  if (!is.double(x)) return(x)
+  exact <- lapply(x, .exact_double_json)
+  if (all(vapply(exact, is.null, logical(1)))) return(x)
+  out <- Map(\(e, v) e %||% v, exact, x)
+  names(out) <- names(x)
+  if (length(x) == 1 && !inherits(x, "AsIs")) out[[1]] else out
 }
 
 

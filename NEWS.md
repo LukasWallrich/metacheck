@@ -80,6 +80,7 @@
 * `osf_check_id()` takes the project id from a link that ends in a route name (osf.io/j3gcx/files/ gave the id "files"), no longer cuts a word after osf.io/ to five characters (osf.io/prereg gave "prere"), and does not take a registration schema (osf.io/<id>/register/<schema>) as a file id (#507: U51)
 * `zenodo_upload(as_zip = TRUE)` builds its zip only from the files it keeps: the zip was made from the whole folder, so the `_osf_metadata` folder (with `upload_osf_metadata = FALSE`) and files over `max_file_size` were uploaded inside it while `files_skipped` reported them as skipped (#507: U47)
 * `code_extract_r()` reads an .Rmd or .qmd with a numeric or logical YAML chunk label (`#| label: 3`): knitr used the label as a position and stopped ("subscript out of bounds"), so `code_check` skipped the file (#507: U153)
+* `paper_write(schema_version = "12.0")` keeps every decimal of a double exactly: jsonlite wrote 15 significant digits, so rewriting a bibr export changed values such as 0.9411764705882353 into 0.941176470588235. Such values are written with the 16 or 17 digits they need; all others as before (#507: U22)
 
 # metacheck 0.4.0
 
