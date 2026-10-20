@@ -4003,11 +4003,59 @@ normalize_label <- function(x) {
 
 # Strip RTF control codes from a string, returning plain text.
 .strip_rtf <- function(text) {
-  text <- gsub("\\\\[a-z]+\\-?[0-9]*\\s?", " ", text)
-  text <- gsub("\\\\[^a-z\n]", " ", text)
+  # The text of an RTF document, line by line. It was flattened to one line
+  # that began with the font table, without paragraph breaks or characters
+  # written as escapes (U215). Hidden groups are dropped, \\par and \\line are
+  # line breaks, \\'hh (Windows-1252) and \\uN characters are decoded, and
+  # escaped braces and backslashes are kept as characters.
+  text <- paste(text, collapse = "\n")
+  # hidden groups: font/colour tables, stylesheet, info, pictures, \\* groups
+  hidden <- "\\{\\\\(fonttbl|colortbl|stylesheet|info|pict|\\*)"
+  repeat {
+    m <- regexpr(hidden, text, perl = TRUE)
+    if (m < 0) break
+    chars <- strsplit(substring(text, m), "")[[1]]
+    depth <- cumsum((chars == "{") - (chars == "}"))
+    end <- which(depth == 0)[1]
+    if (is.na(end)) end <- length(chars)
+    text <- paste0(substr(text, 1, m - 1), substring(text, m + end))
+  }
+  # protect escaped characters
+  text <- gsub("\\\\\\\\", "\001", text)
+  text <- gsub("\\\\\\{", "\002", text)
+  text <- gsub("\\\\\\}", "\003", text)
+  text <- gsub("\\\\(par|line)\\b ?", "\n", text, perl = TRUE)
+  text <- gsub("\\\\tab\\b ?", "\t", text, perl = TRUE)
+  # \\'hh: one Windows-1252 byte
+  repeat {
+    m <- regexpr("\\\\'[0-9a-fA-F]{2}", text, perl = TRUE)
+    if (m < 0) break
+    hex <- substr(text, m + 2, m + 3)
+    ch <- iconv(rawToChar(as.raw(strtoi(hex, 16L))), "CP1252", "UTF-8")
+    if (is.na(ch)) ch <- ""
+    text <- paste0(substr(text, 1, m - 1), ch, substring(text, m + 4))
+  }
+  # \\uN with its one-character fallback (often "?")
+  repeat {
+    m <- regexpr("\\\\u-?[0-9]+ ?.?", text, perl = TRUE)
+    if (m < 0) break
+    tok <- regmatches(text, m)
+    num <- as.integer(sub("^\\\\u(-?[0-9]+).*", "\\1", tok))
+    if (!is.na(num) && num < 0) num <- num + 65536L
+    ch <- if (is.na(num)) "" else intToUtf8(num)
+    text <- paste0(substr(text, 1, m - 1), ch, substring(text, m + attr(m, "match.length")))
+  }
+  text <- gsub("\\\\~", " ", text)                       # non-breaking space
+  text <- gsub("\\\\[-_]", "", text)                     # optional hyphen
+  text <- gsub("\\\\[a-zA-Z]+-?[0-9]* ?", "", text)      # other control words
+  text <- gsub("\\\\.", "", text)                        # other control symbols
   text <- gsub("[{}]", "", text)
-  text <- gsub("\\s+", " ", text)
-  trimws(text)
+  text <- gsub("\001", "\\", text, fixed = TRUE)
+  text <- gsub("\002", "{", text, fixed = TRUE)
+  text <- gsub("\003", "}", text, fixed = TRUE)
+  # "[ \t]" with a real tab: inside brackets "\\t" is a backslash and a "t"
+  lines <- trimws(gsub("[ \t]+", " ", strsplit(text, "\n", fixed = TRUE)[[1]]))
+  paste(lines[nzchar(lines)], collapse = "\n")
 }
 
 # Extract plain text from a rich-text or binary codebook file (docx/pdf/rtf/

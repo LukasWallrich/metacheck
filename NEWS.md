@@ -46,6 +46,7 @@
 * The data manifest keeps small numbers (0.000012345 was written as 0) and keeps JSON nulls as null when it is merged again (they became `{}`) (#507: U62)
 * Codebook ranges written with the prefix repeated ("V1-V10") are expanded, as "V1-10" already was, and a data column without a study group no longer gets labels of rows that belong to a group (#507: U58)
 * Variable labels in `.rds` and `.RData` data files are kept, whatever the session (`head()` dropped the label of plain and factor columns, and of value-labelled columns when vctrs was not loaded) (#507: U61)
+* An RTF codebook reaches the language model with its line breaks and its accented and escaped characters, without the font and colour tables; it was one line that began with the font table, with `\'e9`, `\u233` and escaped braces dropped (#507: U215)
 
 # metacheck 0.4.0
 

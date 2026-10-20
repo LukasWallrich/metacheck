@@ -1526,3 +1526,18 @@ test_that("variable labels in .rds and .RData files are kept (U61)", {
   f2 <- withr::local_tempfile(fileext = ".RData"); dat <- df; save(dat, file = f2)
   expect_equal(attr(data_read_head(f2)$age, "label", exact = TRUE), "Age in years")
 })
+
+test_that(".strip_rtf keeps lines and characters, without the font table (U215)", {
+  # an RTF codebook reached the model as one line starting with the font
+  # table, without escaped characters
+  rtf <- paste0(
+    "{\\rtf1\\ansi{\\fonttbl{\\f0\\fswiss Times;}{\\f1 Arial;}}",
+    "{\\colortbl;\\red0\\green0\\blue0;}",
+    "\\pard\\f0 age: Age of the participant in years\\par ",
+    "caf\\'e9 \\u233? and \\{braces\\} and a back\\\\slash\\par ",
+    "gender: 1 = male, 2 = female}")
+  out <- strsplit(metacheck:::.strip_rtf(rtf), "\n")[[1]]
+  expect_equal(out, c("age: Age of the participant in years",
+                      "café é and {braces} and a back\\slash",
+                      "gender: 1 = male, 2 = female"))
+})
