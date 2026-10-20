@@ -375,6 +375,42 @@ test_that("code_check detects a real groundhog.library() date-pin", {
   expect_match(paste(mo$report, collapse = "\n"), "groundhog", fixed = TRUE)
 })
 
+test_that("code_check reports a refused repository once, with its whole listing (U88)", {
+  # the catch-up download counted the code files only, so the refusal was
+  # reported twice: "holds 6 files" and "holds 4 files"
+  paper <- test_paper()
+  tbl <- data.frame(paper_id = paper_id(paper), repo_url = "https://osf.io/abcde",
+                    file_name = c("a.R", "b.R", "c.R", "d.R", "x.csv", "y.csv"),
+                    file_url = paste0("https://osf.io/download/", 1:6),
+                    file_location = NA_character_, file_size = 100)
+  counts <- list()
+  local_mocked_bindings(download_repo_files = function(files, ..., repo_file_counts = NULL) {
+    n <- as.integer(repo_file_counts[["https://osf.io/abcde"]])
+    counts[[length(counts) + 1]] <<- n
+    attr(files, "gated") <- data.frame(repo_url = "https://osf.io/abcde",
+      message = sprintf("The repository holds %d files.", n))
+    files
+  })
+  fake <- structure(list(module = "repo_check", table = tbl, paper = paper,
+                         summary_table = data.frame(paper_id = paper_id(paper))),
+                    class = "metacheck_module_output")
+  mo <- suppressWarnings(module_run(fake, "code_check"))
+  expect_true(all(unlist(counts) == 6L))
+  expect_equal(lengths(regmatches(mo$summary_text, gregexpr("holds", mo$summary_text))), 1L)
+})
+
+test_that("code_check scans every same-named R file for a date-pin (U89)", {
+  # the texts were kept by file name, so b/analysis.R replaced a/analysis.R
+  # and its groundhog pin was never seen
+  tmp <- withr::local_tempdir()
+  dir.create(file.path(tmp, "a")); dir.create(file.path(tmp, "b"))
+  writeLines('groundhog.library("dplyr", "2022-01-01")', file.path(tmp, "a", "analysis.R"))
+  writeLines("x <- 1", file.path(tmp, "b", "analysis.R"))
+
+  mo <- module_run(test_paper(), "code_check", local_path = tmp)
+  expect_true(mo$summary_table$code_version_pinned)
+})
+
 test_that("code_check detects a real checkpoint() date-pin", {
   tmp <- withr::local_tempdir()
   writeLines(c(

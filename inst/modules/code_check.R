@@ -101,6 +101,9 @@ code_check <- function(paper, local_path = NULL,
   # already populated and is a no-op.
   predl_gated <- NULL
   code_failed_files <- NULL
+  # each repository's whole listing, before the expand steps below add
+  # archive members: the catch-up download counts with it too
+  listing_counts <- table(all_files$repo_url)
   if (isTRUE(download)) {
     all_files <- .code_predownload(all_files, max_file_size, max_download_size,
                                    cache, skip_on_api_limit, max_files_per_repo)
@@ -267,7 +270,9 @@ code_check <- function(paper, local_path = NULL,
       # subset passed below -- see download_repo_files()'s own
       # repo_file_counts roxygen (and data_check.R's identical wiring) for
       # why this matters: a filtered subset can undercount an oversized repo.
-      repo_file_counts <- table(checked_files$repo_url)
+      # It counted the code files only, so a refused repository was reported
+      # twice, with two counts (U88).
+      repo_file_counts <- listing_counts
       dl <- download_repo_files(checked_files[need_dl, , drop = FALSE],
                                 max_file_size = max_file_size,
                                 max_download_size = max_download_size,
@@ -355,11 +360,16 @@ code_check <- function(paper, local_path = NULL,
       # by paper_id first so file_name collisions across papers in a
       # paperlist cannot leak one paper's pin into another's. <<- since this
       # is inside lapply()'s own function scope.
+      # Appended, not set by file name: of two same-named R files only the
+      # last was kept, and a missing paper id (NA) was never found again, so
+      # only the last such file was scanned (U89).
       if (the_file$language == "R") {
         pid_here <- if ("paper_id" %in% names(the_file))
           as.character(the_file$paper_id) else "_all"
+        if (is.na(pid_here)) pid_here <- "_NA"
         lst <- r_text_by_paper[[pid_here]] %||% list()
-        lst[[the_file$file_name]] <- file_lines
+        lst[[length(lst) + 1L]] <- file_lines
+        names(lst)[length(lst)] <- the_file$file_name
         r_text_by_paper[[pid_here]] <<- lst
       }
 
@@ -728,10 +738,17 @@ code_check <- function(paper, local_path = NULL,
   # Splice resolved locations back into all_files so the per-paper re-check
   # below (summary_table$code_version_pinned) finds every candidate file
   # already local and downloads nothing a second time.
+  # Each location goes to its own row, in order: match() by file name gave
+  # every same-named file's location to the first row only (U89).
   if (length(version_pin$file_location) > 0) {
-    m <- match(names(version_pin$file_location), all_files$file_name)
-    hit <- !is.na(m) & nzchar(version_pin$file_location %||% "")
-    all_files$file_location[m[hit]] <- version_pin$file_location[hit]
+    loc_names <- names(version_pin$file_location)
+    for (nm in unique(loc_names)) {
+      rows <- which(all_files$file_name == nm)
+      locs <- version_pin$file_location[loc_names == nm]
+      k <- seq_len(min(length(rows), length(locs)))
+      ok <- !is.na(locs[k]) & nzchar(locs[k])
+      all_files$file_location[rows[k][ok]] <- locs[k][ok]
+    }
   }
 
   # R advice for R code, Python advice for Python code: the R part is shown
@@ -971,10 +988,13 @@ code_check <- function(paper, local_path = NULL,
       function(rows) {
         pid_here <- as.character(all_files$paper_id[rows[1]])
         .code_env_pinned(
+          # with the module's caps and cache: without them a failed pin
+          # download was fetched again with the defaults (U88)
           .code_version_pin_check(
             all_files[rows, , drop = FALSE],
             code_text_list = r_text_by_paper[[pid_here]] %||% list(),
-            skip_on_api_limit = skip_on_api_limit,
+            max_file_size = max_file_size, max_download_size = max_download_size,
+            cache = cache, skip_on_api_limit = skip_on_api_limit,
             max_files_per_repo = max_files_per_repo),
           code_files$language[as.character(code_files$paper_id) == pid_here])
       },

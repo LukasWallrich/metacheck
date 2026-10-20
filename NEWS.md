@@ -66,6 +66,8 @@
 * Grobid import keeps the space between a number and a tag that follows it ("Table 1", "Hamilton 1964", "Fig. 1</ref>" had become "Table1", "Hamilton1964", "Fig.1"), joins omega's partial eta ("ω p 2" gives "ωp²"; the rule was written so that it rewrote "<p2" instead) and Hedges' "g z" (the rule turned "dgz" into "gz") (#507: U16)
 * Grobid 12.0 conversion squishes runs of spaces in body text, as it already did for captions, notes and the abstract (#507: U27)
 * Grobid import replaces a URL's link text only in the row the link is in, once: a short link text such as "osf" was also replaced in every other row, inside other links ("https://https://osf.io/q2.io/48ncu"), and in the 12.0 conversion a link without a target turned every row printing its text into NA. An author with several ORCIDs keeps the first, not the last (#507: U28)
+* `code_check` reports a repository refused by the size caps once, with the number of files in its whole listing: the second download counted the code files only, so the refusal was reported twice with two counts ("holds 6 files", "holds 4 files"). The per-paper check for a pinned environment downloads with the module's size caps and `cache`, not the defaults (#507: U88)
+* `code_check` scans every R file for a groundhog or checkpoint date-pin: the texts were kept by file name, so of two files with the same name (in different folders) only the last was scanned, as was only the last file of a paper without a paper id; a located renv.lock or sessionInfo file is copied back to its own row, not only to the first file of that name (#507: U89)
 
 # metacheck 0.4.0
 
