@@ -530,7 +530,7 @@
   # entry is at least 46 bytes, which bounds the count a corrupt end record
   # could claim.
   n_max <- min(n_entries, floor((cd_end - cd_start) / 46))
-  names <- character(n_max); sizes <- numeric(n_max)
+  names <- character(n_max); name_lens <- numeric(n_max); sizes <- numeric(n_max)
   methods <- numeric(n_max); csizes <- numeric(n_max)
   offsets <- numeric(n_max); crcs <- numeric(n_max)
   ff4 <- 4294967295
@@ -550,6 +550,16 @@
     offset  <- .le_int(raw, p + 42, 4)   # local header offset within the archive
     if (p + 46 + name_len + extra_len - 1 > n) break   # entry runs past the tail
     nm <- if (name_len > 0) rawToChar(raw[(p + 46):(p + 46 + name_len - 1)]) else ""
+    # A name is UTF-8 when general-purpose flag bit 11 says so; without it the
+    # zip standard's default is CP437 (old Windows zip tools). Such a name is
+    # not valid UTF-8 as soon as it has an accent, and every later sub()/gsub()
+    # on it stopped data_check with "invalid multibyte string" (U76). Every
+    # byte is a CP437 character, so the conversion cannot fail; a name marked
+    # UTF-8 that is not gets its bad bytes read as Latin-1 (.utf8_lines()).
+    utf8_flag <- bitwAnd(.le_int(raw, p + 8, 2), 2048L) != 0
+    if (!validUTF8(nm)) {
+      nm <- if (utf8_flag) .utf8_lines(nm) else iconv(nm, "CP437", "UTF-8")
+    }
     Encoding(nm) <- "UTF-8"
     if (extra_len > 0 &&
         (usize == ff4 || csize == ff4 || offset == ff4 || disk == 65535)) {
@@ -562,14 +572,15 @@
       }
     }
     n_read <- n_read + 1
-    names[n_read] <- nm; sizes[n_read] <- usize
+    names[n_read] <- nm; name_lens[n_read] <- name_len; sizes[n_read] <- usize
     methods[n_read] <- method; csizes[n_read] <- csize
     offsets[n_read] <- offset; crcs[n_read] <- crc
     p <- p + 46 + name_len + extra_len + comm_len
   }
   if (n_read == 0) return(NULL)
   keep <- seq_len(n_read)
-  names <- names[keep]; sizes <- sizes[keep]; methods <- methods[keep]
+  names <- names[keep]; name_lens <- name_lens[keep]
+  sizes <- sizes[keep]; methods <- methods[keep]
   csizes <- csizes[keep]; offsets <- offsets[keep]; crcs <- crcs[keep]
   # A placeholder with no Zip64 extra field to resolve it (a malformed entry)
   # must not be read as a real size or byte offset, so it is marked NA and
@@ -578,8 +589,11 @@
   sizes[sizes == ff4] <- NA_real_
   csizes[csizes == ff4] <- NA_real_
   offsets[offsets == ff4] <- NA_real_
+  # name_bytes: the name's length as stored, which a converted (CP437) name no
+  # longer has; .zip_range_plan() and .zip_whole_size() need the stored length
   out <- data.frame(name = names, size = sizes, method = methods, csize = csizes,
-                    offset = offsets, crc = crcs, stringsAsFactors = FALSE)
+                    offset = offsets, crc = crcs, name_bytes = name_lens,
+                    stringsAsFactors = FALSE)
   attr(out, "cd_offset") <- if (cd_offset == ff4) NA_real_ else cd_offset
   out
 }
@@ -646,8 +660,11 @@
 #'   `size` (uncompressed bytes), excluding directory entries; or `NULL` when the
 #'   host does not support range requests or the listing cannot be read (the
 #'   caller should then download-and-inspect). Also returns `method`, `csize`,
-#'   `offset`, and `crc`, which describe where each member's bytes sit in the
-#'   archive so a single member can be fetched without the rest. Zip64 archives
+#'   `offset`, `crc` and `name_bytes`, which describe where each member's bytes
+#'   sit in the archive so a single member can be fetched without the rest.
+#'   Names without the zip's UTF-8 flag are read as CP437 (old Windows zip
+#'   tools) and returned in UTF-8; `name_bytes` is the name's stored length.
+#'   Zip64 archives
 #'   (over 4 GB or over 65,535 entries) are read in full, including the sizes
 #'   and offsets stored only in their Zip64 extra fields; `csize` and `offset`
 #'   are `NA` only for an entry whose listing is malformed.
@@ -951,7 +968,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 .zip_range_plan <- function(want, cd = want, margin = 1024, max_gap = 65536,
                             max_span = 16 * 1048576) {
   if (is.null(want) || nrow(want) == 0) return(list())
-  name_bytes <- nchar(want$name, type = "bytes")
+  name_bytes <- want$name_bytes %||% nchar(want$name, type = "bytes")
   from <- want$offset
   need_to <- from + 30 + name_bytes + want$csize - 1   # without the extra field
   to <- need_to + margin
@@ -1272,7 +1289,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 .zip_whole_size <- function(cd) {
   if (is.null(cd) || nrow(cd) == 0 || anyNA(cd$offset) || anyNA(cd$csize))
     return(NA_real_)
-  name_bytes <- nchar(cd$name, type = "bytes")
+  name_bytes <- cd$name_bytes %||% nchar(cd$name, type = "bytes")
   data_end <- max(cd$offset + 30 + name_bytes + cd$csize)
   zip64 <- if (data_end >= 4294967295 || nrow(cd) >= 65535) 76 else 0
   data_end + sum(46 + name_bytes) + 22 + zip64

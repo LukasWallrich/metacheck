@@ -1061,3 +1061,16 @@ test_that("repository requests give up on a stalled connection (#473)", {
   expect_s3_class(err, "error")
   expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 30)
 })
+
+test_that("zip member names without the UTF-8 flag are read as CP437 (U76)", {
+  # old Windows zip tools store "café.csv" as CP437 bytes (0x82 = é) without
+  # the UTF-8 flag; the name was kept as invalid UTF-8 and every later
+  # sub()/gsub() stopped data_check with "invalid multibyte string"
+  members <- list(charToRaw("a,b\n1,2\n"))
+  names(members) <- rawToChar(as.raw(c(0x63, 0x61, 0x66, 0x82, 0x2e, 0x63, 0x73, 0x76)))
+  cd <- metacheck:::.parse_zip_central_dir(.test_zip64_bytes(members, zip64 = character(0)))
+  expect_equal(cd$name, "caf\u00e9.csv")
+  expect_true(validUTF8(cd$name))
+  # the stored length, which the UTF-8 name (9 bytes) no longer has
+  expect_equal(cd$name_bytes, 8)
+})

@@ -582,6 +582,11 @@
 data_classify_files <- function(file_name, file_path = NULL) {
   n <- length(file_name)
   if (n == 0) return(character(0))
+  # a name that is not valid UTF-8 (a zip's old Windows name) stopped the
+  # string functions below with "invalid multibyte string" (U76); it is
+  # classified from a valid copy (only the classes are returned)
+  file_name <- .utf8_lines(as.character(file_name))
+  if (!is.null(file_path)) file_path <- .utf8_lines(as.character(file_path))
 
   # -- Tier 1: format-locked classification ----------------------------------
   # Nothing below this point can override a Tier 1 result. `file_category()`'s
