@@ -129,7 +129,7 @@ convert_bibr <- function(file_path,
     api_url <- switch(backend,
       surf = .surf_api_url(),
       scivrs = "https://platform.metacheck.app",
-      selfhosted = Sys.getenv("BIBR_API_URL", "http://localhost:8000")
+      selfhosted = rep_if(Sys.getenv("BIBR_API_URL"), "http://localhost:8000", replace = "")
     )
   }
 
@@ -410,7 +410,7 @@ format_bib_authors <- function(authors) {
 #' The address of metacheck's API on SURF Research Cloud
 #' @noRd
 .surf_api_url <- function() {
-  Sys.getenv("SURF_API_URL", "https://metacheckserve.src-training-01.src.surf-hosted.nl/api")
+  rep_if(Sys.getenv("SURF_API_URL"), "https://metacheckserve.src-training-01.src.surf-hosted.nl/api", replace = "")
 }
 
 #' Check that metacheck's API on SURF Research Cloud can convert PDFs

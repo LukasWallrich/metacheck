@@ -142,7 +142,7 @@ regcheck_start_local <- function(method = c("docker", "python"),
 
   # auto-select model if not specified ----
   if (is.null(model)) {
-    ollama_base_url <- Sys.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_base_url <- rep_if(Sys.getenv("OLLAMA_BASE_URL"), "http://localhost:11434", replace = "")
     models <- tryCatch(ellmer::models_ollama(ollama_base_url),
                        error = function(e) NULL)
     if (is.null(models) || nrow(models) == 0) {

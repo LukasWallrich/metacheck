@@ -1221,7 +1221,11 @@ test_that("a script that writes a file succeeds in the Docker sandbox (#502)", {
   out <- repro_run_scripts_docker(
     run_tbl, order = "analysis.R", sandbox_root = root,
     image = "ghcr.io/scienceverse/metacheck_r_large:latest", timeout = 120)
-  expect_equal(out$outcome, "ran_ok")
+  # on failure, show why: on GitHub (2026-10-20) this came back "errored"
+  # with no reason in the log
+  expect_equal(out$outcome, "ran_ok",
+               info = paste0("error: ", out$error, "\nstderr: ", out$stderr,
+                             "\nstdout: ", out$stdout))
   # written inside the container, found in the host's output folder
   expect_true(file.exists(file.path(root, "output", "means.csv")))
 })

@@ -21,6 +21,11 @@ test_that("a report on an uploaded .zip does not show the server's folders (#500
   llm_use(FALSE)
   extract_zip <- .repocheck_fun("extract_zip")$fun
   job <- .repocheck_fun("repocheck_job")
+  # the job puts the app's progress bar in metacheck's place
+  # (use_shiny_progress()); put metacheck's own back afterwards, or every
+  # later test in this session runs with the app's bar
+  orig_pb <- metacheck:::pb
+  withr::defer(utils::assignInNamespace("pb", orig_pb, ns = "metacheck"))
 
   for (wrapped in c(TRUE, FALSE)) {
     workdir <- withr::local_tempdir()

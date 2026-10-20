@@ -94,9 +94,26 @@ test_that(".ldbase_item_files takes only the current file of an item", {
   expect_equal(nrow(.ldbase_item_files(external, item)), 0)
 })
 
+# LDbase answering is not enough: in October 2026 ldbase.org showed the
+# server's default page ("Apache2 Ubuntu Default Page") and every item 404,
+# which failed these tests on LDbase's side. Skip unless its home page is
+# LDbase's own; a missing item on a working LDbase still fails.
+skip_if_ldbase_down <- function() {
+  home <- tryCatch(
+    httr2::request("https://ldbase.org/") |>
+      httr2::req_timeout(20) |>
+      httr2::req_error(is_error = \(resp) FALSE) |>
+      httr2::req_perform() |>
+      httr2::resp_body_string(),
+    error = \(e) "")
+  testthat::skip_if_not(grepl("LDbase", home, ignore.case = TRUE),
+                        "LDbase is not serving its own pages")
+}
+
 test_that("ldbase_info lists a real project and dataset", {
   skip_if_quick()
   skip_if_offline("ldbase.org")
+  skip_if_ldbase_down()
   info <- ldbase_info(c(
     "https://ldbase.org/datasets/e54f6aad-e0e2-4b40-9017-d4e347d9a497",
     "10.33009/ldbase.1627053448.d151"))
@@ -110,6 +127,7 @@ test_that("ldbase_info lists a real project and dataset", {
 test_that("repo_check lists the files of an LDbase project", {
   skip_if_quick()
   skip_if_offline("ldbase.org")
+  skip_if_ldbase_down()
   paper <- test_paper(text = "Data: https://ldbase.org/projects/09609d82-c45f-4442-8c0c-d136191bdc50")
   mo <- module_run(paper, "repo_check", peek_zips = FALSE)
   expect_true("read_theta.csv" %in% mo$table$file_name)

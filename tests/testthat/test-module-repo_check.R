@@ -140,6 +140,9 @@ test_that("ResearchBox", {
   # not this.) So this one goes to the live site.
   skip_if_not(online("researchbox.org"))
   skip_on_cran()
+  # ResearchBox does not serve GitHub's test machines: box 4377 failed there
+  # (2026-10-20) while it downloads from elsewhere
+  skip_on_ci()
 
   module <- "repo_check"
   paper <- test_paper()

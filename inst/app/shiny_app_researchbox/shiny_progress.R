@@ -97,7 +97,10 @@ progress_step <- function(value = NULL, detail = NULL) {
 .shiny_pb_text <- function(format, tokens, current, total) {
   text <- format
   for (nm in names(tokens)) {
-    text <- gsub(paste0(":", nm), as.character(tokens[[nm]]), text, fixed = TRUE)
+    # paste(collapse) turns an empty (NULL) token into "", not character(0),
+    # which made gsub() stop with "invalid 'replacement' argument"
+    value <- paste(as.character(tokens[[nm]]), collapse = " ")
+    text <- gsub(paste0(":", nm), value, text, fixed = TRUE)
   }
   text <- gsub(":current", current, text, fixed = TRUE)
   text <- gsub(":total", if (is.na(total)) "?" else total, text, fixed = TRUE)

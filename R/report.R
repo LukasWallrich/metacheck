@@ -154,16 +154,20 @@ report <- function(paper,
     }
 
     reports <- mapply(\(x, of) {
+      # a paper keeps its id in info$paper_id; x$id was always NULL, which
+      # stopped the progress bar ("invalid 'replacement' argument")
+      pid <- tryCatch(as.character(paper_id(x))[1], error = \(e) NA_character_)
+      if (is.na(pid)) pid <- ""
       r <- tryCatch(report(x, modules, of, output_format, report_type, args),
         error = \(e) {
-          logger("report", list(paper = x$id, error = e$message))
-          warning("Error in ", x$id, ":\n", e$message,
+          logger("report", list(paper = pid, error = e$message))
+          warning("Error in ", pid, ":\n", e$message,
             call. = FALSE
           )
           return(NULL)
         }
       )
-      pb$tick(tokens = list(what = x$id))
+      pb$tick(tokens = list(what = pid))
       r
     }, x = paper, of = output_file, SIMPLIFY = FALSE)
 

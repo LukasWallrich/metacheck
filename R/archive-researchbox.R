@@ -201,10 +201,20 @@ rbox_info <- function(rb_url, id_col = 1, pb = NULL) {
     }
   })
 
-  # handle missing file
-  if (httr2::resp_status(resp) != 200) {
-    warning(rb_url, " could not be found", call. = FALSE)
-    obj$error <- "unfound"
+  # A box that does not exist still answers 200 (checked 2026-10-20), so any
+  # other status is a refusal or a server error, not a missing box: on
+  # GitHub's test machines ResearchBox did not serve box 4377, which was
+  # reported as "could not be found". The status is now named.
+  status <- httr2::resp_status(resp)
+  if (status != 200) {
+    if (status == 404) {
+      warning(rb_url, " could not be found", call. = FALSE)
+      obj$error <- "unfound"
+    } else {
+      warning("ResearchBox did not serve ", rb_url, " (HTTP ", status, ")",
+              call. = FALSE)
+      obj$error <- paste0("HTTP ", status)
+    }
     return(obj)
   }
 

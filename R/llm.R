@@ -141,7 +141,7 @@ llm <- function(text, system_prompt,
       ollama_options <- params_list
       ollama_options$think <- NULL
     }
-    ollama_base_url <- Sys.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_base_url <- rep_if(Sys.getenv("OLLAMA_BASE_URL"), "http://localhost:11434", replace = "")
 
     # check ollama is up
     ollama_up <- tryCatch({
@@ -425,7 +425,7 @@ llm <- function(text, system_prompt,
                                model = NULL,
                                think = FALSE,
                                options = list(),
-                               base_url = Sys.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+                               base_url = rep_if(Sys.getenv("OLLAMA_BASE_URL"), "http://localhost:11434", replace = ""),
                                timeout = llm_timeout()) {
 
   if (isFALSE(think)) {
