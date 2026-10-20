@@ -22,6 +22,7 @@
 * `code_check` no longer stops on a Quarto file whose front matter is a single value or a list ("just a title"), or on a Jupyter notebook that is not a JSON object or has malformed metadata ("$ operator is invalid for atomic vectors") (#507: U68); the language falls back to the first chunk's engine, or is left unknown for such a notebook
 * Papers in a list that share a `paper_id` are renamed "id~2", "id~3", ... with a warning, where a list comes in (`paperlist()`, `module_run()`, `report()`) (#507: U208, U101). Tables are joined and grouped on `paper_id`, so a shared id mixed the papers: sentences were joined to the other paper's sections (two papers with 2 p-values each gave 8 rows instead of 4), summaries had more rows than papers, references were pooled, `ethics_check` and `open_practices` stopped ("factor level [2] is duplicated"), and `report()` wrote both reports to one file
 * An AsPredicted page that answers with an error status (removed, private) or cannot be reached no longer stops `prereg_check`; the error is recorded for that page, with a warning (#507: U54)
+* `read_stat_tables()` of a path that is not a zip archive (another file, an empty zip, a folder) returns an empty list instead of stopping (#507: U137)
 
 # metacheck 0.4.0
 

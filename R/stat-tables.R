@@ -68,6 +68,9 @@ read_stat_tables <- function(path) {
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
   files <- tryCatch(suppressWarnings(utils::unzip(path, exdir = tmp)),
                     error = function(e) character(0))
+  # not a zip (another file, an empty zip, a folder): unzip() gives NULL, and
+  # basename(NULL) below stopped (U137); such a path has no tables
+  if (!length(files)) return(list())
 
   # PREFERRED for .jasp: the archive's own analyses.json carries the STRUCTURED
   # results (machine column names, native numeric values), which beats scraping

@@ -360,3 +360,10 @@ test_that(".r_output_tables stays fast on a long print that is not a table (#483
   expect_length(tabs3, 1)
   expect_equal(tabs3[[1]]$data[["Pr(>|t|)"]], c("0.00912", "2.07e-05"))
 })
+
+test_that("read_stat_tables of a path that is not a zip has no tables (U137)", {
+  # unzip() gives NULL for it, and basename(NULL) stopped
+  f <- withr::local_tempfile(fileext = ".jasp"); writeLines("not a zip", f)
+  expect_equal(read_stat_tables(f), list())
+  expect_equal(read_stat_tables(withr::local_tempdir()), list())
+})
