@@ -18,6 +18,9 @@
 #'
 #' @returns a list
 ref_miscitation <- function(paper, db = readRDS(system.file("databases/miscite.Rds", package = "metacheck"))) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # consolidate bib tables and filter to relevant DOI
   bibs <- paper_table(paper, "bib", c("paper_id", "bib_id", "doi")) |>
     dplyr::inner_join(db, by = "doi") |>

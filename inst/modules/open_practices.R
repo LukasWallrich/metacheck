@@ -17,6 +17,9 @@
 #'
 #' @returns a list
 open_practices <- function(paper) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # search for words associated with shared data, code, materials or reg
 
   ## patterns ----

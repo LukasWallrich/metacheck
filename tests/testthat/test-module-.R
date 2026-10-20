@@ -243,7 +243,7 @@ test_that("all_urls", {
   expect_contains(names(paper), ids)
 })
 
-test_that("every module runs on an empty paper or paper list (U79)", {
+test_that("every module runs on an empty paper or paper list and reports na (U79)", {
   # an empty paper list stopped nearly every module (paper_table() returned
   # no columns, text_search() logical ones), and an empty paper stopped the
   # repository modules, ethics_check, power and prereg_check
@@ -251,11 +251,11 @@ test_that("every module runs on an empty paper or paper list (U79)", {
   llm_use(FALSE)
   for (m in module_list()$name) {
     for (input in list(paper(), paperlist(), list())) {
-      err <- tryCatch({
-        suppressWarnings(suppressMessages(module_run(input, m)))
-        NULL
-      }, error = function(e) conditionMessage(e))
-      expect_null(err, label = m)
+      light <- tryCatch(
+        suppressWarnings(suppressMessages(module_run(input, m)))$traffic_light,
+        error = function(e) paste("error:", conditionMessage(e)))
+      # nothing to check is "na", not red ("no statement found") or green
+      expect_equal(light, "na", label = m)
     }
   }
 })

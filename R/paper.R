@@ -581,6 +581,24 @@ paper_id <- function(paper) {
   out
 }
 
+# TRUE when a paper or paper list has no text and no references, so a module
+# that reads them has nothing to check. Such a module reports "na" for it
+# (.empty_input_result()): an empty paper got red ("no statement found") or
+# green ("nothing flagged") from nine modules. Inputs that are not papers are
+# never empty here.
+.paper_is_empty <- function(paper) {
+  if (!.is_paper(paper) && !.is_paper_list(paper)) return(FALSE)
+  nrow(paper_table(paper, "text")) == 0 && nrow(paper_table(paper, "bib")) == 0
+}
+
+# The result of a text or reference module for an empty input (see
+# .paper_is_empty()).
+.empty_input_result <- function(paper) {
+  list(traffic_light = "na",
+       summary_text = "There was no text to check.",
+       summary_table = .per_paper_table(paper))
+}
+
 #' Reference and DOI table
 #'
 #' Return a table with fixed DOIs and reference text from a paper object or concatenate tables across a list of paper objects.

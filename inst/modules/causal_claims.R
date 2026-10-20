@@ -19,6 +19,9 @@
 #'
 #' @returns a list
 causal_claims <- function(paper) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # randomisation ----
 
   random_sentences <- text_search(paper, "random")
