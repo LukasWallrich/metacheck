@@ -1514,3 +1514,15 @@ test_that("codebook ranges V1-V10 expand; a column without a group gets no other
   r2 <- match_column_labels(cols[3, ], cb2)
   expect_false(isTRUE(r2$label_status == "labelled"))
 })
+
+test_that("variable labels in .rds and .RData files are kept (U61)", {
+  # head() dropped the label attribute of plain and factor columns
+  df <- data.frame(age = c(20, 30, 40), grp = factor(c("a", "b", "a")))
+  attr(df$age, "label") <- "Age in years"; attr(df$grp, "label") <- "Group"
+  f <- withr::local_tempfile(fileext = ".rds"); saveRDS(df, f)
+  d <- data_read_head(f)
+  expect_equal(attr(d$age, "label", exact = TRUE), "Age in years")
+  expect_equal(attr(d$grp, "label", exact = TRUE), "Group")
+  f2 <- withr::local_tempfile(fileext = ".RData"); dat <- df; save(dat, file = f2)
+  expect_equal(attr(data_read_head(f2)$age, "label", exact = TRUE), "Age in years")
+})

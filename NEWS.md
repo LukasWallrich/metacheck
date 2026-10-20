@@ -45,6 +45,7 @@
 * `data_check` reads UTF-16 text files (E-Prime and other Windows exports start with a byte order mark) instead of reporting them as empty: read as bytes, the first column was named "ÿþS" and the table had no rows (#507: U217)
 * The data manifest keeps small numbers (0.000012345 was written as 0) and keeps JSON nulls as null when it is merged again (they became `{}`) (#507: U62)
 * Codebook ranges written with the prefix repeated ("V1-V10") are expanded, as "V1-10" already was, and a data column without a study group no longer gets labels of rows that belong to a group (#507: U58)
+* Variable labels in `.rds` and `.RData` data files are kept, whatever the session (`head()` dropped the label of plain and factor columns, and of value-labelled columns when vctrs was not loaded) (#507: U61)
 
 # metacheck 0.4.0
 

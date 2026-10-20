@@ -2489,17 +2489,17 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
         # data_check (and the CSV conversion in psychds-convert) treats it exactly
         # like a .sav. Both the old binary and modern SQLite formats are handled.
         df <- import_jasp(path)$data
-        if (is.data.frame(df) && is.finite(n_rows)) utils::head(df, n_rows) else df
+        if (is.data.frame(df) && is.finite(n_rows)) .head_keep_attrs(df, n_rows) else df
       },
       omv = {
         # A .omv (jamovi) is the JASP counterpart -- import_omv() returns the same
         # labelled data frame, so it is treated exactly like a .jasp / .sav.
         df <- import_omv(path)$data
-        if (is.data.frame(df) && is.finite(n_rows)) utils::head(df, n_rows) else df
+        if (is.data.frame(df) && is.finite(n_rows)) .head_keep_attrs(df, n_rows) else df
       },
       rds = {
         obj <- readRDS(path)
-        if (is.data.frame(obj)) utils::head(obj, n_rows) else NULL
+        if (is.data.frame(obj)) .head_keep_attrs(obj, n_rows) else NULL
       },
       rda = , rdata = {
         # An .RData/.rda workspace can hold arbitrary objects -- fitted models,
@@ -2528,6 +2528,19 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
 # A NULL return means the workspace holds no reusable tabular data (only models
 # / session objects, or it could not be restored at all); data_check turns that
 # into a sharing recommendation.
+# The first n rows of a data frame with each column's label, value labels
+# and class kept: head() drops the label of unclassed and factor columns, and
+# a haven_labelled column keeps its labels only when vctrs is loaded, so
+# variable labels from .rds/.RData files depended on the session (U61).
+.head_keep_attrs <- function(df, n) {
+  out <- utils::head(df, n)
+  for (j in seq_along(df)) for (a in c("label", "labels", "class")) {
+    v <- attr(df[[j]], a, exact = TRUE)
+    if (!is.null(v) && is.null(attr(out[[j]], a, exact = TRUE))) attr(out[[j]], a) <- v
+  }
+  out
+}
+
 .read_rdata_isolated <- function(path, n_rows = 5) {
   out_rds <- tempfile(fileext = ".rds")
   on.exit(unlink(out_rds), add = TRUE)
@@ -2544,7 +2557,10 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     "df <- NULL",
     "if (ok) { dfs <- Filter(is.data.frame, as.list(e))",
     "  if (length(dfs) > 0) { d <- as.data.frame(dfs[[1]]); n <- %s",
-    "    df <- if (is.finite(n)) utils::head(d, n) else d } }",
+    "    df <- if (is.finite(n)) utils::head(d, n) else d",
+    "    for (j in seq_along(d)) for (a in c('label', 'labels', 'class')) {",
+    "      v <- attr(d[[j]], a, exact = TRUE)",
+    "      if (!is.null(v) && is.null(attr(df[[j]], a, exact = TRUE))) attr(df[[j]], a) <- v } } }",
     "saveRDS(df, %s)",
     sep = "\n"),
     deparse(path), if (is.finite(nmax)) nmax else "Inf", deparse(out_rds))
