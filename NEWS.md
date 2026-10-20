@@ -36,6 +36,7 @@
 * `psychds_check` (and `reproducibility_check`'s package layout) take a missing file name from the file's path, exclude a file with neither, and no longer stop on a file list without a `file_name` column; a missing name became the target "unknown/NA" (#507: U113, part)
 * The API's `/paper/search` takes its documented `section` parameter: a comma-separated list of section types (`method,results`, any case; `references` is the reference list), and searches only those sections. It was passed on to `text_search()`, which has no such argument, so every request using it failed (#507: U2)
 * `llm()` no longer stops when some requests fail and others succeed; the failed rows get no answer and every one of them is named in the warning (it never warned for several failed rows) (#507: U19). Answers are joined back to the texts as given, so a text the sanitiser changed (a control character, invalid UTF-8) keeps its answer and numeric text works; a missing text is not sent (it went out as "NA")
+* `match_reported_output()` (used by `reproducibility_check`) no longer stops on an output row without a `test_id` next to a jamovi residuals row, on an empty `test_id`, or on infinite values (an infinite value simply does not match); a paper list gets a clear error asking for one paper at a time (#507: U142)
 
 # metacheck 0.4.0
 

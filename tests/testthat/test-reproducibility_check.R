@@ -1413,3 +1413,17 @@ test_that(".repro_py_manifest_pins reads only pyproject.toml's dependencies (U23
   expect_equal(.repro_py_manifest_pins(c("numpy==1.26  # pinned", "pandas>=2.0 --hash=sha256:abc"))$requirement,
                c("numpy==1.26", "pandas>=2.0"))
 })
+
+test_that("match_reported_output: missing or empty test_id, Inf values, a paper list (U142)", {
+  # a missing test_id beside a jamovi residuals row made a site named NA and
+  # stopped the call; "" could not be looked up; Inf compared as NA
+  eq <- data.frame(text_id = 1, grp_id = 1, lhs = c("F", "p"), df = c("(2, 50)", NA),
+                   comp = c("=", "="), rhs = c("4.20", ".020"), paper_id = "p")
+  out <- data.frame(source_file = "a.R", analysis = "anova",
+                    test_id = c("anova_group", "anova_residuals", NA, ""),
+                    statistic = c("F", "df", "F", "F"), value = c("4.2", "50", "Inf", "4.2"),
+                    family = c("F", "df", "F", "F"), row_label = c("group", "residuals", NA, NA))
+  expect_no_error(match_reported_output(eq, out))
+  expect_error(match_reported_output(paperlist(test_paper(), test_paper()), out),
+               "call it for each paper")
+})
