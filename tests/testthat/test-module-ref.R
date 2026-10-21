@@ -267,3 +267,19 @@ test_that("ref_consistency reports a citation to a missing reference, and reads 
   p2$xref$xref_type[p2$xref$xref_type == "bibr"] <- "bib"
   expect_equal(module_run(p2, "ref_consistency")$summary_table$n_xrefs, n_cited)
 })
+
+test_that("ref_accuracy counts a reference with several bib_match rows once, and ignores footnote markers in titles (U114)", {
+  # three joins multiplied duplicate bib_match rows (3 copies: 31 rows for 5
+  # references); <sup> markers were compared as part of the title
+  p <- demopaper()
+  n <- nrow(module_run(p, "ref_accuracy")$table)
+  p$bib_match <- rbind(p$bib_match, p$bib_match[1, ], p$bib_match[1, ])
+  expect_equal(nrow(module_run(p, "ref_accuracy")$table), n)
+
+  p <- demopaper()
+  i <- match(p$bib_match$bib_id[1], p$bib$bib_id)
+  before <- module_run(p, "ref_accuracy")$table
+  p$bib$title[i] <- paste0(p$bib$title[i], "<sup>1</sup>")
+  after <- module_run(p, "ref_accuracy")$table
+  expect_equal(after$title_mismatch, before$title_mismatch)
+})
