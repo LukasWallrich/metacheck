@@ -799,3 +799,19 @@ test_that("execute = TRUE: a script the second run has no time for keeps its fir
                c("errored", "timed_out"))
   expect_false(any(rr$outcome == "skipped_time_limit"))
 })
+
+test_that("the duplicate note gives each copy's path in the package, not its place on this computer (Lakens/tue_datamanager_check#5, item 2)", {
+  paper <- test_paper()
+  code_tbl <- dplyr::bind_rows(
+    code_tbl_row(paper, "ok.R", repro_fixture("ok.R")),
+    code_tbl_row(paper, "ok.R", repro_fixture("ok.R")))
+  code_tbl$file_path <- c("study1/ok.R", "study2/ok.R")
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df))
+  mo <- module_run(fake_code, "reproducibility_check")
+  txt <- paste(mo$report, collapse = "\n")
+  expect_match(txt, "`ok.R` at `study2/ok.R` (same as `ok.R` at `study1/ok.R`)", fixed = TRUE)
+  expect_false(grepl(dirname(repro_fixture("ok.R")), txt, fixed = TRUE))
+})

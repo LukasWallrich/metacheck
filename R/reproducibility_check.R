@@ -2628,6 +2628,18 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
   else fail(ok)
 }
 
+# Where code file `idx` of `files` (code_check's table) came from, for the
+# report: its link, else its path in the repository, else NA. Never its
+# place on the computer that runs the check, which on a server is the
+# server's job folder (Lakens/tue_datamanager_check#5, item 2).
+.repro_shown_location <- function(files, idx) {
+  col <- function(nm) if (nm %in% names(files)) as.character(files[[nm]][idx]) else rep(NA_character_, length(idx))
+  url <- col("file_url")
+  path <- col("file_path")
+  ifelse(!is.na(url) & grepl("^https?://", url), url,
+         ifelse(!is.na(path) & nzchar(path), path, NA_character_))
+}
+
 # The time for all of a paper's scripts together: the moment after which no
 # script is started (NULL: no limit), and the seconds left until then
 # (Lakens/tue_datamanager_check#4, item 6).

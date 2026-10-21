@@ -1191,11 +1191,12 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # WHERE each copy came from -- file_name alone is useless here, since
     # mirrors share the same basename by construction (that is the whole
     # premise of this dedup step), so "X (same as X)" would say nothing.
-    # resolve_row_path() (already used for hashing, above) gives the local
-    # cache path or source URL, which actually differs between mirrors.
     dup_kept_idx <- vapply(which(dup), function(i) which(hashes == hashes[i])[1], integer(1))
-    dup_loc <- vapply(which(dup), function(i) resolve_row_path(i) %||% NA_character_, character(1))
-    kept_loc <- vapply(dup_kept_idx, function(i) resolve_row_path(i) %||% NA_character_, character(1))
+    # Each copy by its link, else its path in the repository; never its place
+    # on the computer that runs the check, which on a server is the server's
+    # job folder (Lakens/tue_datamanager_check#5, item 2).
+    dup_loc <- .repro_shown_location(r_files, which(dup))
+    kept_loc <- .repro_shown_location(r_files, dup_kept_idx)
     dup_of <- r_files$file_name[dup_kept_idx]
     dup_desc <- sprintf(
       "`%s`%s (same as `%s`%s)",
@@ -2477,10 +2478,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (n_py_dup > 0) {
     py_dup_kept_idx <- vapply(which(py_dup), function(i)
       which(py_hashes == py_hashes[i])[1], integer(1))
-    py_dup_loc <- vapply(which(py_dup), function(i)
-      py_resolve_row_path(i) %||% NA_character_, character(1))
-    py_kept_loc <- vapply(py_dup_kept_idx, function(i)
-      py_resolve_row_path(i) %||% NA_character_, character(1))
+    # by its link or path in the repository, as for R above
+    py_dup_loc <- .repro_shown_location(py_files, which(py_dup))
+    py_kept_loc <- .repro_shown_location(py_files, py_dup_kept_idx)
     py_dup_of <- py_files$file_name[py_dup_kept_idx]
     py_dup_desc <- sprintf(
       "`%s`%s (same as `%s`%s)",

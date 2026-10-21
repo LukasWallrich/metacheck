@@ -274,7 +274,11 @@
     # its lines joined by single newlines: module_report() joins the report
     # vector with blank lines between elements, which would otherwise put an
     # empty row between every line of the tree.
-    c(paste0("**Repository: ", b$repo, "**"),
+    # A local folder by its own name: its full path is the place on the
+    # computer that ran the check, on a server its job folder
+    # (Lakens/tue_datamanager_check#5, item 2).
+    label <- if (grepl("^[A-Za-z][A-Za-z0-9+.-]*://", b$repo)) b$repo else basename(b$repo)
+    c(paste0("**Repository: ", label, "**"),
       paste(c("::: {style=\"max-height: 40em; overflow: auto;\"}",
               "```", b$lines, "```", ":::"), collapse = "\n"))
   })
