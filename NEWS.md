@@ -123,6 +123,7 @@
 * Wording fixes: plurals in `code_check` ("In 1 code files"), `data_check` ("1 file contain", "1 distinct respondent were") and the no-hit reports of `ref_retraction`, `ref_replication` and `ref_pubpeer` ("We checked 1 references"); typos and copied text in the descriptions of `funding_check`/`funding_check_oi` (which spoke of a conflict of interest statement), `power` ("uses uses", "LMM"), `ref_accuracy`, `ref_consistency` and `open_practices`. The archive-download timeout message shows whole seconds (a fractional timeout made the message itself fail), and without a `file_path` column the files of a downloaded archive are matched by name (#507: U82, U83, U73)
 * `retractionwatch()` (and `rw_update()`) leaves out rows with a blank DOI and trims DOIs; a blank DOI matched every reference without a DOI in a join on `doi`. `stat_check` without statistics gives every paper of a list a summary row (#507: U15, U124)
 * A second download of the same Figshare, ReShare, Zenodo, Dataverse or Dryad deposit goes to "<folder>_1", "<folder>_2", ...; the deposit id in a folder name such as "figshare_<id>" was stripped, so it went to "figshare_1" (#507: U37)
+* The Grobid 12.0 conversion writes dates before the year 1000 with four digits ("0026-05-27T08:58:00Z"; the zero padding was lost, which is not a valid 12.0 date-time), gives NA for a time outside the years 0000-9999, and converts a vector of times (#507: U26)
 
 # metacheck 0.4.0
 

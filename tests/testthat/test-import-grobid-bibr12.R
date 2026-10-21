@@ -181,3 +181,9 @@ test_that("a URL's link text is replaced only in its own row, and body text is s
   txt12 <- suppressWarnings(.grobid_to_bibr(f, schema_version = "12.0"))$text$text
   expect_true("The osf project has spaces and a link here" %in% txt12)
 })
+
+test_that(".bibr12_utc writes four-digit years and works on a vector (U26)", {
+  # years before 1000 lost their zero padding; a vector failed
+  expect_equal(.bibr12_utc(c("0026-05-27T08:58+0000", "2024-03-01T12:30:45+01:00", "bad")),
+               c("0026-05-27T08:58:00Z", "2024-03-01T11:30:45Z", NA))
+})
