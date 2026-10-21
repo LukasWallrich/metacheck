@@ -304,7 +304,15 @@ crossref_doi <- function(doi, select = c(
 
   to_select <- intersect(select, names(item))
 
-  ret <- data.frame(item[to_select], check.names = FALSE)
+  # A JSON null leaves a field of length zero, which stopped data.frame()
+  # ("differing number of rows: 1, 0"), and a list-valued field gave deparsed
+  # column names; empty fields are left out and lists become one text (U13)
+  vals <- item[to_select]
+  vals <- vals[lengths(vals) > 0]
+  vals <- lapply(vals, \(v) if (is.list(v) || length(v) > 1)
+    paste(unlist(v), collapse = "; ") else v)
+  ret <- if (length(vals)) data.frame(vals, check.names = FALSE) else
+    data.frame(DOI = NA_character_)
   if ("author" %in% select & nrow(authors)) ret$author <- list(authors)
 
   return(ret)
@@ -859,7 +867,9 @@ openalex_query <- function(title, source = NA, authors = NA, strict = TRUE) {
     res <- unlist(res)
   }) |>
     do.call(dplyr::bind_rows, args = _) |>
-    dplyr::arrange(dplyr::desc(relevance_score))
+    # unlist() made every field text, so the scores were sorted as text
+    # ("9.5" before "10.2") (U13)
+    dplyr::arrange(dplyr::desc(suppressWarnings(as.numeric(relevance_score))))
 
   required_cols <- c("display_name", "source")
   for (rq in required_cols) {

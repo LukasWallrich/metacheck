@@ -384,3 +384,13 @@ test_that("openalex_query", {
   expect_equal(b$doi, doi)
 }, "mock")
 
+
+test_that(".crossref_parse_item reads a record with null fields (U13)", {
+  # a JSON null left a field of length zero, and data.frame() stopped
+  item <- list(DOI = "10.1/x", type = "journal-article", title = list("T"),
+               volume = NULL, page = NULL, URL = "u",
+               author = list(list(given = "A", family = "B")))
+  out <- .crossref_parse_item(item)
+  expect_equal(out$DOI, "10.1/x")
+  expect_false("volume" %in% names(out))
+})
