@@ -1569,3 +1569,31 @@ test_that("the container's capture code knows the statistic names (found with La
   d <- data.frame(y = c(1, 2, 3, 4), g = c("a", "a", "b", "b"))
   expect_false(is.null(e$.r_capture_value(aggregate(y ~ g, d, mean), "aggregate(y ~ g, d, mean)")))
 })
+
+test_that("a file found only inside an archive is a missing input in the package layout (#520, item 2)", {
+  # OSF t69jd: the script reads "data/download 1a/x.csv", which the package
+  # has only inside data.zip
+  structure_df <- data.frame(
+    file_name = c("Humor study 4a.csv", "main.R", "notes.csv"),
+    file_path = c("data.zip/data/download 1a/Humor study 4a.csv", "main.R", "data/notes.csv"),
+    file_location = c(NA, NA, NA))
+  plan <- .repro_package_plan(structure_df)
+  code <- c("d <- data.table::fread('data/download 1a/Humor study 4a.csv')",
+            "n <- read.csv('data/notes.csv')",
+            "o <- read.csv(file.path(base, 'download 1a/Humor study 4a.csv'))")
+  rw <- .repro_keep_working_refs(repro_rewrite_paths(code, "main.R", plan, "R"), plan, "main.R")
+  inside <- rw[rw$basename == "Humor study 4a.csv", ]
+  # both the full path and the part a folder of the code's own is added to
+  expect_true(all(!inside$matched))
+  expect_true(all(!inside$as_written))
+  # a file at its own path still works as written
+  expect_true(rw$as_written[rw$basename == "notes.csv"])
+
+  mi <- repro_missing_inputs("Humor study 4a.csv", plan, structure_df)
+  expect_equal(mi$status, "in_archive")
+  expect_match(mi$detail, "only inside data.zip; unpack it so the code finds it", fixed = TRUE)
+  # a name that also exists outside the archive is not "in_archive"
+  both <- rbind(structure_df, data.frame(file_name = "Humor study 4a.csv",
+                                          file_path = "Humor study 4a.csv", file_location = NA))
+  expect_equal(repro_missing_inputs("Humor study 4a.csv", plan, both)$status, "in_repo_not_downloaded")
+})

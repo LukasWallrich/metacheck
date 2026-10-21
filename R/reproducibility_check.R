@@ -1489,7 +1489,9 @@ repro_defined_vars <- function(code_text_list) {
 #'   `file_name` column)
 #'
 #' @returns a data frame with `basename`, `status` (one of `in_repo_not_downloaded`,
-#'   `withheld_size`, `absent`), `detail` (a human-readable reason), and
+#'   `withheld_size`, `in_archive` (the file is in the repository only inside
+#'   a .zip or .tar, so the code cannot read it as the package is), `absent`),
+#'   `detail` (a human-readable reason), and
 #'   `similar_to` (a candidate near-match basename from the repository's file
 #'   list, or `NA` — only ever set for `absent` rows; see below).
 #' @export
@@ -1503,6 +1505,13 @@ repro_missing_inputs <- function(refs, plan, structure_df, skipped = NULL) {
     tolower(basename(gsub("\\\\", "/", structure_df$file_name))) else character(0)
   skip_base <- if (!is.null(skipped) && "file_name" %in% names(skipped))
     tolower(basename(gsub("\\\\", "/", skipped$file_name))) else character(0)
+  # Files listed from inside an archive have its name in front of their path
+  # ("data.zip/data/x.csv"); the archive is the path up to it (#520, item 2).
+  arch_re <- "^(.*?[^/]+\\.(zip|tar|tgz|tar\\.gz))/.*$"
+  struct_path <- if (!is.null(structure_df) && "file_path" %in% names(structure_df))
+    gsub("\\\\", "/", structure_df$file_path) else rep(NA_character_, length(struct_base))
+  struct_archive <- ifelse(!is.na(struct_path) & grepl(arch_re, struct_path, perl = TRUE),
+                           sub(arch_re, "\\1", struct_path, perl = TRUE), NA_character_)
 
   # A file genuinely absent from the repository is sometimes actually PRESENT
   # under a near-identical name — a typo in the code, or a capitalisation/
@@ -1548,6 +1557,15 @@ repro_missing_inputs <- function(refs, plan, structure_df, skipped = NULL) {
                         detail = sprintf(
                           "referenced file is in the repository but was not downloaded%s: over the size cap",
                           mb), similar_to = NA_character_))
+    }
+    # in the repository only inside an archive: the code runs on the package
+    # as it is, so it cannot read the file before someone unpacks it
+    in_arch <- which(struct_base == b)
+    if (length(in_arch) && all(!is.na(struct_archive[in_arch]))) {
+      return(data.frame(basename = b, status = "in_archive",
+                        detail = sprintf("referenced file is only inside %s; unpack it so the code finds it",
+                                         paste(unique(struct_archive[in_arch]), collapse = ", ")),
+                        similar_to = NA_character_))
     }
     if (b %in% struct_base) {
       i <- which(struct_base == b)[1]
@@ -1888,7 +1906,11 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'   goes up out of the package.
 #'
 #' A reference left as written is marked `as_written`; it is not counted as
-#' rewritten, and not as a missing input.
+#' rewritten, and not as a missing input. The exception is a file the
+#' package has only inside an archive, read at the path unpacking it would
+#' give: as the package is, that path does not exist, so the reference is
+#' not found, and the file becomes a missing input (`in_archive` in
+#' [repro_missing_inputs()]).
 #'
 #' @param rw a [repro_rewrite_paths()] result for one script
 #' @param plan the package layout's plan ([.repro_package_plan()])
@@ -1915,6 +1937,16 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   # a path built by sprintf()/file.path() is kept unless it holds an absolute path
   absolute_call <- is_call & grepl("[\"']([A-Za-z]:[/\\\\]|/|~)", rw$ref, perl = TRUE)
   keep <- in_place | (!relocate & ((is_call & !absolute_call) | (!is_call & !absolute & !up)))
+  # A file found by name only inside an archive ("data.zip/data/x.csv"),
+  # read at the path unpacking the archive would give it ("data/x.csv"): the
+  # code runs on the package as it is, where that path does not exist, so the
+  # reference is not found, and the file is a missing input (#520, item 2).
+  arch_re <- "(^|/)[^/]+\\.(zip|tar|tgz|tar\\.gz)/"
+  tgt <- if ("target" %in% names(rw)) sub("^(\\./)+", "", gsub("\\\\", "/", rw$target)) else rep(NA_character_, nrow(rw))
+  unpacked <- sub(arch_re, "\\1", tgt)
+  in_archive <- keep & !in_place & !is.na(tgt) & grepl(arch_re, tgt) &
+    (unpacked == ref | endsWith(unpacked, paste0("/", ref)))
+  keep <- keep & !in_archive
 
   rw$matched[relocate] <- TRUE
   rw$ambiguous[relocate] <- FALSE
@@ -1923,6 +1955,8 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   rw$matched[keep] <- TRUE
   rw$ambiguous[keep] <- FALSE
   rw$target[keep] <- rw$ref[keep]
+  rw$matched[in_archive] <- FALSE
+  rw$target[in_archive] <- NA_character_
   rw
 }
 

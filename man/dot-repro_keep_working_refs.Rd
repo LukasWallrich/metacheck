@@ -36,6 +36,10 @@ goes up out of the package.
 }
 \details{
 A reference left as written is marked \code{as_written}; it is not counted as
-rewritten, and not as a missing input.
+rewritten, and not as a missing input. The exception is a file the
+package has only inside an archive, read at the path unpacking it would
+give: as the package is, that path does not exist, so the reference is
+not found, and the file becomes a missing input (\code{in_archive} in
+\code{\link[=repro_missing_inputs]{repro_missing_inputs()}}).
 }
 \keyword{internal}
