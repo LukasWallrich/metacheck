@@ -120,7 +120,8 @@ reg_check <- function(paper,
   if (length(rc_list) == 0) {
     # no na_replace here: a failed check is unknown (NA), not zero
     resp <- list(
-      traffic_light = "error",
+      # "fail": "error" is not one of metacheck's lights (U30)
+      traffic_light = "fail",
       summary_text = paste0(
         "We found ", nrow(prereg_info), " preregistration",
         plural(nrow(prereg_info)),

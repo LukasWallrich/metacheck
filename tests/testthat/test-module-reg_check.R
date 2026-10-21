@@ -155,7 +155,7 @@ test_that("all comparisons failing returns an error light", {
     "RegCheck comparison failed"
   )
 
-  expect_equal(mo$traffic_light, "error")
+  expect_equal(mo$traffic_light, "fail")   # "error" is not a light (U30)
   expect_match(mo$summary_text, "RegCheck comparison failed")
   expect_true(is.na(mo$summary_table$regcheck_deviations))
 }, "mock")

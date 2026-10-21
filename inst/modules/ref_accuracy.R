@@ -79,7 +79,8 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
 
   if (nrow(bib_match) == 0) {
     norefs <- list(
-      traffic_light = "error",
+      # "fail": "error" is not one of metacheck's lights (U30)
+      traffic_light = "fail",
       summary_text = "We found no bib_match entries. You may need to add them with `add_bib_match()`."
     )
     return(norefs)
