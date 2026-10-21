@@ -2097,13 +2097,17 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
   # start (allowing leading whitespace), so a call inside a longer expression
   # is still caught by the call token. The quoted argument (if any) is
   # captured for the warning.
+  # Also base::setwd(), and chdir() after `from os import chdir` or under
+  # another module name (o.chdir()): only setwd( and os.chdir( were caught,
+  # so such a call ran and failed on the author's own path
+  # (tue_datamanager_check#4, item 5). Not mychdir( or print(chdir).
   setwd_line_for <- list(
-    R = "^(\\s*)(setwd\\s*\\(.*)$",
-    Python = "^(\\s*)(os\\.chdir\\s*\\(.*)$"
+    R = "^(\\s*)((?:base::)?setwd\\s*\\(.*)$",
+    Python = "^(\\s*)((?:[A-Za-z_][A-Za-z0-9_]*\\.)?chdir\\s*\\(.*)$"
   )
   setwd_arg_for <- list(
-    R = "setwd\\s*\\(\\s*['\"]([^'\"]+)['\"]",
-    Python = "os\\.chdir\\s*\\(\\s*['\"]([^'\"]+)['\"]"
+    R = "(?:base::)?setwd\\s*\\(\\s*['\"]([^'\"]+)['\"]",
+    Python = "(?:[A-Za-z_][A-Za-z0-9_]*\\.)?chdir\\s*\\(\\s*['\"]([^'\"]+)['\"]"
   )
 
   rows <- lapply(seq_along(code_text_list), function(i) {

@@ -625,6 +625,30 @@ test_that("repro_write_scripts replaces setwd() with a no-op and records it", {
                         written)))
 })
 
+test_that("repro_write_scripts removes base::setwd() and chdir() under any module name (tue_datamanager_check#4)", {
+  # only setwd( and os.chdir( were caught, so `from os import chdir` ...
+  # chdir(DIR) ran and failed on the author's Windows path
+  empty_rw <- function(fn) stats::setNames(list(data.frame(
+    ref = character(0), basename = character(0), matched = logical(0),
+    target = character(0), ambiguous = logical(0), n_candidates = integer(0),
+    is_call = logical(0))), fn)
+  root <- withr::local_tempdir()
+  py_code <- list("c.py" = c("from os import chdir", 'chdir("C:/Users/author")',
+                             "import os as o", 'o.chdir("x")', "print(chdir)", "mychdir(1)"))
+  out_py <- repro_write_scripts(py_code, empty_rw("c.py"),
+                                data.frame(file_name = "c.py", target_path = "c.py"),
+                                root, lang = "Python")
+  written <- readLines(out_py$script_path)
+  expect_equal(out_py$setwd_removed, 2)
+  expect_true(any(grepl("^pass  # \\[reproducibility_check removed os.chdir\\] chdir", written)))
+  expect_true("print(chdir)" %in% written)
+  expect_true("mychdir(1)" %in% written)
+  r_code <- list("d.R" = c('base::setwd("/Users/author")', "x <- 1"))
+  out_r <- repro_write_scripts(r_code, empty_rw("d.R"),
+                               data.frame(file_name = "d.R", target_path = "d.R"), root)
+  expect_equal(out_r$setwd_removed, 1)
+})
+
 test_that("repro_write_scripts keeps a block valid when setwd()/os.chdir() is its only statement (#480)", {
   empty_rw <- function(fn) stats::setNames(list(data.frame(
     ref = character(0), basename = character(0), matched = logical(0),
