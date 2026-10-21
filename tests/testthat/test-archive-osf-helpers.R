@@ -450,3 +450,21 @@ test_that("osf_api_check applies on_error when offline (U53)", {
   expect_warning(osf_api_check(on_error = "warn"), "no internet")
   expect_equal(osf_api_check(on_error = "ignore"), "no internet")
 })
+
+test_that("OSF helpers: a versioned GUID goes to /guids/, and only folders take a provider's name (U52)", {
+  # abcde_v1 was sent to /files/; folders & is.na(name) mixed positions with
+  # TRUE/FALSE and renamed unnamed non-folder rows
+  sent <- character(0)
+  local_mocked_bindings(.batch_query = function(urls, ...) {
+    sent <<- c(sent, urls)
+    lapply(urls, function(u) NULL)
+  })
+  suppressWarnings(metacheck:::.osf_info("abcde_v1"))
+  expect_match(sent[1], "/guids/abcde_v1", fixed = TRUE)
+
+  data <- list(id = c("f1", "x2"), type = c("files", "files"),
+               attributes = data.frame(name = c(NA, NA), kind = c("folder", "file"),
+                                       provider = c("osfstorage", "osfstorage")))
+  obj <- metacheck:::.osf_file_data(data)
+  expect_equal(obj$name, c("osfstorage", NA))
+})

@@ -178,7 +178,8 @@ osf_pat <- function(pat = NULL) {
   osf_api <- getOption("metacheck.osf.api")
 
   # Separate 5-char GUIDs from 24-char waterbutler IDs
-  is_guid <- nchar(valid_ids) %in% 5
+  # a versioned GUID (abcde_v1) is a GUID too: it was sent to /files/ (U52)
+  is_guid <- grepl("^[a-z0-9]{5}(_v[0-9]+)?$", valid_ids, ignore.case = TRUE)
   is_vo <- grepl("/?\\?\\s*view_only=", valid_ids)
   # id_vo <- strsplit(valid_ids[is_vo], "/?\\?\\s*view_only=")
   # vo_ids <- sapply(id_vo, `[[`, 1)
@@ -581,7 +582,8 @@ osf_pat <- function(pat = NULL) {
     parent = data$relationships$parent_folder$data$id %||%
       data$relationships$target$data$id %||% NA_character_,
     project = data$relationships$target$data$id %||%
-      data$relationships$root$data$id %||% NA_character_
+      # [[ ]]: $root matched root_folder when root was missing (U52)
+      data$relationships[["root"]]$data$id %||% NA_character_
   )
 
   # guess file type
@@ -589,7 +591,9 @@ osf_pat <- function(pat = NULL) {
   obj$filetype[is_file] <- filetype(obj$name[is_file])
 
   folders <- which(obj$kind == "folder")
-  noname <- folders & is.na(obj$name)
+  # a logical test per row: `folders & is.na(...)` mixed row numbers with
+  # TRUE/FALSE, so unnamed rows that are not folders were renamed too (U52)
+  noname <- obj$kind %in% "folder" & is.na(obj$name)
   obj$name[noname] <- obj$provider[noname] # name unnamed folders after the provider
   if (length(folders) &&
       !is.null(data$relationships$root_folder$data$id)) {
