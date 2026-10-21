@@ -403,3 +403,19 @@ test_that("stat tables: a row without content is dropped, and fields are read by
   ids <- .stat_result_ids(list(list(line_seq = 3L, analysis = "x")), "f.R")
   expect_false(grepl("l3", ids))
 })
+
+test_that("an Mplus section header at the end, or right before another, has no lines (U147)", {
+  # (h + 1):end counted down and gave NA or the next header
+  x <- c("", "MODEL RESULTS", "a 1", "", "TECHNICAL OUTPUT")
+  s <- .mplus_sections(x)
+  expect_equal(s[[2]]$lines, character(0))
+  expect_true(is.na(.mplus_syntax_lines(c("x", "INPUT INSTRUCTIONS"))))
+})
+
+test_that("SMCL: hex characters, literal braces and a huge dup count (U146)", {
+  # {c 0x41} was read as decimal, {c -(} {c )-} were dropped, and a {dup}
+  # count outside the integer range made the column NA
+  expect_equal(.smcl_render_line("{c 0x41}BC"), "ABC")
+  expect_equal(.smcl_render_line("x {c -(}a{c )-} y"), "x {a} y")
+  expect_equal(.smcl_render_line("{dup 99999999999:-}{col 10}|"), "          |")
+})

@@ -111,6 +111,8 @@
 * `stat_p_exact` reports "p < .000" and "p == .000" as zero, treats "==" as "=" (it counted as imprecise; in `stat_p_nonsig` as non-significant), lets a starred footnote ("*p < .05") excuse only that p-value instead of every p-value in its sentence (and no longer "*p < .005"), and lists the same p-value once (#507: U127)
 * `module_run()` fills missing summary values (`na_replace`) only in the columns the module adds: in a chain, an unnamed `na_replace = 0` or `FALSE` (as in `stat_check`, `marginal`, `coi_check`) also filled the earlier modules' NA cells, turning list columns into numbers (#507: U77)
 * `reg_check` leaves a missing judgement out of its counts (the summary read "flagged NA potential deviationNA", and `na_replace` turned the counts into 0), and gives each paper and preregistration its own report section, naming the paper when several papers link the same preregistration; they shared one section (#507: U120)
+* Reading Mplus output: a section header that is the last line, or is followed directly by another header, has no lines; its lines were NA or the next header (#507: U147)
+* Reading Stata (SMCL) output: `{c 0xNN}` is read as hexadecimal (`{c 0x41}` gave ")"), `{c -(}` and `{c )-}` give literal braces (they were dropped), and a `{dup}` count outside the integer range is left out instead of making the line NA (#507: U146)
 
 # metacheck 0.4.0
 

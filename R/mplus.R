@@ -153,9 +153,12 @@
   header_idx <- which(vapply(lines, .mplus_is_section_header, logical(1)))
   if (!length(header_idx)) return(list())
   ends <- c(header_idx[-1] - 1L, length(lines))
+  # a header that is the last line, or followed directly by another header,
+  # has no lines: (h + 1):end counted down and gave NA or the next header (U147)
   lapply(seq_along(header_idx), function(k) {
     list(title = trimws(lines[[header_idx[k]]]),
-         lines = lines[(header_idx[k] + 1L):ends[k]])
+         lines = if (ends[k] > header_idx[k]) lines[(header_idx[k] + 1L):ends[k]]
+                 else character(0))
   })
 }
 
@@ -546,6 +549,7 @@ import_mplus_output <- function(path) {
   start <- which(grepl("^INPUT INSTRUCTIONS\\s*$", trimws(lines)))
   if (!length(start)) return(NA_character_)
   start <- start[[1]] + 1L
+  if (start > length(lines)) return(NA_character_)   # the header is the last line (U147)
   # Ends at the next blank-then-nonblank ALL-CAPS header, OR at a "*** WARNING"/
   # "*** ERROR" block (Mplus prints those immediately after the echoed input,
   # still logically part of "what happened before the model ran" but not
