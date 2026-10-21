@@ -1587,3 +1587,18 @@ test_that("data_check warns about a column that needs an R package to be read (L
   expect_match(f$detail, "type Span, from the R package notinstalledpkg, so the file cannot be read without that package")
   expect_false(mo$traffic_light == "green")
 })
+
+test_that("data_check warns about an .rds file made with save() (Lakens/tue_datamanager_check#5, item 3)", {
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  # as in OSF zy7u6: only named number vectors, no data frame
+  v1 <- c(o = 1, c = 2); v2 <- c(o = 3, c = 4)
+  save(v1, v2, file = file.path(d, "demos.rds"))
+  utils::write.csv(data.frame(x = 1:20, y = 20:1), file.path(d, "other.csv"), row.names = FALSE)
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  f <- mo$findings[mo$findings$check == "R workspace named .rds", ]
+  expect_equal(f$source_file, "demos.rds")
+  expect_match(f$detail, "saved with save(), not saveRDS()", fixed = TRUE)
+  expect_false(mo$traffic_light == "green")
+  expect_match(mo$summary_text, "saved with save() instead of saveRDS()", fixed = TRUE)
+})

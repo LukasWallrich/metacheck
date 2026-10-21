@@ -252,3 +252,18 @@ test_that("data_read_head reads a column whose values need an R package that is 
   expect_identical(attr(data_read_head(rds, n_rows = 2), "s4_converted"),
                    c(span = "Span, from the R package notinstalledpkg"))
 })
+
+test_that("data_read_head reads an .rds file made with save() (Lakens/tue_datamanager_check#5, item 3)", {
+  d <- data.frame(x = 1:3, y = c("p", "q", "r"))
+  ws <- withr::local_tempfile(fileext = ".rds")
+  save(d, file = ws)
+  expect_true(.rds_is_workspace(ws))
+  expect_no_warning(df <- data_read_head(ws, n_rows = Inf))
+  expect_equal(df$x, 1:3)
+  # a real .rds file is not taken for one
+  rds <- withr::local_tempfile(fileext = ".rds")
+  saveRDS(d, rds)
+  expect_false(.rds_is_workspace(rds))
+  saveRDS(d, rds, compress = FALSE)
+  expect_false(.rds_is_workspace(rds))
+})

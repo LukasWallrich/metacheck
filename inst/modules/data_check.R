@@ -733,6 +733,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # models / session objects, or could not be restored). Flagged as a
   # data-sharing recommendation: share the underlying data as CSV + codebook.
   workspace_files <- character(0)
+  # .rds files that are R workspaces, made with save() rather than saveRDS():
+  # readRDS() cannot open them (Lakens/tue_datamanager_check#5, item 3).
+  rds_workspace_files <- character(0)
   # Files that read as a data frame but are not a usable rectangular dataset
   # (human-formatted coding worksheets: mostly free-text columns and/or almost
   # entirely empty; see .tabular_usable()). Columns are NOT extracted from these
@@ -758,10 +761,13 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # columns data_read_head could only read as their plain stored values,
       # because their values need an R package (see .plain_s4_columns())
       s4_conv <- attr(df, "s4_converted") %||% character(0)
+      rds_ws <- tolower(tools::file_ext(f$file_name)) == "rds" &&
+        .rds_is_workspace(f$file_location)
+      if (rds_ws) rds_workspace_files <<- c(rds_workspace_files, f$source_file)
       if (is.null(df) || ncol(df) == 0) {
         # An .RData/.rda that yielded no data frame is an analysis workspace,
         # not reusable shared data — record it for a sharing recommendation.
-        if (tolower(tools::file_ext(f$file_name)) %in% c("rdata", "rda"))
+        if (rds_ws || tolower(tools::file_ext(f$file_name)) %in% c("rdata", "rda"))
           workspace_files <<- c(workspace_files, f$source_file)
         return(NULL)
       }
@@ -1390,6 +1396,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # for the same reason: such a file reads as one column of text, so it never
   # yields a usable preview to check (see .dv_space_csv_findings() below).
   space_csv_findings_df <- .dv_space_csv_findings(structure_df)
+  rds_ws_findings_df <- .dv_rds_workspace_findings(rds_workspace_files)
 
   # Per-paper spreadsheet counts, for both the early return (empty(), below)
   # and the main return's dv_summary_table.
@@ -1442,7 +1449,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # where codebook_check and psychds_check expect the column table -- so such
   # a paper's whole data_check summary and report were lost.
   empty <- function(text) {
-    file_findings_df <- dplyr::bind_rows(spreadsheet_findings_df, space_csv_findings_df)
+    file_findings_df <- dplyr::bind_rows(spreadsheet_findings_df, space_csv_findings_df,
+                                         rds_ws_findings_df)
     if (nrow(spreadsheet_findings_df) > 0)
       text <- paste(text, .dv_spreadsheet_summary_text(spreadsheet_findings_df,
                                                        n_spreadsheet_files))
@@ -1874,7 +1882,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # "Potential Issues" table but are excluded from n_flagged/check_counts
   # below, which are column-level tallies.
   findings_df <- dplyr::bind_rows(findings_df, spreadsheet_findings_df,
-                                  space_csv_findings_df)
+                                  space_csv_findings_df, rds_ws_findings_df)
 
 
 
@@ -1957,6 +1965,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (nrow(spreadsheet_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
   # Same for a .csv separated by spaces, whose columns could not be checked.
   if (nrow(space_csv_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
+  # And for an .rds file that readRDS() cannot open.
+  if (nrow(rds_ws_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
 
   # ── 4. Report ────────────────────────────────────────────────────────────────
   dv_summary_text <- if (n_flagged == 0) {
@@ -2013,6 +2023,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (nrow(space_csv_findings_df) > 0)
     dv_summary_text <- paste(dv_summary_text,
                              .dv_space_csv_summary_text(space_csv_findings_df))
+  if (nrow(rds_ws_findings_df) > 0)
+    dv_summary_text <- paste(dv_summary_text,
+                             .dv_rds_workspace_summary_text(rds_ws_findings_df))
 
   dv_report <- c(
     "This module runs automated data-quality checks (empty columns, SPSS filter variables, category casing, stray whitespace, numbers stored as text, problematic and colliding column names, mixed text encodings, personal information, spreadsheet formatting, and careless responding) on the extracted data files.",
@@ -2740,6 +2753,31 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
       "with spaces is not good practice: a value that itself contains a space",
       "cannot be told apart from the separator. Save the file as a",
       "comma-separated .csv (or a tab-separated .tsv)."))
+}
+
+# An .rds file made with save() (an R workspace) instead of saveRDS(): one
+# file-level finding each, in the shared (source_file, column, label, check,
+# detail) shape (Lakens/tue_datamanager_check#5, item 3).
+.dv_rds_workspace_findings <- function(files) {
+  files <- unique(files)
+  data.frame(
+    source_file = files, column = rep(NA_character_, length(files)),
+    label = rep(NA_character_, length(files)),
+    check = rep("R workspace named .rds", length(files)),
+    detail = rep(paste(
+      # No "." before the first full stop: .dv_issue_cell() shows the text up
+      # to the first "." as the short description.
+      "This file was saved with save(), not saveRDS(), so it is an R workspace",
+      "with the extension .rds and readRDS() cannot open it. metacheck opened",
+      "it with load() instead. Rename it to .RData, or save it with saveRDS();",
+      "better still, share the data in an open format such as CSV."), length(files)))
+}
+
+.dv_rds_workspace_summary_text <- function(findings_df) {
+  n <- length(unique(findings_df$source_file))
+  sprintf("%d .rds file%s %s saved with save() instead of saveRDS(), so readRDS() cannot open %s; rename %s to .RData: %s.",
+          n, plural(n), if (n == 1) "was" else "were", if (n == 1) "it" else "them",
+          if (n == 1) "it" else "them", paste(unique(findings_df$source_file), collapse = ", "))
 }
 
 .dv_space_csv_summary_text <- function(findings_df) {

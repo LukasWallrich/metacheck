@@ -2521,7 +2521,11 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
         df <- import_omv(path)$data
         if (is.data.frame(df) && is.finite(n_rows)) .head_keep_attrs(df, n_rows) else df
       },
-      rds = {
+      rds = if (.rds_is_workspace(path)) {
+        # made with save(), not saveRDS(): readRDS() refuses it ("unknown
+        # input format"), load() opens it (Lakens/tue_datamanager_check#5, item 3)
+        .read_rdata_isolated(path, n_rows)
+      } else {
         obj <- readRDS(path)
         if (is.data.frame(obj)) {
           obj <- .plain_s4_columns(obj)
@@ -2548,6 +2552,20 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     warning("Could not read ", basename(path), ": ", conditionMessage(e))
     NULL
   })
+}
+
+# Whether an .rds file is really an R workspace, made with save() rather than
+# saveRDS(): after decompressing (gzfile() also reads bzip2, xz and
+# uncompressed files) it starts with "RDX" or "RDA" and a format version,
+# where a saveRDS() file starts with "X\n" or "A\n"
+# (Lakens/tue_datamanager_check#5, item 3).
+.rds_is_workspace <- function(path) {
+  magic <- tryCatch({
+    con <- gzfile(path, "rb")
+    on.exit(close(con))
+    readBin(con, "raw", 4)
+  }, error = function(e) raw(0))
+  length(magic) == 4 && grepl("^RD[XAB][23]$", rawToChar(magic))
 }
 
 # A column of values of a formal (S4) class, such as lubridate's periods and
