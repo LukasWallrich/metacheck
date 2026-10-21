@@ -267,7 +267,7 @@ rtransparent_funding <- function(text) {
   )
   synonyms[["researches"]] <- c(
     "[Ww]orks", "[Ss]tudies", "[Pp]rojects", "[Tt]rials", "[Pp]ublications",
-    "[Rr]eports", "[Pp]rograms", "[Pp]papers", "[Mm]anuscripts",
+    "[Rr]eports", "[Pp]rograms", "[Pp]apers", "[Mm]anuscripts",
     "[Aa]nalyses", "[Ii]nvestigations"
   )
 
@@ -364,8 +364,11 @@ rtransparent_funding <- function(text) {
   synonyms[["acknowledge"]] <- c("acknowledge", "recognize", "disclose", "declare", "report", "appreciate")
   synonyms[["acknowledged"]] <- c("acknowledged", "recognized", "disclosed", "declared", "reported", "appreciated")
 
+  # typos fixed: "Ffoundation", "[Pp]papers" (above), "L(?i)terature",
+  # "B(?i)ibliograpy" never matched, and "Conflicting financial intere" left
+  # caseless matching on for the later patterns (U104)
   synonyms[["foundation"]] <- c(
-    "Ffoundation(|s)", "Institut(e|es|ution)", "Universit", "Universit(y|ies)",
+    "Foundation(|s)", "Institut(e|es|ution)", "Universit", "Universit(y|ies)",
     "Academ(y|ies)", "Ministr(y|ies)", "[Gg]overnment(|s)", "Council(|s)",
     "National", "NIH", "NSF", "HHMI", "Trust(|s)", "Association(|s)",
     "Societ(y|ies)", "College(|s)", "Commission(|s)", "Center(|s)",
@@ -374,9 +377,9 @@ rtransparent_funding <- function(text) {
   synonyms[["foundation_award"]] <- c(synonyms[["foundation"]], synonyms[["award"]])
 
   synonyms[["References"]] <- c(
-    "R(?i)eferences(?-i)", "L(?i)terature(?-i)", "L(?i)iterature Cited(?-i)",
+    "R(?i)eferences(?-i)", "L(?i)iterature(?-i)", "L(?i)iterature Cited(?-i)",
     "N(?i)otes and References(?-i)", "W(?i)orks Cited(?-i)", "^C(?i)itations(?-i)",
-    "B(?i)ibliograpy(?-i)", "B(?i)ibliographic references(?-i)", "R(?i)eferences and recommended reading(?-i)"
+    "B(?i)ibliography(?-i)", "B(?i)ibliographic references(?-i)", "R(?i)eferences and recommended reading(?-i)"
   )
 
   synonyms[["Methods"]] <- c(
@@ -405,7 +408,7 @@ rtransparent_funding <- function(text) {
     "C(?i)onflict(|s) of interest(|s) declaration(?-i)",
     "C(?i)onflicting interest(|s)(?-i)",
     "C(?i)onflicting interest(|s) declaration(?-i)",
-    "C(?i)onflicting financial intere",
+    "C(?i)onflicting financial interest(|s)(?-i)",
     "C(?i)onflicting of interest(|s)(?-i)",
     "C(?i)onflits d'int(?-i)",
     "C(?i)onflictos de Inter(?-i)",
@@ -633,7 +636,9 @@ obliterate_disclosure_1 <- function(article) {
   words <- c("References")
   next_sentence <- "((|:|\\.)|(|:|\\.) [A-Z0-9]+.*)$"
 
-  pats <- lapply(synonyms[words], function(x) paste0(x, next_sentence))
+  # at the start of the sentence: any sentence with "References" near its
+  # end was taken as the start of the reference list (U104)
+  pats <- lapply(synonyms[words], function(x) paste0("^\\s*", sub("^\\^", "", x), next_sentence))
   pats <- lapply(pats, .encase)
   pattern <- paste(unlist(pats), collapse = "|")
   ref_index <- grep(pattern, article, perl = TRUE)

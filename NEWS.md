@@ -93,6 +93,7 @@
 * `causal_claims` finds randomisation written with an s ("randomised"), leaves out negated statements ("not randomized", "non-randomized"), and counts a sentence that describes random assignment next to random effects ("randomly assigned ... random intercepts"), which was dropped whole (#507: U85)
 * `coi_check` keeps a statement that ends with "Nil.", "No.", "None mentioned." or "Nothing to declare.": these were emptied and dropped, so the paper got a red light (#507: U95)
 * `paper_id()` takes each paper's own id, so a paper whose info table has no rows keeps its id in a paper list (it was read from the info tables, so the id was lost and its rows got paper_id NA in `ethics_check` and elsewhere). `ethics_check` quotes each ethics statement once; one found in several places was quoted each time (#507: U102)
+* `funding_check`: the synonyms "Foundation", "papers", "Literature" and "Bibliography" were misspelled in their patterns and never matched, and an unclosed caseless part made later patterns ignore case; the reference list is found at a sentence that begins with its title, not at any sentence that ends with "References" and a capitalised word (#507: U104)
 
 # metacheck 0.4.0
 
