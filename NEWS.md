@@ -128,6 +128,7 @@
 * `marginal` cites its reference as "Olsson-Collentine A, van Assen MALM, Hartgerink CHJ (2019)"; the authors, written as one string, were printed as "van Assen, M. MAL, Hartgerink &amp;, J. CH" (#507: U3)
 * Internal ids of reported statistics are tidy: a missing source file gives the prefix "result" (it gave "na_na_result"), the fallback id no longer repeats the source prefix ("odd_name_spv_odd_name_spv_t3_a"), and both a leading and a trailing underscore are trimmed (#507: U138)
 * Reproducibility helpers: `repro_missing_inputs()` reports a withheld file without its size when there is no `file_size` column (it stopped), the "already installed" row of `repro_install_deps()` has the same columns as the others, byte-identical mirrors tied between study groups keep the first group listed (not the alphabetically first), and a CRAN Archive line without a date sorts last instead of stopping the install (#507: U135)
+* The LLM cache key no longer includes the R version: it hashed R's serialisation, whose header records the version of R that wrote it, so upgrading R emptied the cache. Because the key changes once, existing cached answers are not found after this update. A `GITHUB_PAT` no longer makes the defunct "github" provider the default language model (#507: U20, partly: `llm_timeout()` still bounds only Ollama requests)
 
 # metacheck 0.4.0
 

@@ -29,8 +29,9 @@
     portkey = Sys.getenv("PORTKEY_API_KEY"),
     # No API KEYS
     azure_openai = Sys.getenv("AZURE_OPENAI_ENDPOINT"),
-    databricks = Sys.getenv("DATABRICKS_HOST"),
-    github = Sys.getenv("GITHUB_PAT")
+    databricks = Sys.getenv("DATABRICKS_HOST")
+    # not GITHUB_PAT: the github provider no longer works (models_github() is
+    # defunct), and a GITHUB_PAT set for other tools made it the default (U20)
   )
   api_keys <- api_keys[api_keys != ""]
   if (length(api_keys)) {
