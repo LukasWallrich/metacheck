@@ -88,8 +88,8 @@ ref_replication <- function(paper, show_outcomes = FALSE) {
   if (nrow(table) == 0) {
     summary_text <- "No citations to articles in the FLoRA database were found."
     report <- sprintf(
-      "We checked %d references with DOIs. %s",
-      sum(!is.na(bib$doi)), summary_text
+      "We checked %d reference%s with DOIs. %s",   # "1 references" (U82)
+      sum(!is.na(bib$doi)), plural(sum(!is.na(bib$doi))), summary_text
     )
   } else {
     ## summary_text ----

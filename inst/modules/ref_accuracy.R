@@ -336,7 +336,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     if (n_nodoi > 0) " Adding a DOI to every reference that has one lets the other reference checks (retraction, PubPeer, and replication) run on them too." else ""
   )
 
-  guidance <- "The references below supplied a DOI, but one or more of the cited details (title, authors, journal, or year) does not match the record that DOI points to. Such an incoherent is most often an error in reading the reference from the PDF, but it could be a mistake, ar an AI generated reference. Check each against the original source. Incoherent references are mostly PDF parsing errors (we are working on improving reference parsing)."
+  guidance <- "The references below supplied a DOI, but one or more of the cited details (title, authors, journal, or year) does not match the record that DOI points to. Such an incoherence is most often an error in reading the reference from the PDF, but it could be a mistake, or an AI-generated reference. Check each against the original source. Incoherent references are mostly PDF parsing errors (we are working on improving reference parsing)."
 
   if (n_inc == 0) guidance <- ""
 

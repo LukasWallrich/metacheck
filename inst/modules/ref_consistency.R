@@ -87,7 +87,7 @@ ref_consistency <- function(paper) {
   report_table <- report_table[, cols]
 
   report_text <- c(
-    "This module relies on Grobid correctly parsing the references. There are likley to be some false positives.",
+    "This module relies on Grobid correctly parsing the references. There are likely to be some false positives.",
     scroll_table(report_table)
   )
 

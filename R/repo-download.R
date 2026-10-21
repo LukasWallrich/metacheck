@@ -1132,7 +1132,9 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
       sprintf("archive exceeded the %s MB cap during download and was aborted",
               .cap_num(round(max_bytes / (1024 * 1024))))
     } else if (isTRUE(timed_out)) {
-      sprintf("archive download exceeded the %ds timeout", timeout_s)
+      # whole seconds: %d with a fractional timeout failed, and its own error
+      # ("invalid format '%d'") was reported instead (U73)
+      sprintf("archive download exceeded the %ds timeout", as.integer(ceiling(timeout_s)))
     } else if (!file.exists(zip_tmp) || file.size(zip_tmp) == 0) {
       "empty response"
     } else {
@@ -1155,7 +1157,9 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
   lookup_paths <- gsub("\\\\", "/", lookup_paths)
   lookup_paths <- gsub("^/+",  "",  lookup_paths)
 
-  rel <- files$file_path[row_idx]
+  # without a file_path column the paths were empty, nothing matched, and
+  # the archive was downloaded for nothing (U73)
+  rel <- (files$file_path %||% files$file_name)[row_idx]
   empty_rel <- is.na(rel) | !nzchar(rel %||% "")
   rel[empty_rel] <- files$file_name[row_idx][empty_rel]
   rel <- gsub("\\\\", "/", rel)

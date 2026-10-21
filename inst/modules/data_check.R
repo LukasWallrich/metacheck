@@ -1818,8 +1818,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   }
   if (n_careless_files > 0 && !careless_avail)
     careless_note <- sprintf(
-      "%d file%s contain survey data with an identifier, but careless-response checks were skipped because the `careless` package is not installed. Install it with `install.packages(\"careless\")` to screen for straightlining and other careless responding.",
-      n_careless_files, plural(n_careless_files))
+      "%d file%s contain%s survey data with an identifier, but careless-response checks were skipped because the `careless` package is not installed. Install it with `install.packages(\"careless\")` to screen for straightlining and other careless responding.",
+      n_careless_files, plural(n_careless_files),
+      plural(n_careless_files, "s", ""))   # "1 file contain" (U82)
 
   careless_block_df <- if (length(careless_specs) > 0) dplyr::bind_rows(careless_specs) else
     data.frame(source_file = character(0), scale = character(0),
@@ -2106,8 +2107,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     n_short <- sum(careless_df$short_scale_only %in% TRUE)
     dv_report <- c(dv_report,
       "#### Careless Responding",
-      sprintf("%d distinct respondent%s were flagged for **straightlining**: giving the same answer for at least 80%% of the items in a multi-item scale of %d items or more. One respondent can be flagged in several scales; the table below is **one row per person**, and the *Longest run* column gives the run that triggered the strongest flag, so you can check it against the raw data.",
-              n_car, plural(n_car), .dv_careless_min_items),
+      sprintf("%d distinct respondent%s %s flagged for **straightlining**: giving the same answer for at least 80%% of the items in a multi-item scale of %d items or more. One respondent can be flagged in several scales; the table below is **one row per person**, and the *Longest run* column gives the run that triggered the strongest flag, so you can check it against the raw data.",
+              n_car, plural(n_car), plural(n_car, "was", "were"),   # "1 respondent were" (U82)
+              .dv_careless_min_items),
       if (n_short > 0) sprintf(
         "Of these, **%d were flagged *only* by short-scale straightlining** (a run of identical answers on a scale of %d items or fewer). On a short, one-directional scale, answering consistently is often normal, coherent responding rather than carelessness — treat these as weak signals and inspect the actual responses before excluding anyone.",
         n_short, .dv_short_scale_max) else NULL,

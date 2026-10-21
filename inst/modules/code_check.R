@@ -514,8 +514,8 @@ code_check <- function(paper, local_path = NULL,
     report_table_library <- NULL
   } else {
     report_library <- sprintf(
-      "Best programming practice is to load all required libraries/imports in one block near the top of the code. In %d code files, libraries/imports were at multiple places (i.e., with more than 3 non-comment lines in between).",
-      length(library_issue)
+      "Best programming practice is to load all required libraries/imports in one block near the top of the code. In %d code file%s, libraries/imports were at multiple places (i.e., with more than 3 non-comment lines in between).",
+      length(library_issue), plural(length(library_issue))   # "1 code files" (U82)
     )
     summary_library <- sprintf(
       "Libraries/imports were loaded in multiple places in %s.",
