@@ -1478,3 +1478,12 @@ test_that("match_reported_output: missing or empty test_id, Inf values, a paper 
   expect_error(match_reported_output(paperlist(test_paper(), test_paper()), out),
                "call it for each paper")
 })
+
+test_that("repro_missing_inputs reports a withheld file without a file_size column (U135)", {
+  # without a file_size column the function stopped
+  plan <- data.frame(file_name = character(0), target_path = character(0))
+  structure_df <- data.frame(file_name = character(0), file_location = character(0))
+  out <- repro_missing_inputs("big.csv", plan, structure_df,
+                              skipped = data.frame(file_name = "big.csv"))
+  expect_equal(out$status, "withheld_size")
+})

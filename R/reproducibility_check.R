@@ -798,9 +798,12 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
       # all-NA groups) keep the first occurrence, same "do not guess further"
       # spirit as the rest of this function.
       grp_of <- .data_group_from_path(plan$target_path[grp_cand])
-      tab <- table(grp_of[!is.na(grp_of)])
-      rep_i <- if (length(tab) > 0) grp_cand[which(!is.na(grp_of) &
-                grp_of == names(tab)[which.max(tab)])[1]] else grp_cand[1]
+      # a tie keeps the first listed group, as the comment says: table()
+      # sorts its names, so a tie went to the alphabetically first (U135)
+      seen <- unique(grp_of[!is.na(grp_of)])
+      counts <- tabulate(match(grp_of, seen), nbins = length(seen))
+      rep_i <- if (length(seen) > 0) grp_cand[which(!is.na(grp_of) &
+                grp_of == seen[which.max(counts)])[1]] else grp_cand[1]
       keep <- c(keep, rep_i)
     }
     keep
@@ -1536,7 +1539,10 @@ repro_missing_inputs <- function(refs, plan, structure_df, skipped = NULL) {
   rows <- lapply(refs, function(b) {
     if (b %in% skip_base) {
       i <- which(skip_base == b)[1]
-      sz <- suppressWarnings(as.numeric(skipped$file_size[i]))
+      # without a file_size column the size is left out: NULL[i] stopped the
+      # function ("argument is of length zero") (U135)
+      sz <- if ("file_size" %in% names(skipped))
+        suppressWarnings(as.numeric(skipped$file_size[i])) else NA_real_
       mb <- if (is.finite(sz)) sprintf(" (%.0f MB)", sz / (1024 * 1024)) else ""
       return(data.frame(basename = b, status = "withheld_size",
                         detail = sprintf(
@@ -2342,8 +2348,9 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
     cran_main <- identical(src, "cran") && isTRUE(cran_to_main_lib)
     if (cran_main && length(find.package(pkg, lib.loc = old_lib, quiet = TRUE)) > 0) {
       message("[repro]     '", pkg, "' already installed (main library); skipping.")
+      # the same columns as every other row, with category NA (U135)
       return(data.frame(package = pkg, source = src, installed = TRUE, message = "",
-                        via_archive = FALSE))
+                        via_archive = FALSE, category = NA_character_))
     }
     # DEBUG (TEMPORARY — remove before release): quiet = FALSE so compilation
     # progress is visible; a slow install then reads as work, not a hang.
@@ -2570,11 +2577,14 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
     return(fail("package not found in the CRAN Archive"))
 
   date_pat <- "(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2})"
-  dates <- suppressWarnings(as.POSIXct(
-    sub(paste0(".*", date_pat, ".*"), "\\1", hit_lines), tz = "UTC"))
+  # A line without a date sorts last: given the whole line, as.POSIXct()
+  # stopped, and the whole install failed (U135)
+  date_txt <- ifelse(grepl(date_pat, hit_lines, perl = TRUE),
+                     sub(paste0(".*", date_pat, ".*"), "\\1", hit_lines), NA_character_)
+  dates <- as.POSIXct(date_txt, format = "%Y-%m-%d %H:%M", tz = "UTC")
   files <- regmatches(hit_lines, regexpr(tarball_pat, hit_lines))
-  ord <- if (all(!is.na(dates))) order(dates, decreasing = TRUE) else
-    order(files, decreasing = TRUE)
+  ord <- if (all(is.na(dates))) order(files, decreasing = TRUE) else
+    order(is.na(dates), -as.numeric(dates))
   latest_file <- files[ord][1]
   version <- sub(paste0("^", pkg, "_(.*)\\.tar\\.gz$"), "\\1", latest_file)
   tarball_url <- paste0(archive_url, latest_file)
