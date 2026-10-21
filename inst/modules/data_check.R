@@ -410,7 +410,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     all_files$group[!is_root_readme] <- grp$group
     all_files$referenced_by[!is_root_readme] <- grp$referenced_by
     llm_group_updates <- sum(!is.na(grp$group))
-    if (is.na(llm_model_used)) llm_model_used <- grp$model %||% NA_character_
+    # an attribute, not a column: grp$model was always NULL, so the
+    # study-group model was never reported (U99)
+    if (is.na(llm_model_used)) llm_model_used <- attr(grp, "model") %||% NA_character_
     roster_check <- attr(grp, "roster_check")
     group_unresolved <- attr(grp, "unresolved") %||% character(0)
     group_no_evidence <- isTRUE(attr(grp, "no_evidence"))
@@ -619,12 +621,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # aligned by dropping the same positions.
       all_files <- all_files[-da, , drop = FALSE]
       want <- want[-da]
+      # the zip-peek reasons follow the rows too: left as they were, the
+      # manifest gave reasons to the wrong files (U99)
+      zip_peek_reason <- zip_peek_reason[-da]
       if (length(extracted) > 0) {
         added <- dplyr::bind_rows(extracted)
         all_files <- dplyr::bind_rows(all_files, added)
         # Keep `want` aligned with `all_files`: inner files from accepted archives
         # are part of the mirrored data/documentation payload.
         want <- c(want, rep(TRUE, nrow(added)))
+        zip_peek_reason <- c(zip_peek_reason, rep(NA_character_, nrow(added)))
       }
       # Files that do not belong in a repository (__MACOSX/, "._" files,
       # .DS_Store, .Rproj.user/, ...; see .useless_file_kind()) are left out,
@@ -635,6 +641,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       if (any(sys)) {
         all_files <- all_files[!sys, , drop = FALSE]
         want <- want[!sys]
+        zip_peek_reason <- zip_peek_reason[!sys]
       }
     }
     # Reclassify downloaded .txt files from their CONTENT. The name-based
@@ -1060,8 +1067,11 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
                   names(type_counts)[type_counts > 0]), collapse = ", ")
   )
 
-  n_extracted <- nrow(data_files) - length(manifest_files) -
-    length(non_tabular_files)
+  # the files columns were read from: .RData files and unreadable files were
+  # counted too ("extracted 2 columns from 3 of them") (U99)
+  n_extracted <- if (!is.null(columns_df) && "source_file" %in% names(columns_df))
+    length(unique(columns_df$source_file)) else
+    nrow(data_files) - length(manifest_files) - length(non_tabular_files)
   summary_data <- sprintf(
     "We found %d tabular data file%s and extracted %d column%s from %d of them.",
     n_tabular_all, plural(n_tabular_all),

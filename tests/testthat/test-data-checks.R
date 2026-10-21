@@ -1541,3 +1541,14 @@ test_that(".strip_rtf keeps lines and characters, without the font table (U215)"
                       "café é and {braces} and a back\\slash",
                       "gender: 1 = male, 2 = female"))
 })
+
+test_that("data_check counts the files it extracted columns from (U99)", {
+  # an .RData file without data counted as extracted
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  write.csv(data.frame(a = 1:3, b = 4:6), file.path(d, "one.csv"), row.names = FALSE)
+  save(list = character(0), file = file.path(d, "empty.RData"))
+  withr::local_options(metacheck.cache.dir = withr::local_tempdir())
+  mo <- suppressMessages(module_run(test_paper("x"), "data_check", local_path = d))
+  expect_match(mo$summary_text, "extracted 2 columns from 1 of them", fixed = TRUE)
+})
