@@ -281,6 +281,11 @@ llm <- function(text, system_prompt,
         if (!is.null(key)) .llm_cache_put(key, out)
         out
       } else {
+        # Each request waits at most llm_timeout() (ellmer's own default is 5
+        # minutes, with 3 tries). With metacheck's own 5 attempts below, one
+        # answer could take over an hour, and a job hung at "Querying LLM"
+        # until the server stopped it (Lakens/tue_datamanager_check#4, item 7).
+        withr::local_options(list(ellmer_timeout_s = llm_timeout()))
         # fresh chat per call to avoid context accumulation
         msg <- utils::capture.output({
           chat <- make_chat()
@@ -296,13 +301,16 @@ llm <- function(text, system_prompt,
           # succeeds; allow four before recording the row as failed. Each retry
           # gets a fresh chat so the failed exchange cannot pollute the next
           # attempt.
+          started <- Sys.time()
           for (attempt in 1:5) {
             result <- tryCatch(
               chat$chat_structured(unique_text[i], type = type),
               error = function(e) e
             )
             if (!inherits(result, "condition")) break
-            if (attempt == 5 || !.llm_json_retryable(result)) stop(result)
+            # no new attempt once llm_timeout() has passed for this row
+            out_of_time <- as.numeric(difftime(Sys.time(), started, units = "secs")) > llm_timeout()
+            if (attempt == 5 || out_of_time || !.llm_json_retryable(result)) stop(result)
             chat <- make_chat()
           }
           df <- .unnest_result(result)

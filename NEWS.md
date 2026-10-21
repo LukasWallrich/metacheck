@@ -133,6 +133,7 @@
 * The reproducibility sandbox also removes `base::setwd(...)` and a Python `chdir(...)` under any module name (`from os import chdir` followed by `chdir(...)`, or `o.chdir(...)`); only `setwd(` and `os.chdir(` were caught, so such a call ran and failed on the author's own path (Lakens/tue_datamanager_check#4, item 5)
 * An old Excel `.xls` file is first opened in a separate R process before metacheck reads it. Some files (an old Mac Excel file) make readxl crash the whole R process, which no error handler can catch, so the job ended without a report; such a file is now reported as unreadable and the rest of the check goes on. Applies to `data_read_head()`, the codebook reader and data_check's sheet loop (Lakens/tue_datamanager_check#4, item 4)
 * In a package layout, a path-building call that the reproducibility check keeps as written is no longer put in quotes: `sprintf("%s/x.xlsx", wd)` became the unparseable `"sprintf("%s/x.xlsx", wd)"`, so the script stopped with a parse error before running (Lakens/tue_datamanager_check#4, item 9)
+* Every language-model request `llm()` makes now waits at most `llm_timeout()` (3 minutes by default), and a failed structured answer is not tried again once that time has passed. ellmer's own limit was 5 minutes with 3 tries, and with metacheck's 5 attempts one answer could take over an hour, so a job hung at "Querying LLM" until the server stopped it (Lakens/tue_datamanager_check#4, item 7; also U20)
 
 # metacheck 0.4.0
 
