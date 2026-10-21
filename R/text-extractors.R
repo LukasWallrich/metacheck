@@ -249,15 +249,15 @@ extract_eq <- function(paper) {
   # identical(), not != / ==: a text table without a paper_id (or text_id)
   # has NA there, and NA != NA stopped with "missing value where TRUE/FALSE
   # needed" (U150)
-  eq$grp_id <- 1
-  for (i in seq_along(eq$text_id)) {
-    if (i == 1 || !identical(eq$paper_id[[i]], eq$paper_id[[i-1]])) {
-      eq$grp_id[[i]] <- 1
-    } else if (identical(eq$text_id[[i]], eq$text_id[[i-1]])) {
-      eq$grp_id[[i]] <- eq$grp_id[[i-1]]
-    } else {
-      eq$grp_id[[i]] <- eq$grp_id[[i-1]] + 1
-    }
+  # Each sentence numbered within its own paper, in text order: counted in
+  # search order, the count restarted whenever the search moved to another
+  # paper, so sentences of a paper in a list shared grp_ids (U10)
+  pkey <- paste(eq$paper_id)
+  eq$grp_id <- NA_real_
+  for (k in unique(pkey)) {
+    r <- which(pkey == k)
+    tid <- eq$text_id[r]
+    eq$grp_id[r] <- match(tid, unique(tid[order(tid)]))
   }
 
   cols <- c("text_id", "grp_id", "lhs", "df", "comp", "rhs", "paper_id")

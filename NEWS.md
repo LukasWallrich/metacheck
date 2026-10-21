@@ -103,6 +103,7 @@
 * `local_files()` given several paths lists their subfolders when `recursive = TRUE`; the setting was not passed on (#507: U49)
 * Reading a bibr export matches its keys exactly: R's `$` matches the start of a name, so a file without `bib` read its `bib_match` rows as the references (and `info`, `metadata`, `source`, `extraction`, `producer` and `schema_version` were read the same way) (#507: U25)
 * `doi_lookup()`, `datacite_doi()` and `openalex_doi()` keep every other DOI when one lookup fails: a `return()` inside `tryCatch()` returned from the whole function, so one unknown DOI made `doi_lookup()` and `datacite_doi()` return NULL and `openalex_doi()` return only that DOI's error. A failed DOI gets an empty row (in `openalex_doi()` an entry with error "not found", as a list of entries like any other call), later rows no longer shift, and an organisation author is named from the record's name (#507: U12)
+* `extract_tests()` on a paper list gives each paper its own tests once; every test was repeated for every paper (3 papers: 3 × 116 rows). `extract_eq()` numbers the sentences (`grp_id`) within each paper in text order; counted in search order, the numbering restarted when the search moved to another paper, so sentences of a paper shared numbers (#507: U10)
 
 # metacheck 0.4.0
 

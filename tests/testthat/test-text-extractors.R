@@ -284,3 +284,13 @@ test_that("extract_p_values and extract_eq search a character vector (U150)", {
   # a text table without paper_id or text_id stopped extract_eq's grouping
   expect_equal(nrow(extract_eq(data.frame(text = txt))), 3)
 })
+
+test_that("extract_tests gives each paper of a list its own tests, once (U10)", {
+  # every test was repeated for every paper id
+  p1 <- test_paper(c("We found t(20) = 2.1, p = .04.", "Also F(1, 30) = 4.5, p = .04.")); p1$paper_id <- "a"
+  p2 <- test_paper("Here t(10) = 3.2, p = .01."); p2$paper_id <- "b"
+  tests <- extract_tests(paperlist(p1, p2))
+  expect_equal(as.vector(table(tests$paper_id)[c("a", "b")]), c(2L, 1L))
+  eq <- extract_eq(paperlist(p1, p2))
+  expect_equal(eq$grp_id[eq$paper_id == "a"], c(1, 1, 2, 2))
+})
