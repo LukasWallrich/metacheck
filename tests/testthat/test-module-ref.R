@@ -331,3 +331,20 @@ test_that("ref_replication drops a citation of the original only when the same p
   # the replication paper B cites is still listed for paper A
   expect_true(tolower(row$doi_r) %in% tolower(mo$table$replication_doi[mo$table$paper_id == "A"]))
 })
+
+test_that("ref_summary labels unmatched references and keeps one row per reference (U119)", {
+  # no_match with every *_mismatch FALSE gave NA; two replications repeated
+  # the reference
+  p <- demopaper()
+  pid <- p$paper_id; b <- unique(ref_table(p)$bib_id)
+  acc <- data.frame(paper_id = pid, bib_id = b[1:2], no_match = c(TRUE, FALSE),
+                    title_mismatch = c(FALSE, TRUE), doi_mismatch = FALSE)
+  rep_tbl <- data.frame(paper_id = pid, bib_id = b[3], replication_type = c("direct", "conceptual"))
+  fake <- structure(list(module = "ref_replication", table = rep_tbl, paper = p,
+                         summary_table = data.frame(paper_id = pid),
+                         prev_outputs = list(ref_accuracy = list(table = acc))),
+                    class = "metacheck_module_output")
+  mo <- module_run(fake, "ref_summary")
+  expect_equal(nrow(mo$table), length(b))
+  expect_equal(mo$table$accuracy_mismatch[mo$table$bib_id == b[1]], "no match")
+})
