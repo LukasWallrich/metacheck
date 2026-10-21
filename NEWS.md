@@ -124,6 +124,7 @@
 * `retractionwatch()` (and `rw_update()`) leaves out rows with a blank DOI and trims DOIs; a blank DOI matched every reference without a DOI in a join on `doi`. `stat_check` without statistics gives every paper of a list a summary row (#507: U15, U124)
 * A second download of the same Figshare, ReShare, Zenodo, Dataverse or Dryad deposit goes to "<folder>_1", "<folder>_2", ...; the deposit id in a folder name such as "figshare_<id>" was stripped, so it went to "figshare_1" (#507: U37)
 * The Grobid 12.0 conversion writes dates before the year 1000 with four digits ("0026-05-27T08:58:00Z"; the zero padding was lost, which is not a valid 12.0 date-time), gives NA for a time outside the years 0000-9999, and converts a vector of times (#507: U26)
+* `stat_effect_size` keeps the note that both eta-squared and partial eta-squared were reported (the partial-eta result overwrote it), and its summary ends with a full stop (#507: U125)
 
 # metacheck 0.4.0
 

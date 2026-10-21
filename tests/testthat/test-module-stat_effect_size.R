@@ -284,3 +284,10 @@ test_that("stat_effect_size: d next to an F-test is not eta-squared, and F(0, 0)
   expect_false(any(grepl("Eta-squared reported", mo$table$eta_coherence_note)))
   expect_true(any(mo$table$eta_coherence %in% "indeterminate"))
 })
+
+test_that("stat_effect_size keeps the note that both eta-squared kinds were reported (U125)", {
+  # the partial-eta result overwrote it
+  s <- "An effect, F(1, 40) = 6.2, p = .02, \u03b72 = .13, \u03b7p2 = .13."
+  mo <- module_run(test_paper(s), "stat_effect_size")
+  expect_true(any(grepl("Both eta-squared and partial eta-squared", mo$table$eta_coherence_note)))
+})

@@ -442,11 +442,14 @@ stat_effect_size <- function(paper) {
       return(out)
     }
 
+    # kept in front of the partial-eta result below, which overwrote it (U125)
+    both_note <- NULL
     if (any(eta_stats$label == "partial_eta_squared") && any(eta_stats$label == "eta_squared")) {
-      out$eta_coherence_note <- paste(
+      both_note <- paste(
         "Both eta-squared and partial eta-squared reported;",
         "coherence evaluated only for partial eta-squared."
       )
+      out$eta_coherence_note <- both_note
     }
 
     # Check partial eta squared coherence
@@ -464,6 +467,8 @@ stat_effect_size <- function(paper) {
           "Tolerance = ", tol, ". A no-match can occur when fewer than 2 decimal places are reported."
         )
       }
+      if (!is.null(both_note))
+        out$eta_coherence_note <- paste(both_note, out$eta_coherence_note)
     }
 
     # Check partial omega squared coherence
@@ -722,7 +727,7 @@ stat_effect_size <- function(paper) {
     } else {
       summary_text <- if (has_missing) {
         sprintf(
-          "We found %1$d t-test%2$s and/or F-test%2$s where effect sizes are not reported. Check these tests in the table below, and consider adding effect sizes",
+          "We found %1$d t-test%2$s and/or F-test%2$s where effect sizes are not reported. Check these tests in the table below, and consider adding effect sizes.",
           nrow(table_missing), ifelse(nrow(table_missing) == 1, "", "s")
         )
       } else {
