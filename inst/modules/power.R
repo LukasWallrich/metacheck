@@ -1,12 +1,12 @@
 #' Power Analysis Check
 #'
 #' @description
-#' This module uses uses regular expressions to identify sentences that contain a statistical power analysis. If specified by the user, it also uses a large language module (LLM) to extract information reported in power analyses, including the statistical test, sample size, alpha level, desired level of power, and magnitude and type of effect size.
+#' This module uses regular expressions to identify sentences that contain a statistical power analysis. If specified by the user, it also uses a large language model (LLM) to extract information reported in power analyses, including the statistical test, sample size, alpha level, desired level of power, and magnitude and type of effect size.
 #'
 #' @details
-#' The Power Analysis Check module uses regular expressions to identify sentences that contain a statistical power analysis. Without the use of an LMM, the module uses regular expressions to classify the power analysis as a-priori, sensitivity or post-hoc. With the use of an LMM, it checks if the power analysis is reported with all required information.
+#' The Power Analysis Check module uses regular expressions to identify sentences that contain a statistical power analysis. Without the use of an LLM, the module uses regular expressions to classify the power analysis as a-priori, sensitivity or post-hoc. With the use of an LLM, it checks if the power analysis is reported with all required information.
 #'
-#' The regular expressions can miss power analyses, or fail to classify them correctly. The type of power analysis is often difficult to classify, which can easily be solved by explicitly specifying the type of power analysis as 'a-priori', 'sensitivity', or 'post-hoc'. Note that 'post-hoc' or 'observed' power is rarely useful. The LMM can fail to identify information in the paper, and will not have access to information in paragraphs in the paper other than those that contain the word 'power'. This package was validated by the Metacheck team on articles in Psychological Science.
+#' The regular expressions can miss power analyses, or fail to classify them correctly. The type of power analysis is often difficult to classify, which can easily be solved by explicitly specifying the type of power analysis as 'a-priori', 'sensitivity', or 'post-hoc'. Note that 'post-hoc' or 'observed' power is rarely useful. The LLM can fail to identify information in the paper, and will not have access to information in paragraphs in the paper other than those that contain the word 'power'. This package was validated by the Metacheck team on articles in Psychological Science.
 #'
 #' <validation>In a sample of 128 papers with 246 instances of power statements, 203 were correctly detected (true positives), 22 were missed (false negatives) and 21 were incorrectly detected (false positives). Overall, among all instances flagged as power statements, 90.6% were correct (positive predictive value).</validation>
 #'
@@ -169,9 +169,9 @@ power <- function(paper, seed = 8675309) {
     }
     report <- c(summary_text, collapse_section(guidance))
 
-    summary_table <- data.frame(paper_id = paper_id(paper))
-    summary_table$power_n <- 0
-    summary_table$power_complete <- NA_integer_
+    # no rows for an empty paper or list ("replacement has 1 row", U79)
+    summary_table <- .per_paper_table(paper, power_n = 0,
+                                      power_complete = NA_integer_)
   } else {
     ## power detected ----
     # check for observed power and add text/type
@@ -462,9 +462,9 @@ power <- function(paper, seed = 8675309) {
 
   ## fallback: prompt-instructed JSON + json_expand ----
   preface <- "Identify and classify power analyses from exerpts of scientific manuscripts. Use null when information is missing, do not invent values. Only use 'other' if a value not in the enumerated options can be identified. There may be no power analysis in the text, or more than one. If the paragraph only references a power analysis implied to be presented elsewhere in the paper, or explicitly states that no power analysis was run, classify power_type as 'none'. Return an array of objects, as defined by the JSON schema below, in the same order as in the paragraphs, bracketed by ```json and ```."
-  schema_text <- readLines("https://scienceverse.org/schema/power.json") |>
-    paste(collapse = "\n")
-  system_prompt <- paste(preface, schema_text, sep = "\n\n")
+  # the schema defined below, not a download from scienceverse.org: offline
+  # the fallback failed ("cannot open the connection", U108)
+  system_prompt <- paste(preface, schema, sep = "\n\n")
 
   llm_results <- llm(
     text = potential_power,
@@ -475,7 +475,11 @@ power <- function(paper, seed = 8675309) {
   )
 
   table <- llm_results |>
-    json_expand(suffix = c("", ".power")) |>
+    json_expand(suffix = c("", ".power"))
+  # a field missing from every answer is missing information, not complete:
+  # any_of() skipped it, which could give a wrong green (U108)
+  for (col in setdiff(llm_cols, names(table))) table[[col]] <- rep(NA, nrow(table))
+  table <- table |>
     dplyr::rowwise() |>
     dplyr::mutate(complete = !any(dplyr::across(dplyr::any_of(llm_cols), is.na))) |>
     dplyr::ungroup()

@@ -69,9 +69,8 @@ reg_check <- function(paper,
       traffic_light = "na",
       summary_text = "No preregistrations were found to compare with the paper.",
       na_replace = 0,
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        regcheck_deviations = 0
+      summary_table = .per_paper_table(paper,
+                regcheck_deviations = 0
       )
     )
     return(resp)
@@ -121,16 +120,16 @@ reg_check <- function(paper,
   if (length(rc_list) == 0) {
     # no na_replace here: a failed check is unknown (NA), not zero
     resp <- list(
-      traffic_light = "error",
+      # "fail": "error" is not one of metacheck's lights (U30)
+      traffic_light = "fail",
       summary_text = paste0(
         "We found ", nrow(prereg_info), " preregistration",
         plural(nrow(prereg_info)),
         ", but the RegCheck comparison failed",
         if (!is.null(rc_error)) paste0(": ", rc_error) else "", "."
       ),
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        regcheck_deviations = NA_real_
+      summary_table = .per_paper_table(paper,
+                regcheck_deviations = NA_real_
       )
     )
     return(resp)
@@ -144,9 +143,11 @@ reg_check <- function(paper,
   tl <- "info"
 
   # summary counts ----
+  # a missing judgement is left out of the counts: without na.rm the summary
+  # read "flagged NA potential deviationNA" (U120)
   j <- tolower(trimws(regcheck_table$deviation_judgement))
-  n_dev <- sum(j == "yes")
-  n_unclear <- sum(j == "missing")
+  n_dev <- sum(j == "yes", na.rm = TRUE)
+  n_unclear <- sum(j == "missing", na.rm = TRUE)
   n_prereg_compared <- length(unique(regcheck_table$prereg_id))
 
   summary_table <- data.frame(
@@ -155,9 +156,9 @@ reg_check <- function(paper,
   ) |>
     dplyr::summarise(
       .by = "paper_id",
-      regcheck_deviations = sum(j == "yes"),
-      regcheck_consistent = sum(j == "no"),
-      regcheck_unclear = sum(j == "missing")
+      regcheck_deviations = sum(j == "yes", na.rm = TRUE),
+      regcheck_consistent = sum(j == "no", na.rm = TRUE),
+      regcheck_unclear = sum(j == "missing", na.rm = TRUE)
     )
 
   # summary text ----
@@ -183,9 +184,17 @@ reg_check <- function(paper,
 
   strip_refs <- function(x) gsub("\\s*\\[[A-Z_0-9,; ]+\\]", "", x)
 
+  # one section per paper and preregistration: two papers linking the same
+  # preregistration shared one section without saying whose rows were whose
+  # (U120)
+  pairs <- unique(regcheck_table[, c("paper_id", "prereg_id")])
+  shared <- pairs$prereg_id[duplicated(pairs$prereg_id)]
   prereg_sections <- lapply(
-    unique(regcheck_table$prereg_id), \(rid) {
-      sub <- regcheck_table[regcheck_table$prereg_id == rid, ]
+    seq_len(nrow(pairs)), \(k) {
+      rid <- pairs$prereg_id[k]
+      pid <- pairs$paper_id[k]
+      sub <- regcheck_table[regcheck_table$prereg_id %in% rid &
+                              regcheck_table$paper_id %in% pid, ]
       sub_j <- tolower(trimws(sub$deviation_judgement))
       labels <- judgement_label[sub_j]
       labels[is.na(labels)] <- sub$deviation_judgement[is.na(labels)]
@@ -203,7 +212,8 @@ reg_check <- function(paper,
         prereg_quotes   = strip_refs(sub$prereg_quotes)
       )
       c(
-        sprintf("Comparison with preregistration %s:", rid),
+        if (rid %in% shared) sprintf("Comparison of paper %s with preregistration %s:", pid, rid)
+        else sprintf("Comparison with preregistration %s:", rid),
         scroll_table(judgement_table),
         collapse_section(
           scroll_table(evidence_table, maxrows = 5),

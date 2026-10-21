@@ -379,6 +379,22 @@ test_that("repro_file_io returns an empty frame for no files", {
   expect_equal(nrow(io), 0)
 })
 
+test_that("Python open() is a write only by its mode argument (U240)", {
+  # any quoted word with a w, a or x in it counted, so an encoding made a
+  # write, and "r+" did not
+  lines <- c('open(p, encoding="ascii")', 'open("raw")', 'open("x.csv", "rb")',
+             'open("x.csv", "w")', 'open("x.csv", "r+")',
+             'open("x.csv", encoding="utf-8", mode="at")',
+             'open(os.path.join(d, "x.csv"), "wb")')
+  expect_equal(vapply(lines, .py_open_writes, logical(1), USE.NAMES = FALSE),
+               c(FALSE, FALSE, FALSE, TRUE, TRUE, TRUE, TRUE))
+  io <- repro_file_io(list(a.py = c('with open("out.txt", "w") as f:',
+                                    'with open("in.txt", encoding="ascii") as g:')),
+                      lang = "Python")
+  expect_equal(io$reads[[1]], "in.txt")
+  expect_equal(io$writes[[1]], "out.txt")
+})
+
 
 # repro_defined_vars() ----
 
@@ -609,6 +625,30 @@ test_that("repro_write_scripts replaces setwd() with a no-op and records it", {
                         written)))
 })
 
+test_that("repro_write_scripts removes base::setwd() and chdir() under any module name (tue_datamanager_check#4)", {
+  # only setwd( and os.chdir( were caught, so `from os import chdir` ...
+  # chdir(DIR) ran and failed on the author's Windows path
+  empty_rw <- function(fn) stats::setNames(list(data.frame(
+    ref = character(0), basename = character(0), matched = logical(0),
+    target = character(0), ambiguous = logical(0), n_candidates = integer(0),
+    is_call = logical(0))), fn)
+  root <- withr::local_tempdir()
+  py_code <- list("c.py" = c("from os import chdir", 'chdir("C:/Users/author")',
+                             "import os as o", 'o.chdir("x")', "print(chdir)", "mychdir(1)"))
+  out_py <- repro_write_scripts(py_code, empty_rw("c.py"),
+                                data.frame(file_name = "c.py", target_path = "c.py"),
+                                root, lang = "Python")
+  written <- readLines(out_py$script_path)
+  expect_equal(out_py$setwd_removed, 2)
+  expect_true(any(grepl("^pass  # \\[reproducibility_check removed os.chdir\\] chdir", written)))
+  expect_true("print(chdir)" %in% written)
+  expect_true("mychdir(1)" %in% written)
+  r_code <- list("d.R" = c('base::setwd("/Users/author")', "x <- 1"))
+  out_r <- repro_write_scripts(r_code, empty_rw("d.R"),
+                               data.frame(file_name = "d.R", target_path = "d.R"), root)
+  expect_equal(out_r$setwd_removed, 1)
+})
+
 test_that("repro_write_scripts keeps a block valid when setwd()/os.chdir() is its only statement (#480)", {
   empty_rw <- function(fn) stats::setNames(list(data.frame(
     ref = character(0), basename = character(0), matched = logical(0),
@@ -656,6 +696,26 @@ test_that("the write-call scan stays fast on a large script with a non-ASCII cha
   # a closed call later in the same text is still found
   res2 <- .repro_redirect_writes(c(big[1], "write.csv(df, 'out.csv')", big[-(1:2)]), "R")
   expect_equal(nrow(res2), 1)
+})
+
+test_that(".repro_redirect_writes keeps a named argument's name (U134)", {
+  # `save(a, b, file = "ab.RData")` became `save(a, b, "<out>/ab.RData")`, so
+  # save() took the path for another object to save
+  res <- .repro_redirect_writes(c('save(a, b, file = "ab.RData")',
+                                  'write.csv(df, "out.csv")'), "R")
+  expect_equal(res$replacement,
+               c('save(a, b, file = "{{REPRO_OUTPUT}}ab.RData")',
+                 'write.csv(df, "{{REPRO_OUTPUT}}out.csv")'))
+})
+
+test_that(".repro_format_call_refs reads the arguments after the file name, wherever it is (U133)", {
+  # the arguments after the quoted string were counted from the start of the
+  # call, so a file name that is not the first argument was misread
+  res <- .repro_format_call_refs(c('a <- read.csv(paste(wd, "data.csv", sep = "/"))',
+                                   'b <- source(paste0(path, ".R"))',
+                                   'c <- read.csv(sprintf("%s/x.csv", wd))'))
+  expect_equal(res$call_text, c('paste(wd, "data.csv", sep = "/")',
+                                'sprintf("%s/x.csv", wd)'))
 })
 
 test_that("repro_write_scripts redirects a literal write target into output/", {
@@ -849,6 +909,21 @@ test_that("repro_run_scripts classifies an undefined-variable error and captures
   expect_equal(out$outcome, "errored")
   expect_equal(out$error_type, "undefined_variable")
   expect_equal(out$undefined_var, "some_var_no_script_defines")
+})
+
+test_that("repro_run_scripts reads a missing package in curly quotes as dependency_unavailable (U132)", {
+  # in a UTF-8 locale R writes "there is no package called \u2018x\u2019";
+  # only ASCII quotes were matched, so the script was "errored". The script
+  # writes the message itself, so the test does not depend on the locale.
+  skip_if_not_installed("callr")
+  root <- withr::local_tempdir()
+  writeLines('stop("there is no package called \\u2018pkgxyz123\\u2019")',
+             file.path(root, "needs_pkg.R"))
+  run_tbl <- data.frame(file_name = "needs_pkg.R",
+                        script_path = file.path(root, "needs_pkg.R"), run_dir = root)
+  out <- repro_run_scripts(run_tbl, order = "needs_pkg.R", timeout = 60,
+                           failed_deps = "pkgxyz123")
+  expect_equal(out$outcome, "dependency_unavailable")
 })
 
 test_that("repro_run_scripts marks a skipped file without running it", {
@@ -1221,7 +1296,11 @@ test_that("a script that writes a file succeeds in the Docker sandbox (#502)", {
   out <- repro_run_scripts_docker(
     run_tbl, order = "analysis.R", sandbox_root = root,
     image = "ghcr.io/scienceverse/metacheck_r_large:latest", timeout = 120)
-  expect_equal(out$outcome, "ran_ok")
+  # on failure, show why: on GitHub (2026-10-20) this came back "errored"
+  # with no reason in the log
+  expect_equal(out$outcome, "ran_ok",
+               info = paste0("error: ", out$error, "\nstderr: ", out$stderr,
+                             "\nstdout: ", out$stdout))
   # written inside the container, found in the host's output folder
   expect_true(file.exists(file.path(root, "output", "means.csv")))
 })
@@ -1389,4 +1468,132 @@ test_that("repro_materialize_layout makes the copy writable", {
   root <- withr::local_tempdir()
   repro_materialize_layout(.repro_package_plan(structure_df), structure_df, root)
   expect_equal(as.character(file.mode(file.path(root, "raw_data/a.csv"))), "666")
+})
+
+test_that(".repro_py_manifest_pins reads only pyproject.toml's dependencies (U236)", {
+  # every quoted string was a requirement (name, version, description), Poetry's
+  # "^1.26" became "numpy^1.26" (refused by pip), and a pyproject.toml with a
+  # string not starting like a package name stopped the function
+  pep621 <- c('[project]', 'name = "analysis"', 'version = "0.1"',
+              'description = "Code for the paper"', 'requires-python = ">=3.9"',
+              'dependencies = [', '  "numpy>=1.24",', '  "pandas",', ']')
+  expect_equal(.repro_py_manifest_pins(pep621)$requirement, c("numpy>=1.24", "pandas"))
+  poetry <- c('[tool.poetry]', 'name = "analysis"', '[tool.poetry.dependencies]',
+              'python = "^3.9"', 'numpy = "^1.26"', 'scipy = "~1.11"', 'pandas = "*"',
+              'statsmodels = { version = "^0.14", optional = true }', 'seaborn = "0.13.2"')
+  expect_equal(.repro_py_manifest_pins(poetry)$requirement,
+               c("numpy>=1.26,<2.0", "scipy>=1.11,<1.12", "pandas",
+                 "statsmodels>=0.14,<0.15", "seaborn==0.13.2"))
+  # requirements.txt: inline comments and options are dropped
+  expect_equal(.repro_py_manifest_pins(c("numpy==1.26  # pinned", "pandas>=2.0 --hash=sha256:abc"))$requirement,
+               c("numpy==1.26", "pandas>=2.0"))
+})
+
+test_that("match_reported_output: missing or empty test_id, Inf values, a paper list (U142)", {
+  # a missing test_id beside a jamovi residuals row made a site named NA and
+  # stopped the call; "" could not be looked up; Inf compared as NA
+  eq <- data.frame(text_id = 1, grp_id = 1, lhs = c("F", "p"), df = c("(2, 50)", NA),
+                   comp = c("=", "="), rhs = c("4.20", ".020"), paper_id = "p")
+  out <- data.frame(source_file = "a.R", analysis = "anova",
+                    test_id = c("anova_group", "anova_residuals", NA, ""),
+                    statistic = c("F", "df", "F", "F"), value = c("4.2", "50", "Inf", "4.2"),
+                    family = c("F", "df", "F", "F"), row_label = c("group", "residuals", NA, NA))
+  expect_no_error(match_reported_output(eq, out))
+  expect_error(match_reported_output(paperlist(test_paper(), test_paper()), out),
+               "call it for each paper")
+})
+
+test_that("repro_missing_inputs reports a withheld file without a file_size column (U135)", {
+  # without a file_size column the function stopped
+  plan <- data.frame(file_name = character(0), target_path = character(0))
+  structure_df <- data.frame(file_name = character(0), file_location = character(0))
+  out <- repro_missing_inputs("big.csv", plan, structure_df,
+                              skipped = data.frame(file_name = "big.csv"))
+  expect_equal(out$status, "withheld_size")
+})
+
+test_that("a path-building call kept as written is not put in quotes (tue_datamanager_check#4, item 9)", {
+  # its target was the call itself, written as "sprintf(...)": unparseable
+  code <- c('wd <- "/Volumes/author/project"',
+            'sheets <- sprintf("%s/Data_Dictionary_Final.xlsx", wd)')
+  plan <- data.frame(file_name = "Data_Dictionary_Final.xlsx",
+                     target_path = "Data_Dictionary_Final.xlsx")
+  rw <- .repro_keep_working_refs(repro_rewrite_paths(code, "02-scripts/a.R", plan, "R"),
+                                 plan, "02-scripts/a.R")
+  out <- repro_write_scripts(list("a.R" = code), list("a.R" = rw), plan, withr::local_tempdir())
+  written <- readLines(out$script_path[1])
+  expect_true(code[2] %in% written)
+  expect_no_error(parse(text = written))
+})
+
+test_that("repro_run_scripts starts no script once the time for all scripts has run out (Lakens/tue_datamanager_check#4, item 6)", {
+  skip_if_not_installed("callr")
+  root <- withr::local_tempdir()
+  writeLines("Sys.sleep(60)", file.path(root, "slow.R"))
+  writeLines("x <- 1", file.path(root, "next.R"))
+  run_tbl <- data.frame(file_name = c("slow.R", "next.R"),
+                        script_path = file.path(root, c("slow.R", "next.R")),
+                        run_dir = root)
+  # the first script is stopped when the time runs out, not after its own
+  # 60 seconds; the second is not started
+  t0 <- Sys.time()
+  out <- repro_run_scripts(run_tbl, order = c("slow.R", "next.R"), timeout = 60,
+                           deadline = Sys.time() + 5)
+  expect_equal(out$outcome, c("timed_out", "skipped_time_limit"))
+  expect_lt(as.numeric(difftime(Sys.time(), t0, units = "secs")), 45)
+  expect_match(out$error[[2]], "time for all scripts together")
+  # no limit
+  expect_null(.repro_deadline(NULL))
+  expect_null(.repro_deadline(Inf))
+  expect_equal(.repro_time_left(NULL), Inf)
+})
+
+test_that("library() in a script does not give an S3 warning from the capture code (Lakens/tue_datamanager_check#5, item 4)", {
+  expect_no_warning(.r_call_fun_arg("library(stats)"))
+  # an aggregating generic still gives its FUN
+  expect_equal(.r_call_fun_arg("aggregate(d$y, list(d$g), mean)"), "mean")
+  skip_if_not_installed("callr")
+  root <- withr::local_tempdir()
+  writeLines(c("library(stats)", "x <- 1"), file.path(root, "a.R"))
+  run_tbl <- data.frame(file_name = "a.R", script_path = file.path(root, "a.R"), run_dir = root)
+  out <- repro_run_scripts(run_tbl, order = "a.R", timeout = 60)
+  expect_equal(out$outcome, "ran_ok")
+  expect_false(grepl("appears not to be S3 generic", paste(out$stdout, out$stderr), fixed = TRUE))
+})
+
+test_that("the container's capture code knows the statistic names (found with Lakens/tue_datamanager_check#5, item 4)", {
+  # the helpers as the container gets them: text, run in a fresh environment
+  e <- new.env(parent = globalenv())
+  eval(parse(text = .repro_docker_capture_preamble()), envir = e)
+  expect_equal(e$stato_type_column("mean")$termSource, "STATO")
+  d <- data.frame(y = c(1, 2, 3, 4), g = c("a", "a", "b", "b"))
+  expect_false(is.null(e$.r_capture_value(aggregate(y ~ g, d, mean), "aggregate(y ~ g, d, mean)")))
+})
+
+test_that("a file found only inside an archive is a missing input in the package layout (#520, item 2)", {
+  # OSF t69jd: the script reads "data/download 1a/x.csv", which the package
+  # has only inside data.zip
+  structure_df <- data.frame(
+    file_name = c("Humor study 4a.csv", "main.R", "notes.csv"),
+    file_path = c("data.zip/data/download 1a/Humor study 4a.csv", "main.R", "data/notes.csv"),
+    file_location = c(NA, NA, NA))
+  plan <- .repro_package_plan(structure_df)
+  code <- c("d <- data.table::fread('data/download 1a/Humor study 4a.csv')",
+            "n <- read.csv('data/notes.csv')",
+            "o <- read.csv(file.path(base, 'download 1a/Humor study 4a.csv'))")
+  rw <- .repro_keep_working_refs(repro_rewrite_paths(code, "main.R", plan, "R"), plan, "main.R")
+  inside <- rw[rw$basename == "Humor study 4a.csv", ]
+  # both the full path and the part a folder of the code's own is added to
+  expect_true(all(!inside$matched))
+  expect_true(all(!inside$as_written))
+  # a file at its own path still works as written
+  expect_true(rw$as_written[rw$basename == "notes.csv"])
+
+  mi <- repro_missing_inputs("Humor study 4a.csv", plan, structure_df)
+  expect_equal(mi$status, "in_archive")
+  expect_match(mi$detail, "only inside data.zip; unpack it so the code finds it", fixed = TRUE)
+  # a name that also exists outside the archive is not "in_archive"
+  both <- rbind(structure_df, data.frame(file_name = "Humor study 4a.csv",
+                                          file_path = "Humor study 4a.csv", file_location = NA))
+  expect_equal(repro_missing_inputs("Humor study 4a.csv", plan, both)$status, "in_repo_not_downloaded")
 })

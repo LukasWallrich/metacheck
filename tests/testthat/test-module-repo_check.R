@@ -140,6 +140,9 @@ test_that("ResearchBox", {
   # not this.) So this one goes to the live site.
   skip_if_not(online("researchbox.org"))
   skip_on_cran()
+  # ResearchBox does not serve GitHub's test machines: box 4377 failed there
+  # (2026-10-20) while it downloads from elsewhere
+  skip_on_ci()
 
   module <- "repo_check"
   paper <- test_paper()
@@ -725,4 +728,35 @@ test_that("repo_check reports OSF links it could not check, instead of dropping 
   # the failed lookups were not kept for the session: the 404 run above asked
   # the OSF again instead of replaying the 503
   osf_cache_clear()
+})
+
+test_that("an invalid OSF link is reported, and a nameless file does not stop the naming check (U122)", {
+  # with only invalid OSF ids, filter(osf_type ...) found the osf_type()
+  # function and dplyr's error text became the reason; beside valid links the
+  # invalid one vanished
+  llm_use(FALSE)
+  mo <- suppressWarnings(suppressMessages(module_run(test_paper(url = "https://osf.io/ab"), "repo_check")))
+  expect_equal(mo$gated_repos$repo_error, "not a valid OSF link")
+  # check_file_naming(NA) stopped the module
+  out <- check_file_naming(c(NA, "my file.csv"), c(NA, "my file.csv"))
+  expect_equal(out$file_name, "my file.csv")
+})
+
+test_that("repo_check leaves out private files row by row, and keeps distinct files with repeated fields (U121, U123)", {
+  # !isFALSE(public) tested the whole column; and duplicated(url) &
+  # duplicated(path), tested separately, dropped one project's readme.txt
+  # because another project had a file with the same (missing) URL and path
+  osf_info_mock <- function(osf_url, recursive = TRUE, pb = NULL, cache = FALSE, ...) {
+    data.frame(osf_url = osf_url, osf_type = c("nodes", "files", "files"),
+               parent = NA_character_, kind = c(NA, "file", "file"),
+               public = c(TRUE, TRUE, FALSE), name = c(NA, "readme.txt", "secret.csv"),
+               path = c(NA, "/readme.txt", "/secret.csv"),
+               download_url = NA_character_, size = c(NA, 10, 10),
+               filetype = c(NA, "text", "data"), provider = c(NA, "osfstorage", "osfstorage"))
+  }
+  local_mocked_bindings(online = \(...) TRUE, osf_info = osf_info_mock)
+  paper <- test_paper(text = "Data: https://osf.io/aaaaa and https://osf.io/bbbbb")
+  mo <- module_run(paper, "repo_check", peek_zips = FALSE)
+  expect_false("secret.csv" %in% mo$table$file_name)
+  expect_equal(sum(mo$table$file_name == "readme.txt"), 2)
 })

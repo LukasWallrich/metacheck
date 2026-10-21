@@ -43,6 +43,16 @@ test_that(".dataverse_parse", {
   expect_equal(nrow(.dataverse_parse(character(0))), 0)
 })
 
+test_that(".dataverse_parse gives each URL its own host (U31, U155)", {
+  # a URL without a host took the next URL's host, and dataverse.no matched
+  # the start of dataverse.northwestern.edu
+  parsed <- .dataverse_parse(c(
+    "https://doi.org/10.18167/DVN1/T0DMFJ",
+    "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/ABC123",
+    "https://dataverse.northwestern.edu/dataset.xhtml?persistentId=doi:10.18131/g3/XYZ"))
+  expect_equal(parsed$host, c("dataverse.cirad.fr", "dataverse.harvard.edu", NA))
+})
+
 
 test_that(".dataverse_info", {
   expect_true(is.function(metacheck:::.dataverse_info))
@@ -95,6 +105,43 @@ test_that(".dataverse_info", {
   expect_equal(info$license, "CC0 1.0")
   expect_equal(info$authors[[1]], "Doe, Jane")
   expect_equal(length(info$files[[1]]), 1)
+})
+
+test_that(".dataverse_info reads a plain-string licence and refuses a string data (U34)", {
+  # an older installation sends the licence as a string: $name on it stopped
+  # dataverse_info() for every dataset in the call
+  answer <- NULL
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls, msg = NULL, req_func = identity) {
+      list(structure(list(status = 200, body = charToRaw(
+        jsonlite::toJSON(answer, auto_unbox = TRUE))), class = "httr2_response"))
+    }
+  )
+  testthat::local_mocked_bindings(
+    resp_status = function(resp) resp$status,
+    resp_body_json = function(resp) jsonlite::fromJSON(rawToChar(resp$body), simplifyVector = FALSE),
+    .package = "httr2"
+  )
+  answer <- list(status = "OK", data = list(
+    persistentUrl = "https://doi.org/10.7910/DVN/ABC123",
+    latestVersion = list(license = "CC0 1.0")))
+  info <- .dataverse_info("dataverse.harvard.edu", "10.7910/DVN/ABC123")
+  expect_equal(info$license, "CC0 1.0")
+  expect_null(info$error)
+
+  answer <- list(status = "OK", data = "not a dataset")
+  info <- .dataverse_info("dataverse.harvard.edu", "10.7910/DVN/ABC123")
+  expect_equal(info$error, "parse_error")
+})
+
+test_that("a persistentId that decodes to invalid UTF-8 gives no DOI (U39)", {
+  # it stopped the parse for every URL in the call, and the bare-DOI fallback
+  # then cut the DOI at its "%" ("10.7910/DVN/AB")
+  urls <- c("https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/GGDUND",
+            "https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/AB%FFCD",
+            "https://doi.org/10.18167/DVN1/T0DMFJ")
+  p <- .dataverse_parse(urls)
+  expect_equal(p$doi, c("10.7910/DVN/GGDUND", NA, "10.18167/DVN1/T0DMFJ"))
 })
 
 
@@ -250,10 +297,12 @@ test_that("dataverse_file_download", {
     "did not arrive intact"
   )
 
-  expect_equal(nrow(dl), 1)
-  expect_equal(dl$dataverse_doi, "10.7910/DVN/ABC123")
-  expect_equal(dl$key, "small.csv")
-  expect_false(dl$downloaded)
+  # big.bin is over max_file_size: it stays in the table, not downloaded, as
+  # documented (it was dropped, U36)
+  expect_equal(nrow(dl), 2)
+  expect_equal(unique(dl$dataverse_doi), "10.7910/DVN/ABC123")
+  expect_equal(dl$key, c("small.csv", "big.bin"))
+  expect_equal(dl$downloaded, c(FALSE, FALSE))
 
   folder <- file.path(tmpdir, "10.7910_DVN_ABC123")
   expect_true(dir.exists(folder))
@@ -321,6 +370,42 @@ test_that("dataverse_file_download", {
   expect_equal(nrow(dl_ok), 1)
   expect_true(dl_ok$downloaded[[1]])
   expect_true(file.exists(file.path(tmpdir_ok, "10.7910_DVN_OK000", "ok.csv")))
+})
+
+test_that("dataverse_file_download: a zero-byte file, and every file over the limit (U36)", {
+  one_file <- function(size) function(host, doi, pb = NULL) data.frame(
+    dataverse_host = host, dataverse_doi = doi,
+    files = I(list(list(list(label = "empty.txt", dataFile = list(
+      id = 5, filename = "empty.txt", filesize = size,
+      checksum = list(type = "MD5", value = "notreal")))))))
+  testthat::local_mocked_bindings(.dataverse_info = one_file(0))
+  testthat::local_mocked_bindings(
+    request = function(url) structure(list(url = url), class = "httr2_request"),
+    req_headers = function(req, ...) req,
+    req_timeout = function(req, seconds) req,
+    req_error = function(req, is_error) req,
+    req_perform = function(req) {
+      structure(list(status = 200, body = raw(0)), class = "httr2_response")
+    },
+    resp_status = function(resp) resp$status,
+    .package = "httr2"
+  )
+  # resp_body_raw() refuses an empty body, which stopped the whole download
+  tmp <- withr::local_tempdir()
+  dl <- dataverse_file_download("dataverse.harvard.edu", "10.7910/DVN/EMPTY0",
+                                download_to = tmp, max_file_size = 10)
+  expect_true(dl$downloaded)
+
+  # every file over the limit: listed with downloaded = FALSE and no folder,
+  # instead of NULL
+  testthat::local_mocked_bindings(.dataverse_info = one_file(50 * 1024 * 1024))
+  tmp2 <- withr::local_tempdir()
+  dl <- dataverse_file_download("dataverse.harvard.edu", "10.7910/DVN/BIG000",
+                                download_to = tmp2, max_file_size = 10)
+  expect_equal(dl$key, "empty.txt")
+  expect_false(dl$downloaded)
+  expect_true(is.na(dl$folder))
+  expect_length(list.files(tmp2), 0)
 })
 
 # A dataset holding one large zip, for the unzip_types tests below. Mirrors the

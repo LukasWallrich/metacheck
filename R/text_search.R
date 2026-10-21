@@ -180,6 +180,15 @@ text_search <- function(paper, pattern = ".*",
         text = paste(text, collapse = paragraph_marker),
         .by = dplyr::all_of(groups)
       )
+
+    # each section's header: grouped without it, the header column was NA
+    # (coi_check_oi tables named no section) (U80)
+    if (return == "section" && nrow(ft_match_all) > 0) {
+      sec_header <- ft[!duplicated(ft[, c("section_id", "paper_id")]),
+                       c("section_id", "paper_id", "header")]
+      ft_match_all <- dplyr::left_join(ft_match_all, sec_header,
+                                       by = c("section_id", "paper_id"))
+    }
   }
 
   all_cols <- names(ft)

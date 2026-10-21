@@ -10,7 +10,8 @@
   model = NULL,
   think = FALSE,
   options = list(),
-  base_url = Sys.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+  base_url = rep_if(Sys.getenv("OLLAMA_BASE_URL"), "http://localhost:11434", replace =
+    ""),
   timeout = llm_timeout()
 )
 }

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <teiHeader>
+    <fileDesc>
+      <titleStmt><title level="a" type="main">An edge-case paper</title></titleStmt>
+      <sourceDesc><biblStruct><analytic><title>An edge-case paper</title></analytic></biblStruct></sourceDesc>
+    </fileDesc>
+    <encodingDesc><appInfo><application version="0.8.0" ident="GROBID"><label>GROBID</label></application></appInfo></encodingDesc>
+  </teiHeader>
+  <text>
+    <body>
+      <div><head>Introduction</head>
+        <p><s>See <ref type="url" target="https://osf.io/abcde"></ref> for the data.</s></p>
+        <p><s>Earlier work exists <ref type="bibr" target="#b0">(A, 2020)</ref>.</s></p>
+      </div>
+    </body>
+    <back>
+      <div type="references"><listBibl>
+        <biblStruct xml:id="b0">
+          <analytic><title>First</title><author><persName><surname>A</surname></persName></author><idno type="DOI">10.1234/first.reference</idno></analytic>
+          <monogr><title>Journal</title><imprint><date type="published" when="2020">2020</date><biblScope unit="page" from="12"/></imprint></monogr>
+          <note type="raw_reference">A (2020). First. Journal, 12.</note>
+        </biblStruct>
+        <biblStruct xml:id="b1">
+          <analytic><title>Second</title></analytic>
+          <monogr><title>Journal</title><imprint><date type="published" when="2021">2021</date></imprint></monogr>
+        </biblStruct>
+        <biblStruct xml:id="b2">
+          <analytic><title>Third</title></analytic>
+          <monogr><title>Journal</title><imprint><date type="published" when="2022">2022</date></imprint></monogr>
+          <note type="raw_reference">C (2022). Third. Journal.</note>
+        </biblStruct>
+      </listBibl></div>
+    </back>
+  </text>
+</TEI>

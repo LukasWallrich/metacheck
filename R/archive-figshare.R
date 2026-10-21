@@ -277,7 +277,7 @@ figshare_links <- function(paper) {
   }
 
   if (length(figshare_url) > 1) {
-    return(vapply(figshare_url, .figshare_id, character(1)))
+    return(vapply(figshare_url, .figshare_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single figshare_url ----
@@ -438,7 +438,7 @@ figshare_links <- function(paper) {
 .figshare_doi_lookup_doi <- function(figshare_url) {
   if (length(figshare_url) == 0) return(character(0))
   if (length(figshare_url) > 1) {
-    return(vapply(figshare_url, .figshare_doi_lookup_doi, character(1)))
+    return(vapply(figshare_url, .figshare_doi_lookup_doi, character(1), USE.NAMES = FALSE))
   }
 
   prefix_regex <- paste(gsub("\\.", "\\\\.", .figshare_doi_lookup_fallback_prefixes()), collapse = "|")
@@ -495,7 +495,7 @@ figshare_links <- function(paper) {
 # happens to share the same numeric id) rather than erroring clearly.
 .figshare_project_id <- function(figshare_url) {
   if (length(figshare_url) == 0) return(character(0))
-  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_project_id, character(1)))
+  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_project_id, character(1), USE.NAMES = FALSE))
 
   figshare_url <- trimws(as.character(figshare_url))
   if (is.na(figshare_url) || !nzchar(figshare_url)) return(NA_character_)
@@ -591,7 +591,7 @@ figshare_links <- function(paper) {
 # same way.
 .figshare_collection_id <- function(figshare_url) {
   if (length(figshare_url) == 0) return(character(0))
-  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_collection_id, character(1)))
+  if (length(figshare_url) > 1) return(vapply(figshare_url, .figshare_collection_id, character(1), USE.NAMES = FALSE))
 
   figshare_url <- trimws(as.character(figshare_url))
   if (is.na(figshare_url) || !nzchar(figshare_url)) return(NA_character_)
@@ -899,7 +899,7 @@ figshare_info <- function(figshare_url, id_col = 1, host = "api.figshare.com",
   obj$publication_date <- rec$published_date %empty_or% NA_character_
   obj$updated_date <-     rec$modified_date %empty_or% NA_character_
   obj$authors <-          list(authors)
-  obj$license <-          rec$license$name %empty_or% NA_character_
+  obj$license <-          .field_or_value(rec$license, "name") %empty_or% NA_character_
 
   files <- rec$files %||% list()
 
@@ -1115,7 +1115,17 @@ figshare_file_download <- function(figshare_id,
                                    unzip_types = NULL,
                                    host = "api.figshare.com",
                                    pb = NULL) {
-  figshare_id <- .figshare_id(figshare_id) |>
+  # 4TU.ResearchData's API takes a record's uuid as its id, but
+  # .figshare_id() drops a uuid, so an article known only by its uuid was
+  # not downloaded (U41)
+  given <- as.character(figshare_id)
+  figshare_id <- .figshare_id(given)
+  if (identical(host, "data.4tu.nl")) {
+    is_uuid <- grepl("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                     given, ignore.case = TRUE)
+    figshare_id[is_uuid] <- given[is_uuid]
+  }
+  figshare_id <- figshare_id |>
     stats::na.omit() |>
     unique()
   if (length(figshare_id) == 0) return(NULL)
@@ -1219,43 +1229,16 @@ figshare_file_download <- function(figshare_id,
     unzippable <- .is_zip(files$key) & !is.na(files$self) & nzchar(files$self %||% "")
 
   # --- size filters (MB) ----
-  if (!is.null(max_file_size) && is.finite(max_file_size) && max_file_size > 0) {
-    too_big_files <- which(files$size > max_file_size * 1024 * 1024 & !unzippable)
-    if (length(too_big_files) > 0) {
-      for (i in too_big_files) {
-        paste0(
-          "- omitting ", files$key[[i]],
-          " (", round(files$size[[i]] / 1024 / 1024, 1), "MB)"
-        ) |>
-          list(what = _) |>
-          pb$tick(0, tokens = _)
-      }
-      files <- files[-too_big_files, , drop = FALSE]
-      unzippable <- unzippable[-too_big_files]
-    }
-  }
+  # Omitted files stay in the table with downloaded = FALSE, as documented;
+  # they were dropped from it (U36).
+  omit <- .omit_for_size(files$size, files$key, unzippable,
+                         max_file_size, max_download_size, pb)
 
-  if (!is.null(max_download_size) && is.finite(max_download_size) && max_download_size > 0) {
-    while (any(!unzippable) &&
-           sum(files$size[!unzippable], na.rm = TRUE) > max_download_size * 1024 * 1024) {
-      capped <- which(!unzippable)
-      max_file <- capped[which.max(files$size[capped])]
-      paste0(
-        "- omitting ", files$key[[max_file]],
-        " (", round(files$size[[max_file]] / 1024 / 1024, 1), "MB)"
-      ) |>
-        list(what = _) |>
-        pb$tick(0, tokens = _)
-      files <- files[-max_file, , drop = FALSE]
-      unzippable <- unzippable[-max_file]
-    }
-  }
-
-  if (nrow(files) == 0) {
+  if (all(omit)) {
     paste0("- All files omitted due to size constraints") |>
       list(what = _) |>
       pb$tick(0, tokens = _)
-    return(NULL)
+    return(invisible(.all_omitted_table(files, list(figshare_id = as.character(figshare_id)))))
   }
 
   # --- target directory (avoid overwrite) ----
@@ -1264,10 +1247,13 @@ figshare_file_download <- function(figshare_id,
   if (dir.exists(download_to)) {
     download_to <- file.path(download_to, folder_name)
   }
+  # the base name is kept as it is: stripping "_<digits>" on each pass also
+  # stripped the deposit id of "figshare_<id>", so the next download went to
+  # "figshare_1" instead of "figshare_<id>_1" (U37)
   i <- 0L
+  base <- download_to
   while (dir.exists(download_to)) {
     i <- i + 1L
-    base <- sub("_\\d+$", "", download_to)
     download_to <- paste0(base, "_", i)
   }
   dir.create(download_to, showWarnings = FALSE, recursive = FALSE)
@@ -1277,7 +1263,7 @@ figshare_file_download <- function(figshare_id,
 
   # --- download into temp, then copy to target ----
   temppath <- tempfile()
-  on.exit(unlink(temppath, recursive = TRUE))
+  on.exit(unlink(temppath, recursive = TRUE), add = TRUE)
   dir.create(temppath)
 
   n <- nrow(files)
@@ -1287,6 +1273,7 @@ figshare_file_download <- function(figshare_id,
                        error = character(0), stringsAsFactors = FALSE)
 
   for (i in seq_len(n)) {
+    if (omit[i]) next   # left out for its size (U36)
     # --- selected members out of a zip, instead of the whole zip ----
     if (unzippable[i]) {
       paste0("Reading zip contents of ", files$key[[i]]) |>
@@ -1341,7 +1328,7 @@ figshare_file_download <- function(figshare_id,
         error = \(e) NULL
       )
       if (!is.null(resp) && httr2::resp_status(resp) == 200) {
-        writeBin(httr2::resp_body_raw(resp), target_path)
+        writeBin(.resp_bytes(resp), target_path)
         ok <- TRUE
       }
     }
@@ -1377,9 +1364,9 @@ figshare_file_download <- function(figshare_id,
   # --- verify what actually reached the disk ----
   files <- .figshare_verify_downloads(files, download_to)
 
-  n_missing <- sum(!files$downloaded)
+  n_missing <- sum(!files$downloaded & !omit)   # omitted files were never meant to arrive
   if (n_missing > 0) {
-    worst <- files[!files$downloaded, ]
+    worst <- files[!files$downloaded & !omit, ]
     warning(sprintf(
       "%d of %d file%s from Figshare article %s did not arrive intact (e.g. %s). The returned table marks %s downloaded = FALSE. Run again to retry.",
       n_missing, nrow(files), plural(nrow(files)), figshare_id,

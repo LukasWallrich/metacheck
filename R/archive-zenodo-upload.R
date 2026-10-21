@@ -19,7 +19,8 @@
 .pb_say <- function(pb, text) {
   width <- max(getOption("width", 80) - 12, 40)
   if (nchar(text) > width) {
-    text <- paste0(substr(text, 1, width - 1), "...")
+    # "..." included in the width: the line was 2 characters too wide (U50)
+    text <- paste0(substr(text, 1, width - 3), "...")
   }
   pb$tick(0, tokens = list(what = formatC(text, width = -width)))
   invisible(NULL)
@@ -909,6 +910,12 @@ zenodo_upload <- function(folders,
       # parent needs "Study/Data/b.csv" or it finds nothing to do.
       rels <- list.files(folder, recursive = TRUE, all.files = FALSE)
       rels <- rels[!dir.exists(file.path(folder, rels))]
+      # only the files kept above (upload_osf_metadata, max_file_size): the
+      # zip was built from the whole folder, so files reported as skipped
+      # were uploaded inside it (U47)
+      kept <- normalizePath(file.path(folder, rels), winslash = "/", mustWork = FALSE) %in%
+        normalizePath(file_lists[[i]], winslash = "/", mustWork = FALSE)
+      rels <- rels[kept]
       rels <- file.path(root, rels)
       abs <- file.path(parent, rels)
 

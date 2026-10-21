@@ -100,9 +100,19 @@
 # trailing underscores removed. Used to build result_ids that are usable as
 # a filename or a column value without further escaping.
 .stat_sanitize_id <- function(x) {
-  x <- tolower(trimws(as.character(x %||% "")))
+  x <- as.character(x %||% "")
+  x[is.na(x)] <- ""   # NA became "na" (U138)
+  x <- tolower(trimws(x))
   x <- gsub("[^a-z0-9]+", "_", x)
-  sub("^_|_$", "", x)
+  gsub("^_+|_+$", "", x)   # both ends: sub() trimmed only one ("_abc_" -> "abc_"; U138)
+}
+
+# The id prefix of a source file: "result" when there is none. `%||%` replaced
+# only NULL, so an NA source file gave ids such as "na_na_result" (U138).
+.stat_source_prefix <- function(source_file) {
+  s <- if (length(source_file)) source_file[[1]] else NA_character_
+  if (is.null(s) || is.na(s) || !nzchar(trimws(s))) s <- "result"
+  .stat_sanitize_id(s)
 }
 
 # ---- statistic names --------------------------------------------------
@@ -148,6 +158,10 @@
   s <- sub("[^0-9.eE+-].*$", "", s)
   dm <- regmatches(s, regexpr("\\.[0-9]+", s))
   dec <- if (length(dm)) nchar(dm) - 1L else 0L
+  # the exponent counts: 1.5e-05 has 6 decimals, not 1, which gave a
+  # tolerance of 0.05 that matched almost any small value (U143)
+  ex <- regmatches(s, regexpr("[eE][+-]?[0-9]+$", s))
+  if (length(ex)) dec <- max(0L, dec - as.integer(sub("^[eE]", "", ex)))
   s2 <- sub("^(-?)\\.", "\\10.", s)
   num <- suppressWarnings(as.numeric(s2))
   list(num = num, dec = dec, censored = cens)

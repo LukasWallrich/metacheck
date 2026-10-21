@@ -1,6 +1,7 @@
 #' Run a module
 #'
-#' @param paper a paper object or a list of paper objects
+#' @param paper a paper object or a list of paper objects, or NULL to check
+#'   only local files (a module's `local_path` argument)
 #' @param module the name of a module or path to a module to run on this object
 #' @param ... further arguments to the module (e.g., arguments for the `llm()` function like `params`); these will override any arguments in the module
 #'
@@ -14,6 +15,15 @@
 #' }
 module_run <- function(paper, module, ...) {
   module_path <- module_find(module)
+
+  # paper = NULL is documented for checking local files only (local_path):
+  # an empty paper of unknown id, which every module can run on.
+  # paper_id(NULL) stopped repo_check, and so every module that runs it, with
+  # "paper must be a paper or paperlist object" (U78).
+  if (is.null(paper)) {
+    paper <- paper()
+    paper$paper_id <- NA_character_
+  }
   info <- module_info(module_path)
   .module_check_version(info, module)
 
@@ -33,7 +43,11 @@ module_run <- function(paper, module, ...) {
     prev$prev_outputs <- NULL
     .__mc__prev_outputs[[prev$module]] <- prev
   } else if (.is_paper_list(paper)) {
-    summary_table <- data.frame(paper_id = names(paper))
+    # papers sharing a paper_id are renamed "~2", ... (U208)
+    paper <- .unique_paper_ids(paper)
+    # names(list()) is NULL, which gave a table without a paper_id column, and
+    # the join with the module's summary stopped (U79)
+    summary_table <- data.frame(paper_id = names(paper) %||% character(0))
   } else {
     summary_table <- data.frame(paper_id = paper$paper_id)
   }
@@ -119,6 +133,7 @@ module_run <- function(paper, module, ...) {
       sub("\\.(r|R)$", "", x = _, ) |>
       paste0(".", x = _)
 
+    cols_before <- colnames(summary_table)
     summary_table <- summary_table |>
       dplyr::left_join(results$summary_table,
         by = "paper_id",
@@ -128,10 +143,20 @@ module_run <- function(paper, module, ...) {
     if (!is.null(results$na_replace)) {
       # replace NAs
       narep <- results$na_replace
-      cols <- colnames(summary_table)
+      # only this module's own columns: in a chain the table also holds the
+      # earlier modules' columns, whose NA cells an unnamed na_replace filled
+      # with 0/FALSE (U77); never the paper id: an unknown id (paper = NULL,
+      # local files only) became the text "0" (U78)
+      cols <- setdiff(colnames(summary_table), c(cols_before, "paper_id"))
       if (is.null(names(narep))) {
         narep <- rep_len(narep, length(cols))
         names(narep) <- cols
+      } else {
+        # a named value finds its column under the module's suffix too
+        nm <- names(narep)
+        nm <- ifelse(nm %in% cols, nm,
+                     ifelse(paste0(nm, suffix) %in% cols, paste0(nm, suffix), nm))
+        names(narep) <- nm
       }
       narep <- narep[intersect(names(narep), cols)]
       for (col in names(narep)) {

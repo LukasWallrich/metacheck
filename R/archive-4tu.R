@@ -85,7 +85,7 @@ researchdata4tu_links <- function(paper) {
   }
 
   if (length(researchdata4tu_url) > 1) {
-    return(vapply(researchdata4tu_url, .researchdata4tu_id, character(1)))
+    return(vapply(researchdata4tu_url, .researchdata4tu_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single researchdata4tu_url ----
@@ -107,12 +107,17 @@ researchdata4tu_links <- function(paper) {
   # 10.4121/ce413614-1c82-4e81-90c0-323aa7d2fabd) -- so the uuid itself is
   # extracted and passed straight through in either case; the API accepts it
   # just as well.
+  # uuids before the numeric DOI: a uuid that starts with digits
+  # ("10.4121/7f866e02-...") gave the id "7" (U41). The article address may
+  # be the short form ("articles/_/<id>/<version>") or name any item type
+  # ("articles/software/<title>/<id>"); only "dataset" gave an id (U156).
   patterns <- c(
     "10\\.4121/uuid:([0-9a-f-]{36})",
-    "10\\.4121/([0-9]+)",
-    "10\\.4121/([0-9a-f-]{36})",
+    "10\\.4121/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    "^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
     "data\\.4tu\\.nl/datasets/([0-9a-f-]{36})",
-    "data\\.4tu\\.nl/articles/(?:dataset/[^/]+/)?([0-9]+)"
+    "10\\.4121/([0-9]+)",
+    "data\\.4tu\\.nl/articles/(?:_/|[^/]+/[^/]+/)?([0-9]+)"
   )
 
   for (pattern in patterns) {
@@ -191,12 +196,17 @@ researchdata4tu_links <- function(paper) {
 #' }
 researchdata4tu_info <- function(researchdata4tu_url, id_col = 1, pb = NULL,
                                  cache = FALSE) {
-  raw_url <- if (is.data.frame(researchdata4tu_url)) {
-    researchdata4tu_url[[id_col]]
+  # As the other *_info() functions: a table keeps its columns, a vector is
+  # de-duplicated without NAs (it kept only the id column, and c(id, NA)
+  # stopped, U33)
+  if (is.data.frame(researchdata4tu_url)) {
+    table <- researchdata4tu_url
+    table$researchdata4tu_url <- table[[id_col]]
+    table$researchdata4tu_id <- NULL
   } else {
-    researchdata4tu_url
+    table <- data.frame(researchdata4tu_url = unique(researchdata4tu_url) |>
+                          stats::na.omit())
   }
-  table <- data.frame(researchdata4tu_url = raw_url)
 
   # figshare_info() resolves ids via .figshare_id(), which only recognises
   # figshare.com/10.6084 patterns -- a 10.4121 DOI (4TU's own prefix) would

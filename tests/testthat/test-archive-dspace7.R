@@ -359,3 +359,14 @@ test_that("dspace7_links does not look up the paper's own DOI or DOIs other dete
   expect_equal(links$href, "https://conservancy.umn.edu/handle/11299/208294")
   expect_equal(seen$urls, "https://doi.org/api/handles/10.13020%2Fq3y6-h459?type=URL")
 }))
+
+test_that("DSpace 7: a known host is matched by host name, and messages name the handle (U42, U211)", {
+  # a host anywhere in the URL counted, and an item without a uuid was
+  # named "(NA)"
+  expect_true(metacheck:::.dspace7_on_known_host("https://ecommons.cornell.edu/items/x"))
+  expect_true(metacheck:::.dspace7_on_known_host("https://sub.ecommons.cornell.edu/items/x"))
+  expect_false(metacheck:::.dspace7_on_known_host("https://example.org/?from=ecommons.cornell.edu"))
+  testthat::local_mocked_bindings(.dspace7_find_uuid = function(...) NA_character_)
+  expect_warning(metacheck:::.dspace7_info("ecommons.cornell.edu", handle = "1813/12345"),
+                 "(1813/12345)", fixed = TRUE)
+})

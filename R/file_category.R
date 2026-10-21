@@ -14,10 +14,14 @@ file_category <- function(contents) {
     )
   }
 
+  # a name that is not valid UTF-8 (a zip's old Windows name) matched nothing
+  # (U76); match on a valid copy and keep contents$name as given
+  name_utf8 <- .utf8_lines(as.character(contents$name))
+
   if (is.null(contents$filetype)) {
     file_types <- metacheck::file_types
 
-    contents$filetype <- lapply(contents$name, \(nm) {
+    contents$filetype <- lapply(name_utf8, \(nm) {
       types <- file_types$ext |>
         gsub("\\+", "\\\\+", x = _) |>
         gsub("\\.", "\\\\.", x = _) |>
@@ -31,7 +35,7 @@ file_category <- function(contents) {
     })
   }
 
-  nm <- contents$name
+  nm <- name_utf8
   cat <- contents$category %||% NA
   ft <- contents$filetype
 
@@ -59,7 +63,7 @@ file_category <- function(contents) {
     ft_has("data") & ft_has("archive") ~ "data", # sample.fasta.gz / .fq.gz
   )
 
-  is_readme <- .is_readme_name(contents$name)
+  is_readme <- .is_readme_name(name_utf8)
 
   # data
   is_data <- dplyr::case_when(
@@ -145,6 +149,10 @@ file_category <- function(contents) {
 #' filetype("script.R")
 filetype <- function(filename) {
   .data <- NULL
+  # strsplit() gives no extension for a name that is not valid UTF-8 (U76);
+  # split a valid copy, and name the result by the names as given
+  given <- filename
+  filename <- .utf8_lines(as.character(filename))
 
   ext <- data.frame(
     id = seq_along(filename),
@@ -161,7 +169,7 @@ filetype <- function(filename) {
     )
 
   filetype <- add_types$type
-  names(filetype) <- filename
+  names(filetype) <- given
 
   return(filetype)
 }

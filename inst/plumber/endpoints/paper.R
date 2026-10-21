@@ -106,7 +106,17 @@ function(req, res) {
             # Prepare optional parameters with defaults
             search_params <- list(paper = paper, pattern = mp$pattern)
 
-            if (!is.null(mp$section)) search_params$section <- mp$section
+            # `section`: comma-separated section types (e.g. "method,results",
+            # any case; "references" is the reference list). The search runs
+            # on those sections' sentences only. It was passed on to
+            # text_search(), which has no such argument, so every request that
+            # used it failed (U2).
+            if (!is.null(mp$section) && nzchar(mp$section)) {
+                wanted <- tolower(trimws(strsplit(mp$section, ",")[[1]]))
+                sentences <- text_search(paper, include_refs = "references" %in% wanted)
+                search_params$paper <- sentences[tolower(sentences$section_type) %in% wanted, ]
+                search_params$include_refs <- "references" %in% wanted
+            }
             if (!is.null(mp$return)) search_params$return <- mp$return
             if (!is.null(mp$ignore.case)) search_params$ignore.case <- as.logical(mp$ignore.case)
             if (!is.null(mp$fixed)) search_params$fixed <- as.logical(mp$fixed)

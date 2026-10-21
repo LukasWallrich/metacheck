@@ -313,7 +313,9 @@ psycharchives_info <- function(pa_url, id_col = 1, pb = NULL, cache = FALSE) {
   # psycharchives_file_download()) automatically supports every host in
   # .dspace_legacy_hosts() without any change on their part.
   parsed <- .dspace_legacy_parse(pa_url)
-  host <- parsed$host[[1]] %||% "www.psycharchives.org"
+  # NA is not NULL: a handle on an unknown host requested https://NA/rest (U42)
+  host <- parsed$host[[1]]
+  if (is.null(host) || is.na(host)) host <- "www.psycharchives.org"
   handle <- parsed$handle[[1]]
   if (is.na(handle)) {
     warning(pa_url, " is not a valid PsychArchives handle", call. = FALSE)
@@ -479,6 +481,9 @@ psycharchives_file_download <- function(pa_url, pb = NULL, cache = FALSE) {
 
     file_lists <- lapply(unique_pa, psycharchives_file_download, pb = pb, cache = cache)
     info <- do.call(dplyr::bind_rows, args = file_lists)
+    # every link failed: NULL, as for one failed link; the join below stopped
+    # on a table without columns ("Join columns in `y` must be present", U43)
+    if (nrow(info) == 0) return(NULL)
     orig <- data.frame(pa_url = pa_url)
     df <- dplyr::left_join(orig, info, by = "pa_url")
 

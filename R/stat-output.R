@@ -52,11 +52,11 @@
 # appended by each caller separately) so the whole id can be sanitised as ONE
 # token here, in one place.
 .stat_result_ids <- function(tables, source_file = NA_character_) {
-  src <- .stat_sanitize_id(source_file %||% "result")
+  src <- .stat_source_prefix(source_file)
   locator <- vapply(tables, function(tb) {
-    if (!is.null(tb$line) && !is.na(tb$line)) {
+    if (!is.null(tb[["line"]]) && !is.na(tb[["line"]])) {
       seq_n <- tb$line_seq %||% 1L
-      paste0("l", tb$line, "_", seq_n)
+      paste0("l", tb[["line"]], "_", seq_n)
     } else if (!is.null(tb$table_index) && !is.na(tb$table_index)) {
       paste0("t", tb$table_index)
     } else if (!is.null(tb$analysis) && !is.na(tb$analysis) && nzchar(tb$analysis)) {
@@ -96,16 +96,19 @@
   aid <- tb$analysis_id %||% NA
   anchor <- if (length(aid) == 1 && !is.na(aid) && nzchar(as.character(aid)))
     paste0("a", as.character(aid))
-  else if (!is.null(tb$line) && !is.na(tb$line))
+  else if (!is.null(tb[["line"]]) && !is.na(tb[["line"]]))
     # `line_seq` must be part of the anchor, not just the line: a loop
     # (`for (o in outcomes) print(t.test(...))`) prints SEVERAL independent
     # tests from ONE source line, and grouping on the line alone would merge
     # them into a single test. line_seq is exactly the within-line counter that
     # keeps them apart.
-    paste0("l", tb$line, "_", tb$line_seq %||% 1L)
+    paste0("l", tb[["line"]], "_", tb$line_seq %||% 1L)
   else sub("_r[0-9]+$", "", base_id)   # fall back to the table's own base id
-  .stat_sanitize_id(paste(.stat_sanitize_id(source_file %||% "result"),
-                          anchor, row_label, sep = "_"))
+  src <- .stat_source_prefix(source_file)
+  # the base id already starts with the source prefix: it was repeated
+  # ("odd_name_spv_odd_name_spv_t3_a") (U138)
+  anchor <- sub(paste0("^", src, "_"), "", anchor)
+  .stat_sanitize_id(paste(src, anchor, row_label, sep = "_"))
 }
 
 # .STAT_PLACEHOLDERS is defined in R/stat_helpers.R (one copy only, #482).
@@ -186,7 +189,7 @@ stat_results_long <- function(tables, paper_id = NA_character_,
 
   rows <- lapply(seq_along(tables), function(ti) {
     tb <- tables[[ti]]
-    df <- tb$data
+    df <- tb[["data"]]
     if (is.null(df) || !nrow(df) || !ncol(df)) return(NULL)
     # A .spv CHART entry (import_spv()'s is_chart = TRUE; see R/spv.R's
     # .spv_decode_chart()) has `x`/`y` point-coordinate columns, not a result
@@ -378,7 +381,7 @@ stat_output_json <- function(tables, paper_id = "metacheck",
 
   analyses <- list()
   for (ti in seq_along(tables)) {
-    tb <- tables[[ti]]; df <- tb$data
+    tb <- tables[[ti]]; df <- tb[["data"]]
     if (is.null(df) || !nrow(df) || !ncol(df)) next
     # A .spv CHART entry (is_chart = TRUE) has x/y point-coordinate columns,
     # not a result table -- see the matching guard in stat_results_long().
@@ -463,7 +466,10 @@ stat_output_json <- function(tables, paper_id = "metacheck",
 #' @export
 stat_output_validate <- function(doc) {
   if (is.character(doc) && length(doc) == 1L) {
-    src <- if (file.exists(doc)) doc else textConnection(doc)
+    # a JSON string as it is: fromJSON() cannot read a text connection
+    # ("can only read from a binary connection"), so every JSON string was
+    # "not valid JSON" (U136)
+    src <- doc
     parsed <- tryCatch(jsonlite::fromJSON(src, simplifyVector = FALSE),
                        error = function(e) NULL)
     if (is.null(parsed))

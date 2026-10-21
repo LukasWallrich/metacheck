@@ -140,6 +140,9 @@ explain_error <- function(msg) {
   if (grepl("entity too large|payload too large|413|maximum upload", m)) {
     return(sprintf("Your .zip file is too large (the limit is %d MB). Remove large data files or outputs you do not need checked, and try again.", MAX_UPLOAD_MB))
   }
+  if (grepl("holds no files", m)) {
+    return("The .zip holds no files. Please zip the folder that holds your files, and upload that file.")
+  }
   if (grepl("zip file is corrupt|cannot open zip|error -1|not a zip|zip file cannot be opened", m)) {
     return("The uploaded file could not be opened as a .zip archive. Please zip your folder again (e.g. right-click > Compress / Send to > Compressed folder) and upload that file.")
   }
@@ -201,9 +204,16 @@ slot_release <- function(slot) {
 # of entries, and no path that would escape the extraction folder.
 check_zip <- function(zip_path) {
   listing <- tryCatch(utils::unzip(zip_path, list = TRUE),
-                      error = function(e) stop("zip file cannot be opened", call. = FALSE),
-                      warning = function(w) stop("zip file cannot be opened", call. = FALSE))
-  if (!nrow(listing)) stop("The .zip file is empty.", call. = FALSE)
+                      error = function(e) NULL, warning = function(w) NULL)
+  if (is.null(listing)) {
+    # unzip() cannot open a .zip without entries, which is only the
+    # end-of-archive record, starting "PK\5\6" (Lakens/tue_datamanager_check#4, item 8)
+    sig <- tryCatch(readBin(zip_path, "raw", 4), error = function(e) raw(0))
+    if (identical(sig, as.raw(c(0x50, 0x4b, 0x05, 0x06)))) stop("The .zip holds no files.", call. = FALSE)
+    stop("zip file cannot be opened", call. = FALSE)
+  }
+  # a .zip of an empty folder holds only folder entries
+  if (all(grepl("[/\\\\]$", listing$Name))) stop("The .zip holds no files.", call. = FALSE)
   if (nrow(listing) > MAX_ZIP_FILES) {
     stop(sprintf("The .zip contains %d files; the limit is %d. Please remove files you do not need checked (e.g. renv/, node_modules/, .git/).",
                  nrow(listing), MAX_ZIP_FILES), call. = FALSE)

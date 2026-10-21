@@ -428,3 +428,47 @@ test_that(".llm_apply_reasoning switches Qwen 3 reasoning off on Ollama's /v1 to
                                           api_args = list(reasoning_effort = "low"))
   expect_identical(out$api_args$reasoning_effort, "low")
 })
+
+test_that("llm(): a failed call keeps the other answers; sanitised, numeric and NA texts (U19)", {
+  # one failure stopped the whole call (bind_rows of ellmer_output and NA),
+  # answers were joined on the sanitised text, numeric text failed at the
+  # join, and NA was sent as "NA"
+  llm_use(TRUE); llm_model("groq/llama-3.3-70b-versatile")
+  withr::local_options(metacheck.llm.cache = FALSE)
+  sent <- character(0)
+  local_mocked_bindings(
+    chat = function(...) structure(list(
+      chat = function(text, echo = FALSE) {
+        sent <<- c(sent, text)
+        if (grepl("fail", text)) stop("HTTP 500: server error")
+        structure(paste("answer to", text), class = c("ellmer_output", "character"))
+      }), class = "Chat"), .package = "ellmer")
+  txt <- c("first ok", "this will fail", "control\x01char", NA)
+  expect_warning(r <- llm(txt, "Say something"), "following rows: 2")
+  expect_equal(r$answer, c("answer to first ok", NA, "answer to controlchar", NA))
+  expect_false("NA" %in% sent)
+  expect_equal(llm(c(1, 2), "Say something")$answer, c("answer to 1", "answer to 2"))
+})
+
+test_that("llm() bounds each request by llm_timeout() and stops retrying after it (tue_datamanager_check#4)", {
+  # ellmer's 5-minute default with 3 tries, times 5 attempts, let one answer
+  # take over an hour, and a job hung at "Querying LLM"
+  llm_use(TRUE)
+  withr::defer(llm_use(FALSE))
+  withr::local_options(metacheck.llm_timeout = 0.5)
+  withr::local_envvar(GROQ_API_KEY = "x")
+  seen <- c(); attempts <- 0
+  fake_chat <- list(
+    chat_structured = function(...) {
+      attempts <<- attempts + 1
+      seen <<- c(seen, getOption("ellmer_timeout_s"))
+      Sys.sleep(0.6)
+      stop("Failed to generate JSON")
+    },
+    chat = function(...) "x")
+  local_mocked_bindings(chat = function(...) fake_chat, .package = "ellmer")
+  suppressWarnings(llm("text", "system", type = ellmer::type_object(a = ellmer::type_string()),
+                       model = "groq/llama"))
+  expect_equal(attempts, 1)
+  expect_equal(unique(seen), 0.5)
+})

@@ -142,7 +142,7 @@ regcheck_start_local <- function(method = c("docker", "python"),
 
   # auto-select model if not specified ----
   if (is.null(model)) {
-    ollama_base_url <- Sys.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    ollama_base_url <- rep_if(Sys.getenv("OLLAMA_BASE_URL"), "http://localhost:11434", replace = "")
     models <- tryCatch(ellmer::models_ollama(ollama_base_url),
                        error = function(e) NULL)
     if (is.null(models) || nrow(models) == 0) {
@@ -176,6 +176,8 @@ regcheck_start_local <- function(method = c("docker", "python"),
       env     = c(
         Sys.getenv(),
         OLLAMA_MODEL        = model,
+        # the host port; docker-compose.yml fixed it at 8000 and `port` was ignored (U14)
+        REGCHECK_PORT       = as.character(port),
         REGCHECK_API_TOKEN  = Sys.getenv("REGCHECK_API_TOKEN")
       ),
       stdout  = "|",

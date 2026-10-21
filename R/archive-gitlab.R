@@ -67,7 +67,7 @@ gitlab_links <- function(paper) {
 
   gitlab_regex <- "(?:https?://)?gitlab\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
 
-  found_gl <- paper_table(paper, "url") |>
+  found_gl <- .url_hrefs(paper) |>
     text_search(gitlab_regex, perl = TRUE) |>
     dplyr::select(href, text_id, paper_id)
 
@@ -287,7 +287,7 @@ gitlab_tree_files <- function(repo) {
   # %empty_or% (not %||%) because key can come back as a length-zero value
   # rather than NULL, which would otherwise propagate as a length-zero
   # "license" into the caller's vapply(..., character(1)).
-  license        <- meta$license$key %empty_or% NA_character_
+  license        <- .field_or_value(meta$license, "key") %empty_or% NA_character_
 
   # ── 2. File tree (paginated, 100 entries/page) ───────────────────────────────
   all_entries <- list()

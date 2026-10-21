@@ -116,6 +116,8 @@ paperlist <- function(..., merge_duplicates = FALSE) {
   }
 
   class(paperlist) <- c("scivrs_paperlist", "list")
+  # papers left sharing an id are renamed "~2", ... (U208)
+  paperlist <- .unique_paper_ids(paperlist)
 
   invisible(paperlist)
 }
@@ -526,6 +528,11 @@ paper_table <- function(paper, table, cols = NULL) {
     if (!.is_paper(paper)) stop("paper must be a paper or paperlist object.")
     paper <- list(paper)
   }
+  # An empty paper list has no tables to bind, so the result had no columns,
+  # or logical ones once text_search() added them: joins on paper_id and
+  # string functions on text stopped nearly every module (U79). An empty
+  # paper's tables are typed and have no rows.
+  if (length(paper) == 0) paper <- list(paper())
 
   # add paper_id to tables
   table_list <- lapply(paper, `[[`, table)
@@ -560,7 +567,69 @@ paper_table <- function(paper, table, cols = NULL) {
 #' paper_id(psychsci)
 #' }
 paper_id <- function(paper) {
+  # each paper's own id: read from the info tables, a paper whose info table
+  # has no rows had no id, so a paper list lost it (U102)
+  valid_id <- \(id) length(id) == 1 && !is.na(id) && nzchar(id)
+  if (.is_paper(paper) && valid_id(paper$paper_id)) return(as.character(paper$paper_id))
+  if (.is_paper_list(paper) && length(paper) > 0 &&
+      all(vapply(paper, \(p) valid_id(p$paper_id), logical(1)))) {
+    return(unname(vapply(paper, \(p) as.character(p$paper_id), character(1))))
+  }
   paper_table(paper, "info", "paper_id")$paper_id
+}
+
+# A module's summary table with one row per paper and the same value in every
+# row of each column: .per_paper_table(paper, repo_n = 0, files_n = NA). For
+# an empty paper or paper list it has no rows; data.frame(paper_id =
+# character(0), repo_n = 0) stopped with "arguments imply differing number of
+# rows: 0, 1" (U79).
+.per_paper_table <- function(paper, ...) {
+  out <- data.frame(paper_id = paper_id(paper) %||% character(0),
+                    stringsAsFactors = FALSE)
+  cols <- list(...)
+  for (nm in names(cols)) out[[nm]] <- rep(cols[[nm]], length.out = nrow(out))
+  out
+}
+
+# Papers in a list that share a paper_id: the second and later get "~2",
+# "~3", ... (with a warning naming them). Tables are joined and grouped on
+# paper_id, so a shared id mixed the papers: sentences joined to the other
+# paper's sections (every row twice), summaries with more rows than papers,
+# references pooled, and ethics_check and open_practices stopped ("factor
+# level [2] is duplicated") (U208, U101). Applied where a list comes in:
+# paperlist(), module_run() and report().
+.unique_paper_ids <- function(paper) {
+  if (!.is_paper_list(paper) || length(paper) < 2) return(paper)
+  ids <- vapply(paper, \(x) as.character(x$paper_id %||% NA_character_)[1], character(1))
+  dup <- duplicated(ids) & !is.na(ids)
+  if (!any(dup)) return(paper)
+  occurrence <- vapply(seq_along(ids), \(i) sum(ids[seq_len(i)] %in% ids[i]), integer(1))
+  new_ids <- ifelse(dup, paste0(ids, "~", occurrence), ids)
+  for (i in which(dup)) paper[[i]]$paper_id <- new_ids[i]
+  names(paper) <- new_ids
+  warning(sprintf(
+    "%d paper%s shared a paper_id with an earlier paper and %s renamed: %s",
+    sum(dup), plural(sum(dup)), plural(sum(dup), "was", "were"),
+    paste(new_ids[dup], collapse = ", ")), call. = FALSE)
+  paper
+}
+
+# TRUE when a paper or paper list has no text and no references, so a module
+# that reads them has nothing to check. Such a module reports "na" for it
+# (.empty_input_result()): an empty paper got red ("no statement found") or
+# green ("nothing flagged") from nine modules. Inputs that are not papers are
+# never empty here.
+.paper_is_empty <- function(paper) {
+  if (!.is_paper(paper) && !.is_paper_list(paper)) return(FALSE)
+  nrow(paper_table(paper, "text")) == 0 && nrow(paper_table(paper, "bib")) == 0
+}
+
+# The result of a text or reference module for an empty input (see
+# .paper_is_empty()).
+.empty_input_result <- function(paper) {
+  list(traffic_light = "na",
+       summary_text = "There was no text to check.",
+       summary_table = .per_paper_table(paper))
 }
 
 #' Reference and DOI table
@@ -652,12 +721,16 @@ paper_write <- function(paper, file_name = NULL, save_path = ".",
   json_path <- file.path(save_path, paste0(file_name, ".json"))
 
   if (!is.null(schema_version)) {
-    jsonlite::write_json(.paper_to_bibr12(paper), json_path,
+    # digits = NA writes 15 significant digits, so rewriting a bibr export
+    # changed values such as 0.9411764705882353 (U22); those are written with
+    # the digits they need
+    jsonlite::write_json(.json_exact_doubles(.paper_to_bibr12(paper)), json_path,
                          na = "null",
                          null = "null",
                          auto_unbox = TRUE,
                          pretty = TRUE,
-                         digits = NA)
+                         digits = NA,
+                         json_verbatim = TRUE)
     return(invisible(json_path))
   }
 
@@ -668,6 +741,42 @@ paper_write <- function(paper, file_name = NULL, save_path = ".",
                        pretty = TRUE)
 
   invisible(json_path)
+}
+
+
+# A double that 15 significant digits would change, as the shortest JSON text
+# that reads back as exactly that double (class "json", for write_json()'s
+# json_verbatim); NULL for any other value.
+.exact_double_json <- function(v) {
+  if (!is.double(v) || length(v) != 1 || !is.finite(v)) return(NULL)
+  if (as.numeric(sprintf("%.15g", v)) == v) return(NULL)
+  s <- sprintf("%.16g", v)
+  if (as.numeric(s) != v) s <- sprintf("%.17g", v)
+  structure(s, class = "json")
+}
+
+# Every double in `x` (lists, data frame columns, vectors) that 15
+# significant digits would change is replaced by .exact_double_json(); the
+# rest is left as it is. A vector with such a value becomes a list, which
+# write_json() writes as the same array.
+.json_exact_doubles <- function(x) {
+  if (is.data.frame(x)) {
+    x[] <- lapply(x, \(col) {
+      out <- .json_exact_doubles(col)
+      if (is.double(col) && length(col) == 1 && !is.double(out)) list(out) else out
+    })
+    return(x)
+  }
+  if (is.list(x)) {
+    x[] <- lapply(x, .json_exact_doubles)
+    return(x)
+  }
+  if (!is.double(x)) return(x)
+  exact <- lapply(x, .exact_double_json)
+  if (all(vapply(exact, is.null, logical(1)))) return(x)
+  out <- Map(\(e, v) e %||% v, exact, x)
+  names(out) <- names(x)
+  if (length(x) == 1 && !inherits(x, "AsIs")) out[[1]] else out
 }
 
 

@@ -14,7 +14,8 @@ retractionwatch <- utils::read.csv(tmp) |>
   select(doi = OriginalPaperDOI,
          #pmid = OriginalPaperPubMedID,
          retractionwatch = RetractionNature) |>
-  filter(doi != "unavailable", retractionwatch != "") |>
+  mutate(doi = trimws(doi)) |>
+  filter(doi != "unavailable", doi != "", retractionwatch != "") |>   # no blank DOIs (U15)
   summarise(retractionwatch = unique(retractionwatch) |> paste(collapse = ";"), .by = doi)
 
 count(retractionwatch, retractionwatch)

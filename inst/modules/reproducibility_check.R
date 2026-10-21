@@ -151,6 +151,11 @@
 #'   throwaway library regardless of this argument.
 #' @param timeout per-script timeout in seconds for the execute phase
 #'   (default 600).
+#' @param total_timeout the time in seconds for running all scripts together,
+#'   R and Python, counted from when the first script starts (default 3600,
+#'   one hour; `NULL` or `Inf` for no limit). Once it has run out, no further
+#'   script is started (outcome `skipped_time_limit`), and a running script is
+#'   stopped, so a package with many slow scripts still gets a report.
 #' @param keep_sandbox if TRUE, do not delete the temp materialised layout
 #'   (data/, statistical_output/, and — when `execute = TRUE` — the rewritten
 #'   scripts + temp library) after the run, and return its path as attribute
@@ -228,7 +233,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                                   docker_use_declared_version = FALSE,
                                   install_missing = FALSE,
                                   cran_install_main = FALSE,
-                                  timeout = 600, keep_sandbox = FALSE,
+                                  timeout = 600, total_timeout = 3600,
+                                  keep_sandbox = FALSE,
                                   cache = FALSE,
                                   download = "data",
                                   skip_types = NULL,
@@ -241,6 +247,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                                   results_dir = NULL) {
   # paper <- psychsci[[233]] # to test (many code files, several issues)
   sandbox <- match.arg(sandbox)
+  # set when the first script starts (see total_timeout)
+  script_deadline <- NULL
   layout <- match.arg(layout)
   # A local folder has every file on disk: run the code in a copy of the
   # package as it is (see .repro_package_plan()).
@@ -269,7 +277,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
       docker_use_declared_version = docker_use_declared_version,
       install_missing = install_missing,
       cran_install_main = cran_install_main,
-      timeout = timeout, keep_sandbox = keep_sandbox,
+      timeout = timeout, total_timeout = total_timeout,
+      keep_sandbox = keep_sandbox,
       cache = cache, download = download, skip_types = skip_types,
       peek_zips = peek_zips, max_file_size = max_file_size,
       max_download_size = max_download_size,
@@ -1182,11 +1191,12 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # WHERE each copy came from -- file_name alone is useless here, since
     # mirrors share the same basename by construction (that is the whole
     # premise of this dedup step), so "X (same as X)" would say nothing.
-    # resolve_row_path() (already used for hashing, above) gives the local
-    # cache path or source URL, which actually differs between mirrors.
     dup_kept_idx <- vapply(which(dup), function(i) which(hashes == hashes[i])[1], integer(1))
-    dup_loc <- vapply(which(dup), function(i) resolve_row_path(i) %||% NA_character_, character(1))
-    kept_loc <- vapply(dup_kept_idx, function(i) resolve_row_path(i) %||% NA_character_, character(1))
+    # Each copy by its link, else its path in the repository; never its place
+    # on the computer that runs the check, which on a server is the server's
+    # job folder (Lakens/tue_datamanager_check#5, item 2).
+    dup_loc <- .repro_shown_location(r_files, which(dup))
+    kept_loc <- .repro_shown_location(r_files, dup_kept_idx)
     dup_of <- r_files$file_name[dup_kept_idx]
     dup_desc <- sprintf(
       "`%s`%s (same as `%s`%s)",
@@ -1370,14 +1380,17 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   # "Produced upstream" must respect the run order: a file counts as available
   # to script S only when some script that runs *before* S writes it. The flat
   # pool of all writes would also excuse a file that is only produced later,
-  # which cannot help S actually run.
+  # which cannot help S actually run. A file S writes itself is not one it is
+  # missing either: a script that reads back what it saved was "missing_input"
+  # and not run (U235).
   writes_by_file <- io$writes %||% list()
   names(writes_by_file) <- io$file_name %||% names(writes_by_file)
   produced_before <- lapply(seq_len(n_code), function(i) {
+    own <- unlist(writes_by_file[r_files$file_name[i]], use.names = FALSE)
     ord_i <- file_order[i]
-    if (is.na(ord_i)) return(character(0))
-    earlier <- r_files$file_name[!is.na(file_order) & file_order < ord_i]
-    unique(tolower(unlist(writes_by_file[earlier], use.names = FALSE)))
+    earlier <- if (is.na(ord_i)) character(0) else
+      r_files$file_name[!is.na(file_order) & file_order < ord_i]
+    unique(tolower(c(own, unlist(writes_by_file[earlier], use.names = FALSE))))
   })
 
   # Per-file unresolved inputs, kept as names so the table can say *why* a file
@@ -1547,13 +1560,14 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
           own, ord, sandbox_root = sandbox_root,
           lib_dir = if (dir.exists(lib_dir)) lib_dir else NULL,
           image = docker_image, timeout = timeout, skip = skip_files,
-          parses = parses_named, failed_deps = failed_deps)
+          parses = parses_named, failed_deps = failed_deps,
+          deadline = script_deadline)
       } else {
         repro_run_scripts(
           own, ord,
           lib_dir = if (dir.exists(lib_dir)) lib_dir else NULL,
           timeout = timeout, skip = skip_files, parses = parses_named,
-          failed_deps = failed_deps)
+          failed_deps = failed_deps, deadline = script_deadline)
       }
       if (!length(run_by_source)) return(res)
       by_src <- data.frame(
@@ -1568,6 +1582,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
 
     .dbg("running ", length(run_order_names), " script(s) in order: ",
          paste(run_order_names, collapse = " -> "))
+    if (is.null(script_deadline)) script_deadline <- .repro_deadline(total_timeout)
     run_results <- run_r_scripts(run_tbl, run_order_names)
     .dbg("execution finished (pass 1). outcomes: ",
          paste(sprintf("%s=%s", run_results$file_name, run_results$outcome),
@@ -1684,7 +1699,17 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                              vapply(library_injections, paste, character(1),
                                     collapse = ", ")), collapse = "; ")) else "",
              ": ", paste(run_order2, collapse = " -> "))
-        run_results <- run_r_scripts(run_tbl2, run_order2)
+        run_results2 <- run_r_scripts(run_tbl2, run_order2)
+        # a script the second run had no time left for keeps its first result
+        late <- run_results2$outcome == "skipped_time_limit" &
+          run_results2$file_name %in% run_results$file_name
+        if (any(late)) {
+          run_results2 <- dplyr::bind_rows(
+            run_results2[!late, , drop = FALSE],
+            run_results[match(run_results2$file_name[late], run_results$file_name), , drop = FALSE])
+          run_results2 <- run_results2[order(match(run_results2$file_name, run_order2)), , drop = FALSE]
+        }
+        run_results <- run_results2
         order_tbl <- order_tbl2   # report the corrected order
         run_tbl <- run_tbl2       # so downstream setwd/family/injection detail (#391) reflects pass 2
         reran <- TRUE
@@ -1704,6 +1729,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # Archive (or a GitHub/URL source), which is an infrastructure limitation,
     # not evidence the paper's code is broken.
     if (any(run_results$outcome %in% c("errored", "timed_out"))) tl <- "red"
+    else if (any(run_results$outcome == "skipped_time_limit") && tl == "green") tl <- "yellow"
 
     # Turn each script's run into statistical results, the same way JASP/jamovi
     # files are handled — so RUN R code contributes to statistical_output too.
@@ -1942,6 +1968,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     n_noparse <- sum(oc == "not_parsed")
     n_nodep   <- sum(oc == "dependency_unavailable")
     n_by_src  <- sum(oc == "run_by_source")
+    n_late    <- sum(oc == "skipped_time_limit")
     report_exec <- sprintf(
       paste0("**The code was run.** Each script ran in an isolated %s ",
              "against a throwaway copy of ", layout_name, ", in the run order ",
@@ -1957,6 +1984,14 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
       plural(n_skipped, "was", "were"), n_nodep, n_noparse,
       if (n_by_src > 0) sprintf(", and %d %s run by another script with `source()`",
                                 n_by_src, plural(n_by_src, "was", "were")) else "")
+
+    # scripts not started because the time for all scripts together ran out
+    # (Lakens/tue_datamanager_check#4, item 6)
+    if (n_late > 0) {
+      report_exec <- paste0(report_exec, sprintf(
+        " %d %s not started, because the time for all scripts together (%g minutes, `total_timeout`) had run out.",
+        n_late, plural(n_late, "script was", "scripts were"), total_timeout / 60))
+    }
 
     # Scripts run only inside the script that sources them (see
     # run_by_source above): say which, and why they were not run on their own.
@@ -2443,10 +2478,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (n_py_dup > 0) {
     py_dup_kept_idx <- vapply(which(py_dup), function(i)
       which(py_hashes == py_hashes[i])[1], integer(1))
-    py_dup_loc <- vapply(which(py_dup), function(i)
-      py_resolve_row_path(i) %||% NA_character_, character(1))
-    py_kept_loc <- vapply(py_dup_kept_idx, function(i)
-      py_resolve_row_path(i) %||% NA_character_, character(1))
+    # by its link or path in the repository, as for R above
+    py_dup_loc <- .repro_shown_location(py_files, which(py_dup))
+    py_kept_loc <- .repro_shown_location(py_files, py_dup_kept_idx)
     py_dup_of <- py_files$file_name[py_dup_kept_idx]
     py_dup_desc <- sprintf(
       "`%s`%s (same as `%s`%s)",
@@ -2554,11 +2588,14 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   py_writes_by_file <- py_io$writes %||% list()
   names(py_writes_by_file) <- py_io$file_name %||% names(py_writes_by_file)
+  # a file the script writes itself counts too: open(path, "w") names its path
+  # like a read, so the script that creates the file was "missing_input" (U235)
   py_produced_before <- lapply(seq_len(n_py_code), function(i) {
+    own <- unlist(py_writes_by_file[py_files$file_name[i]], use.names = FALSE)
     ord_i <- py_file_order[i]
-    if (is.na(ord_i)) return(character(0))
-    earlier <- py_files$file_name[!is.na(py_file_order) & py_file_order < ord_i]
-    unique(tolower(unlist(py_writes_by_file[earlier], use.names = FALSE)))
+    earlier <- if (is.na(ord_i)) character(0) else
+      py_files$file_name[!is.na(py_file_order) & py_file_order < ord_i]
+    unique(tolower(c(own, unlist(py_writes_by_file[earlier], use.names = FALSE))))
   })
 
   py_unresolved_list <- lapply(seq_len(n_py_code), function(i) {
@@ -2660,6 +2697,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
            paste(names(py_imported), collapse = ", "))
     py_run_order_names <- setdiff(py_run_order_names, names(py_imported))
     if (is.null(py_exec_error)) {
+      if (is.null(script_deadline)) script_deadline <- .repro_deadline(total_timeout)
       .dbg("[repro/py] running ", length(py_run_order_names), " script(s) in order: ",
            paste(py_run_order_names, collapse = " -> "))
       py_run_results <- tryCatch(
@@ -2668,14 +2706,14 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
             py_run_tbl, py_run_order_names, sandbox_root = sandbox_root,
             lib_dir = if (dir.exists(py_lib_dir)) py_lib_dir else NULL,
             timeout = timeout, skip = py_skip_files, parses = py_parses_named,
-            failed_deps = py_failed_deps)
+            failed_deps = py_failed_deps, deadline = script_deadline)
         } else {
           repro_run_scripts_py(
             py_run_tbl, py_run_order_names,
             lib_dir = if (dir.exists(py_lib_dir)) py_lib_dir else NULL,
             python_bin = py_parse_bin,
             timeout = timeout, skip = py_skip_files, parses = py_parses_named,
-            failed_deps = py_failed_deps)
+            failed_deps = py_failed_deps, deadline = script_deadline)
         },
         error = function(e) {
           py_exec_error <<- conditionMessage(e)
@@ -2715,6 +2753,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     }
 
     if (any(py_run_results$outcome %in% c("errored", "timed_out"))) py_tl <- "red"
+    else if (any(py_run_results$outcome == "skipped_time_limit") && py_tl == "green") py_tl <- "yellow"
 
     # ── Statistical output extraction from Python stdout ─────────────────────
     # Mirrors the R path's own r_stat_output block (see "Statistical output
@@ -2887,6 +2926,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     n_py_noparse <- sum(py_oc == "not_parsed")
     n_py_nodep   <- sum(py_oc == "dependency_unavailable")
     n_py_import  <- sum(py_oc == "run_by_import")
+    n_late       <- sum(py_oc == "skipped_time_limit")
     py_report_exec <- sprintf(
       paste0("**The Python code was run.** Each script ran in an isolated ",
              "%s against a throwaway copy of %s, in the run ",
@@ -2908,6 +2948,14 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
         paste(sprintf("%s (by %s)", names(py_imported),
                       vapply(py_imported, paste, character(1), collapse = ", ")),
               collapse = "; ")) else "")
+
+    # scripts not started because the time for all scripts together ran out
+    # (Lakens/tue_datamanager_check#4, item 6)
+    if (n_late > 0) {
+      py_report_exec <- paste0(py_report_exec, sprintf(
+        " %d %s not started, because the time for all scripts together (%g minutes, `total_timeout`) had run out.",
+        n_late, plural(n_late, "script was", "scripts were"), total_timeout / 60))
+    }
 
     py_setwd_rows <- if (exists("py_run_tbl", inherits = FALSE) &&
                          "setwd_removed" %in% names(py_run_tbl))

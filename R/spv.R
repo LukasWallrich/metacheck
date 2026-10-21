@@ -768,7 +768,11 @@
   category[is.na(category)] <- cats[is.na(category)]  # no relabel entry: use the raw code
   value <- vapply(y_var$values, function(v) if (!is.null(v$d)) v$d else NA_real_, numeric(1))
 
-  is_na_like <- function(v) is.na(v) | (is.numeric(v) & abs(v) >= .Machine$double.xmax)
+  # abs() only for numbers: with `&` it also ran on the character category
+  # and stopped, so a box plot from case data never decoded (U144)
+  is_na_like <- function(v) {
+    if (is.numeric(v)) is.na(v) | abs(v) >= .Machine$double.xmax else is.na(v)
+  }
   keep <- !is_na_like(category) & !is_na_like(value)
   if (!any(keep)) return(NULL)
   data.frame(category = category[keep], value = value[keep], stringsAsFactors = FALSE)
@@ -1587,7 +1591,8 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
     idx <- decode_index(cell$index)
     labels <- vector("list", length(dims))
     for (j in seq_along(dims)) {
-      leaf <- dims[[j]]$leaves[[as.character(idx[j])]]
+      # format(scientific = FALSE): as.character(1e5) is "1e+05" (U148)
+      leaf <- dims[[j]]$leaves[[format(idx[j], scientific = FALSE, trim = TRUE)]]
       labels[[j]] <- if (!is.null(leaf)) paste(leaf, collapse = " / ") else NA_character_
     }
     names(labels) <- dim_names
@@ -1716,6 +1721,10 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
   out
 }
 
+# `x`, or `fallback` when `x` is NA (xml_attr() of a missing attribute):
+# %||% replaces only NULL (U139)
+.na_or <- function(x, fallback) if (length(x) == 0 || is.na(x)) fallback else x
+
 # Depth-first walk of one root_heading/heading element's children
 # (structure-xml.grammar: `(container | heading)*`), threading down the
 # nearest enclosing commandName and the most recent SPSS syntax text seen (a
@@ -1740,8 +1749,11 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
       # A subheading: its OWN commandName (if any) becomes the enclosing one
       # for everything nested under it; syntax carries through unchanged
       # until a new log container is seen at this level or below.
+      # a sub-heading without commandName keeps the enclosing command:
+      # xml_attr() gives NA, which %||% does not replace (U139)
       sub_cmd <- xml2::xml_attr(child, "commandName")
-      sub <- .spvsx_walk_heading(child, command_name = sub_cmd %||% command_name,
+      if (is.na(sub_cmd)) sub_cmd <- command_name
+      sub <- .spvsx_walk_heading(child, command_name = sub_cmd,
                                  syntax = syntax)
       out <- c(out, sub$rows)
       command_name <- sub$command_name
@@ -1781,7 +1793,7 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
       } else NA_character_
 
       out[[length(out) + 1L]] <- list(
-        command_name = xml2::xml_attr(content, "commandName") %||% command_name,
+        command_name = .na_or(xml2::xml_attr(content, "commandName"), command_name),
         syntax = syntax,
         subtype = xml2::xml_attr(content, "subType"),
         bin_member = bin_member,
@@ -1805,7 +1817,7 @@ spv_assemble_table <- function(dims, axes, cells, title = NA_character_,
       dp <- xml2::xml_find_first(content, "./*[local-name()='dataPath']")
       p  <- xml2::xml_find_first(content, "./*[local-name()='path']")
       out[[length(out) + 1L]] <- list(
-        command_name = xml2::xml_attr(content, "commandName") %||% command_name,
+        command_name = .na_or(xml2::xml_attr(content, "commandName"), command_name),
         syntax = syntax,
         subtype = NA_character_,
         bin_member = if (!is.na(dp)) xml2::xml_text(dp) else NA_character_,
@@ -2041,7 +2053,12 @@ export_spv_html <- function(path, out = NULL) {
       }
       title <- if (!is.na(tb$title %||% NA) && nzchar(tb$title))
         sprintf("<h3>%s</h3>", .spv_html_escape(tb$title)) else ""
-      body_html <- if (isTRUE(tb$is_chart)) .spv_chart_html(tb$data) else .spv_table_html(tb$data)
+      # a chart that cannot be drawn (an unusual guide, a box plot without
+      # numbers) is left out instead of failing the whole export (U148)
+      body_html <- if (isTRUE(tb$is_chart))
+        tryCatch(.spv_chart_html(tb$data),
+                 error = function(e) "<p>(This chart could not be drawn.)</p>")
+      else .spv_table_html(tb$data)
       sections[[i]] <- paste0(heading, title, body_html)
     }
     paste(unlist(sections), collapse = "\n")
@@ -2213,6 +2230,13 @@ export_spv_html <- function(path, out = NULL) {
 # LAYER, is dropped from the grid the same way a "current layer" filter would
 # apply in SPSS's own Viewer -- out of scope here since only one layer is
 # ever present in the tables this port covers).
+# Split pivot level keys on the dimension separator, keeping empty labels
+# (also a trailing one, which strsplit() drops).
+.spv_split_levels <- function(x) {
+  lapply(strsplit(paste0(x, "\u241f\u0001"), "\u241f", fixed = TRUE),
+         function(p) p[-length(p)])
+}
+
 .spv_table_html_pivot <- function(df, row_dims, col_dims) {
   row_key <- if (length(row_dims))
     do.call(paste, c(as.list(df[row_dims]), sep = "\u241f")) else rep("", nrow(df))
@@ -2229,8 +2253,10 @@ export_spv_html <- function(path, out = NULL) {
   # row-dimension names are spliced into the LAST (innermost) row's left
   # edge afterwards, aligned with the deepest header level the way SPSS's
   # own corner stub sits -- not as a separate row above everything.
+  # .spv_split_levels(): strsplit() drops a trailing empty label, and the
+  # [[d]] below then stopped export_spv_html() (U148)
   col_parts <- if (length(col_dims))
-    strsplit(col_levels, "\u241f", fixed = TRUE) else list()
+    .spv_split_levels(col_levels) else list()
   header_row_cells <- if (length(col_dims)) {
     lapply(seq_along(col_dims), function(d) {
       labels <- vapply(col_parts, `[[`, character(1), d)
@@ -2267,7 +2293,7 @@ export_spv_html <- function(path, out = NULL) {
   for (i in seq_len(nrow(df))) grid[ri[i], ci[i]] <- df$value[i]
 
   row_parts <- if (length(row_dims))
-    strsplit(row_levels, "\u241f", fixed = TRUE) else list()
+    .spv_split_levels(row_levels) else list()
   body_rows <- vapply(seq_along(row_levels), function(i) {
     stub <- if (length(row_dims))
       paste(sprintf("<td>%s</td>", vapply(row_parts[[i]], .spv_html_escape, character(1))),

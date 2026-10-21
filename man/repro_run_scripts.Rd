@@ -11,7 +11,8 @@ repro_run_scripts(
   timeout = 600,
   skip = character(0),
   parses = NULL,
-  failed_deps = character(0)
+  failed_deps = character(0),
+  deadline = NULL
 )
 }
 \arguments{
@@ -37,6 +38,11 @@ used only to tell apart a script that failed because ITS OWN dependency is
 genuinely unavailable (\code{dependency_unavailable}) from a script that failed
 for any other reason (\code{errored}), so an unavailable package does not read
 as a bug in the paper's code}
+
+\item{deadline}{the time (\code{\link[=Sys.time]{Sys.time()}} plus the time for all scripts
+together) after which no script is started, recorded as
+\code{skipped_time_limit}; a running script is stopped then. \code{NULL} (the
+default) sets no such limit.}
 }
 \value{
 a data frame with \code{file_name}, \code{outcome} (one of \code{ran_ok},

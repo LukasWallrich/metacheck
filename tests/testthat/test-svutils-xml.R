@@ -47,3 +47,15 @@ test_that(".xml_read_grobid", {
   expect_equal("a", level)
 })
 
+test_that(".xml_read_grobid keeps a number before a tag, and fixes omega and g z (U16)", {
+  # "<" counted as an operator, so a number before a tag lost its space; the
+  # omega rule read "\u03C" as "<", and "\\g" was a literal g ("dgz" -> "gz")
+  tei <- withr::local_tempfile(fileext = ".xml")
+  writeLines(c('<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body><div>',
+               '<p>See <ref type="table">Table 1</ref> and Hamilton 1964</p>',
+               '<p>It was \u03c9 p 2 = .12 and g z = 0.5 and dgz stays</p>',
+               '</div></body></text></TEI>'), tei, useBytes = TRUE)
+  p <- xml2::xml_text(xml2::xml_find_all(.xml_read_grobid(tei), "//p"))
+  expect_equal(p, c("See Table 1 and Hamilton 1964",
+                    "It was \u03c9p\u00b2 = .12 and gz = 0.5 and dgz stays"))
+})

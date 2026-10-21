@@ -53,18 +53,33 @@ ref_summary <- function(paper, ...) {
 
   # create return items ----
 
+  # one row per reference: several replications or PubPeer rows for a
+  # reference repeated it, so the summary counted 7 references for a paper
+  # with 6 (U119); their values are combined
+  one_per_ref <- function(tbl) {
+    keys <- c("paper_id", "bib_id")
+    vals <- setdiff(names(tbl), keys)
+    dplyr::summarise(tbl, dplyr::across(dplyr::all_of(vals), \(x) {
+      x <- unique(x[!is.na(x) & nzchar(as.character(x))])
+      if (length(x)) paste(x, collapse = "; ") else NA_character_
+    }), .by = dplyr::all_of(keys))
+  }
+
   ## accuracy -----
   if (!is.null(tables$accuracy) && nrow(tables$accuracy) > 0) {
-    cols <- c("paper_id", "bib_id",
-              grep("no_match|_mismatch", names(tables$accuracy), value = TRUE))
-    tbl <- tables$accuracy[, cols] |>
-      tidyr::pivot_longer(dplyr::ends_with("_mismatch")) |>
-      dplyr::mutate(name = gsub("_mismatch", "", name)) |>
-      dplyr::filter(!value %in% FALSE) |>
-      dplyr::summarise(accuracy_mismatch = paste(name, collapse = ", "),
-                       .by = c(paper_id, bib_id, no_match))
-    tbl$accuracy_mismatch[tbl$no_match %in% TRUE] <- "no match"
-    tbl$no_match <- NULL
+    # "no match" decided per reference, before mismatches are filtered: a
+    # reference with no_match and every *_mismatch FALSE dropped out and got
+    # NA; a table without no_match stopped the module (U119)
+    acc <- tables$accuracy
+    if (!"no_match" %in% names(acc)) acc$no_match <- NA
+    acc <- acc[!duplicated(acc[, c("paper_id", "bib_id")]), , drop = FALSE]
+    mm <- grep("_mismatch$", names(acc), value = TRUE)
+    acc$accuracy_mismatch <- vapply(seq_len(nrow(acc)), \(i) {
+      if (isTRUE(acc$no_match[[i]])) return("no match")
+      hit <- mm[vapply(mm, \(m) isTRUE(acc[[m]][[i]]), logical(1))]
+      if (length(hit)) paste(sub("_mismatch$", "", hit), collapse = ", ") else NA_character_
+    }, character(1))
+    tbl <- acc[!is.na(acc$accuracy_mismatch), c("paper_id", "bib_id", "accuracy_mismatch")]
     table <- dplyr::left_join(table, tbl, by = c("paper_id", "bib_id"))
   }
 
@@ -73,10 +88,10 @@ ref_summary <- function(paper, ...) {
     cols <- intersect(c("paper_id", "bib_id", "url"), names(tables$pubpeer))
     tbl <- tables$pubpeer[, cols]
     if ("url" %in% names(tbl)) {
-      tbl$pubpeer <- link(tbl$url, "Link")
+      tbl$pubpeer <- ifelse(is.na(tbl$url), NA_character_, link(tbl$url, "Link"))
       tbl$url <- NULL
     }
-    table <- dplyr::left_join(table, tbl, by = c("paper_id", "bib_id"))
+    table <- dplyr::left_join(table, one_per_ref(tbl), by = c("paper_id", "bib_id"))
   }
 
   ## replication ----
@@ -86,14 +101,14 @@ ref_summary <- function(paper, ...) {
       names(tables$replication)
     )
     tbl <- tables$replication[, cols]
-    table <- dplyr::left_join(table, tbl, by = c("paper_id", "bib_id"))
+    table <- dplyr::left_join(table, one_per_ref(tbl), by = c("paper_id", "bib_id"))
   }
 
   ## retraction ----
   if (!is.null(tables$retraction) && nrow(tables$retraction) > 0) {
     cols <- setdiff(names(tables$retraction), c("text", "doi"))
     tbl <- tables$retraction[, cols]
-    table <- dplyr::left_join(table, tbl, by = c("paper_id", "bib_id"))
+    table <- dplyr::left_join(table, one_per_ref(tbl), by = c("paper_id", "bib_id"))
   }
 
   ## traffic light ----

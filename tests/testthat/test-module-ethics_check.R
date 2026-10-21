@@ -144,3 +144,13 @@ test_that("error: argument is of length zero", {
 
   expect_equal(mo$summary_table$ethics_approved, FALSE)
 })
+
+test_that("ethics_check quotes a statement once, and keeps a paper with an empty info table (U102)", {
+  # a statement found at several text_ids was quoted each time; paper_id()
+  # read ids from the info tables, so a paper without info rows had none
+  s <- "We obtained ethics approval from the IRB."
+  mo <- module_run(test_paper(c(s, s)), "ethics_check")
+  expect_equal(lengths(regmatches(mo$report, gregexpr("obtained ethics approval", mo$report))), 1L)
+  pl <- paperlist(paper("empty"), test_paper(s))
+  expect_equal(paper_id(pl)[1], "empty")
+})

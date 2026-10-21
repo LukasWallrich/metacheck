@@ -232,3 +232,62 @@ test_that("combine >10 OSF registrations", {
   expect_equal(nrow(mo$table), 11)
   expect_contains(names(mo$table), "paper_id")
 }, "mock")
+
+test_that("AsPredicted preregistrations: one row each, AsPredicted-only papers, OSF-only offline (U109)", {
+  # an AsPredicted-only paper stopped on osf_type(character(0)); several
+  # AsPredicted preregistrations were pasted into one row with paper_id NA;
+  # aspredicted_info() was called without AsPredicted links
+  llm_use(FALSE)
+  p1 <- test_paper(url = "https://aspredicted.org/abc123.pdf")
+  p1$paper_id <- p1$info$paper_id <- "paper1"
+  p2 <- test_paper(url = "https://aspredicted.org/xyz789.pdf")
+  p2$paper_id <- p2$info$paper_id <- "paper2"
+  called <- 0
+  local_mocked_bindings(
+    aspredicted_info = function(urls, ...) {
+      called <<- called + 1
+      data.frame(ap_url = gsub("^(https://)?", "https://", urls),
+                 AP_title = c("Study A", "Study B")[seq_along(urls)],
+                 AP_created = "2020-01-01", AP_data = NA, AP_hypotheses = "H1",
+                 AP_key_dv = "DV", AP_conditions = "C", AP_analyses = "t-test",
+                 AP_outliers = NA, AP_sample_size = c("100", "200")[seq_along(urls)],
+                 AP_anything_else = NA)
+    },
+    osf_type = function(ids, ...) rep("nodes", length(ids))
+  )
+  mo <- suppressMessages(module_run(p1, "prereg_check"))
+  expect_equal(mo$table$title, "Study A")
+
+  mo <- suppressMessages(module_run(paperlist(p1, p2), "prereg_check"))
+  expect_equal(mo$table$paper_id, c("paper1", "paper2"))
+  expect_equal(mo$table$sample_size, c("100", "200"))
+  expect_true(all(is.na(mo$table$existing_data_explanation)))   # not "NA"
+  expect_equal(mo$summary_table$preregistration, c(1, 1))
+
+  called <- 0
+  mo <- suppressMessages(module_run(test_paper(url = "https://osf.io/abcde"), "prereg_check"))
+  expect_equal(called, 0)
+})
+
+test_that("a registration is joined to its paper by OSF id, and counted once (U110)", {
+  # an http:// or upper-case link matched no paper, and a link given twice
+  # counted the registration twice
+  paper <- test_paper(url = c("https://osf.io/r5bme", "https://osf.io/r5bme",
+                              "http://OSF.IO/r5bme/"))
+  mo <- module_run(paper, "prereg_check")
+  expect_equal(nrow(mo$table), 1)
+  expect_equal(mo$table$paper_id, paper$paper_id)
+  expect_equal(mo$summary_table$preregistration, 1)
+}, "mock")
+
+test_that("prsp reads response keys exactly, and a U+FFFE label does not stop the module (U111)", {
+  # `$` on the list matched partially ("84-5" returned "84-56"), and
+  # tolower() stopped on U+FFFE
+  env <- new.env(parent = asNamespace("metacheck"))
+  sys.source(metacheck:::module_find("prereg_check"), envir = env)
+  info <- list(id = "abcde", attributes = list(
+    registration_responses = list(`84-56` = "an answer to another question")))
+  expect_false(grepl("another question", env$prsp(info)$research_questions))
+  expect_equal(env$osf_label_to_field("Study Design\ufffe"),
+               env$osf_label_to_field("Study Design"))
+})

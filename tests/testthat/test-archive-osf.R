@@ -388,3 +388,14 @@ test_that("osf_info - view_only", {
   expect_contains(obs$name, exp)
 })
 
+
+test_that("osf_check_id skips route names and registration schemas (U51)", {
+  # osf.io/j3gcx/files/ gave the id "files", osf.io/prereg gave "prere", and
+  # osf.io/<id>/register/<schema> gave the schema id
+  x <- c("https://osf.io/j3gcx/files/", "osf.io/prereg",
+         "https://osf.io/a5bmw/register/565fb3678c5e4a66b5582f67",
+         "https://osf.io/abcde/files/osfstorage/5f1e2d3c4b5a69788796a5b4",
+         "https://osf.io/abcde/?view_only=123")
+  expect_equal(suppressWarnings(unname(osf_check_id(x))),
+               c("j3gcx", NA, "a5bmw", "5f1e2d3c4b5a69788796a5b4", "abcde?view_only=123"))
+})

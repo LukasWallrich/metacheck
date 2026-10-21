@@ -231,3 +231,26 @@ test_that(".strip_llm_wrapper removes the object-wrapper prefix", {
   expect_identical(.strip_llm_wrapper(bare, "assignments"), bare)
   expect_null(.strip_llm_wrapper(NULL, "assignments"))
 })
+
+test_that("match_column_labels: a codebook row without a label does not label the column (#520, item 1)", {
+  cols <- data.frame(paper_id = "p", source_file = "d.csv",
+                     column_name = c("age", "cond"), stringsAsFactors = FALSE)
+  # .jasp/.omv columns read with haven, without variable labels, next to an
+  # .xlsx dictionary that labels age; this stopped codebook_check with
+  # "replacement has length zero"
+  cbk <- data.frame(
+    codebook_variable = c("age", "age", "age", "cond"),
+    label = c(NA, NA, "Age in years", NA),
+    codebook_source = c("a.jasp", "b.omv", "dict.xlsx", "a.jasp"),
+    group = NA_character_,
+    value_labels = c(NA, NA, NA, '{"1":"control","2":"treatment"}'),
+    parse_method = c("haven", "haven", "structured", "haven"),
+    stringsAsFactors = FALSE)
+  expect_no_error(res <- match_column_labels(cols, cbk))
+  expect_equal(res$label_status, c("labelled", "unlabelled"))
+  expect_equal(res$label[1], "Age in years")
+  expect_equal(res$label_source[1], "dict.xlsx")
+  # no label, but its value labels still count
+  expect_true(is.na(res$label[2]))
+  expect_equal(res$value_labels[2], '{"1":"control","2":"treatment"}')
+})

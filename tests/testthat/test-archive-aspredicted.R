@@ -136,3 +136,13 @@ test_that(".aspredicted_info blind", {
   expect_equal(info$AP_anything_else, "")
   expect_equal(info$AP_version, "2.00")
 }, "mock")
+
+test_that("an AsPredicted page answering an error, or no connection, is recorded (U54)", {
+  # req_perform() raised on 4xx/5xx before the status check, stopping prereg_check
+  local_mocked_bindings(req_perform = function(req, ...) httr2::response(404), .package = "httr2")
+  info <- suppressWarnings(.aspredicted_info("https://aspredicted.org/abc.pdf"))
+  expect_equal(info$error, "Not Found")
+  local_mocked_bindings(req_perform = function(req, ...) stop("timeout"), .package = "httr2")
+  info <- suppressWarnings(.aspredicted_info("https://aspredicted.org/abc.pdf"))
+  expect_equal(info$error, "the connection failed")
+})

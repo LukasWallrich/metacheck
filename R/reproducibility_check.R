@@ -286,10 +286,12 @@ repro_dependencies <- function(code_text, lang = "R") {
     # plain literal in a no-op wrapper — code_file_refs()'s plain-literal path
     # already handles it correctly, and there is no trailing-argument-orphaning
     # risk to fix. `args_text` still carries the quotes around fmt (unlike
-    # `fmt` itself, stripped above), so the remainder is found by skipping
-    # `quoted_len` characters rather than re-matching the (already-consumed)
-    # quoted text.
-    after_fmt <- substr(args_text, quoted_len + 1, nchar(args_text))
+    # `fmt` itself, stripped above), so the remainder starts where the quoted
+    # string ends. It was counted from the start of `args_text`, so a string
+    # that is not the first argument was misread: `paste(wd, "data.csv", sep =
+    # "/")` was not a format call (only its literal was rewritten, giving
+    # "wd/<target>"), and `paste0(path, ".R")` was one, for a file ".R" (U133)
+    after_fmt <- substr(args_text, as.integer(m) + quoted_len, nchar(args_text))
     if (!grepl("^\\s*,", after_fmt, perl = TRUE)) return(NULL)
 
     line <- 1L + lengths(regmatches(substr(joined, 1, starts[k]),
@@ -393,8 +395,8 @@ repro_dependencies <- function(code_text, lang = "R") {
 #'   names matched, and (for the path-like-variable scan) the assignment
 #'   operator recognised: R's `<-`/`<<-`/`=` vs. Python's `=` only. Python's
 #'   `open(path, "w")` is deliberately NOT included in `write_fns` here even
-#'   though it is a write call (see [repro_file_io()]'s own `open_write_mode`
-#'   handling): `open()` returns a file HANDLE, not the path itself — the
+#'   though it is a write call (see [.py_open_writes()], which [repro_file_io()]
+#'   uses): `open()` returns a file HANDLE, not the path itself — the
 #'   call that actually names the path to redirect — so this function instead
 #'   matches the handle variable's own `.write(...)`/`.writelines(...)` calls
 #'   is out of scope for a text-level, no-interpreter rewrite (which handle
@@ -500,6 +502,12 @@ repro_dependencies <- function(code_text, lang = "R") {
     args_list <- .repro_split_args(args_text)
     hit <- NULL
     for (arg in args_list) {
+      # the argument's name, kept in the replacement: dropped, `save(a, b, file
+      # = "ab.RData")` became `save(a, b, "<out>/ab.RData")`, and save() took
+      # the path for another object to save (U134)
+      name_m <- regexpr("^[.a-zA-Z][.a-zA-Z0-9_]*\\s*=\\s*(?!=)", trimws(arg$text), perl = TRUE)
+      arg_name <- paste0(sub("^(\\s*).*$", "\\1", arg$text),
+                         if (name_m > 0) regmatches(trimws(arg$text), name_m) else "")
       val <- sub("^[.a-zA-Z][.a-zA-Z0-9_]*\\s*=\\s*(?!=)", "", trimws(arg$text), perl = TRUE)
       val <- trimws(val)
 
@@ -550,7 +558,7 @@ repro_dependencies <- function(code_text, lang = "R") {
     }
     if (is.null(hit)) return(NULL)   # no argument resolves to a file target — leave alone
 
-    replacement_arg <- sprintf('"{{REPRO_OUTPUT}}%s"', hit$redirected)
+    replacement_arg <- paste0(arg_name, sprintf('"{{REPRO_OUTPUT}}%s"', hit$redirected))
     new_args <- paste0(substr(args_text, 1, hit$start - 1L), replacement_arg,
                        substr(args_text, hit$end + 1L, nchar(args_text)))
     data.frame(call_text = call_text,
@@ -790,9 +798,12 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
       # all-NA groups) keep the first occurrence, same "do not guess further"
       # spirit as the rest of this function.
       grp_of <- .data_group_from_path(plan$target_path[grp_cand])
-      tab <- table(grp_of[!is.na(grp_of)])
-      rep_i <- if (length(tab) > 0) grp_cand[which(!is.na(grp_of) &
-                grp_of == names(tab)[which.max(tab)])[1]] else grp_cand[1]
+      # a tie keeps the first listed group, as the comment says: table()
+      # sorts its names, so a tie went to the alphabetically first (U135)
+      seen <- unique(grp_of[!is.na(grp_of)])
+      counts <- tabulate(match(grp_of, seen), nbins = length(seen))
+      rep_i <- if (length(seen) > 0) grp_cand[which(!is.na(grp_of) &
+                grp_of == seen[which.max(counts)])[1]] else grp_cand[1]
       keep <- c(keep, rep_i)
     }
     keep
@@ -1260,10 +1271,8 @@ repro_file_io <- function(code_text_list, lang = "R") {
     Python = "\\b(to_[A-Za-z_0-9]+|savetxt|savefig|dump|save)\\s*\\("
   )
   # open(...) is BOTH a read call (code_file_refs()'s Python branch) and a
-  # potential write call, decided only by its own mode argument -- "r"/"rb"
-  # (or no mode at all, Python's own read default) is a read, "w"/"a"/"x"/
-  # any mode containing "w"/"a"/"x" is a write.
-  open_write_mode <- "open\\s*\\([^)]*['\"][a-zA-Z]*[wax][a-zA-Z]*['\"]"
+  # potential write call, decided only by its own mode argument (see
+  # .py_open_writes()).
   src_pat <- "source\\s*\\(\\s*['\"]([^'\"]+)['\"]"
 
   rows <- lapply(seq_along(code_text_list), function(k) {
@@ -1288,7 +1297,7 @@ repro_file_io <- function(code_text_list, lang = "R") {
       lines <- grep(all_refs[i], nc, fixed = TRUE, value = TRUE)
       w <- grepl(write_fns, lines, perl = TRUE, ignore.case = TRUE)
       if (identical(fn_lang, "Python"))
-        w <- w | grepl(open_write_mode, lines, perl = TRUE)
+        w <- w | vapply(lines, .py_open_writes, logical(1), USE.NAMES = FALSE)
       is_write[i] <- any(w)
       is_read[i]  <- any(!w)
     }
@@ -1317,6 +1326,53 @@ repro_file_io <- function(code_text_list, lang = "R") {
               d$sources <- list(unique(srcs)); d })()
   })
   dplyr::bind_rows(rows)
+}
+
+#' Whether a line of Python opens a file for writing
+#'
+#' Only the mode argument of an `open()` call counts: the second positional
+#' argument, or `mode =`. A mode is a write when it is `w`, `a`, `x` or `r+`,
+#' with `b`, `t` or `+`. Any quoted word with a w, a or x in it used to count,
+#' so `open(p, encoding = "ascii")` was a write and `open(p, "r+")` was not
+#' (U240).
+#'
+#' @param line one line of Python code, comments removed
+#'
+#' @returns TRUE when an `open()` call on the line has a write mode
+#' @keywords internal
+.py_open_writes <- function(line) {
+  starts <- gregexpr("\\bopen\\s*\\(", line, perl = TRUE)[[1]]
+  if (starts[1] == -1) return(FALSE)
+  chars <- strsplit(line, "", fixed = TRUE)[[1]]
+  first <- starts + attr(starts, "match.length")   # first character after "("
+  for (k in seq_along(starts)) {
+    # the call's closing parenthesis, skipping quoted text and nested brackets
+    depth <- 1L; in_str <- NA_character_; end <- NA_integer_; i <- first[k]
+    while (i <= length(chars)) {
+      ch <- chars[i]
+      if (!is.na(in_str)) {
+        if (ch == "\\") i <- i + 1L
+        else if (ch == in_str) in_str <- NA_character_
+      } else if (ch %in% c("'", '"')) in_str <- ch
+      else if (ch %in% c("(", "[", "{")) depth <- depth + 1L
+      else if (ch %in% c(")", "]", "}")) {
+        depth <- depth - 1L
+        if (depth == 0L) { end <- i; break }
+      }
+      i <- i + 1L
+    }
+    if (is.na(end) || end == first[k]) next
+    args <- vapply(.repro_split_args(paste(chars[first[k]:(end - 1L)], collapse = "")),
+                   function(a) trimws(a$text), character(1))
+    named <- grepl("^[A-Za-z_][A-Za-z0-9_]*\\s*=(?!=)", args, perl = TRUE)
+    is_mode <- named & grepl("^mode\\s*=", args)
+    mode <- if (any(is_mode)) sub("^mode\\s*=\\s*", "", args[is_mode][1])
+            else args[!named][2]
+    if (!is.na(mode) &&
+        grepl("^(['\"])(?=[^'\"]*[wax+])[rwaxbt+]+\\1$", mode, perl = TRUE))
+      return(TRUE)
+  }
+  FALSE
 }
 
 #' Find the variables each script defines at top level
@@ -1433,7 +1489,9 @@ repro_defined_vars <- function(code_text_list) {
 #'   `file_name` column)
 #'
 #' @returns a data frame with `basename`, `status` (one of `in_repo_not_downloaded`,
-#'   `withheld_size`, `absent`), `detail` (a human-readable reason), and
+#'   `withheld_size`, `in_archive` (the file is in the repository only inside
+#'   a .zip or .tar, so the code cannot read it as the package is), `absent`),
+#'   `detail` (a human-readable reason), and
 #'   `similar_to` (a candidate near-match basename from the repository's file
 #'   list, or `NA` — only ever set for `absent` rows; see below).
 #' @export
@@ -1447,6 +1505,13 @@ repro_missing_inputs <- function(refs, plan, structure_df, skipped = NULL) {
     tolower(basename(gsub("\\\\", "/", structure_df$file_name))) else character(0)
   skip_base <- if (!is.null(skipped) && "file_name" %in% names(skipped))
     tolower(basename(gsub("\\\\", "/", skipped$file_name))) else character(0)
+  # Files listed from inside an archive have its name in front of their path
+  # ("data.zip/data/x.csv"); the archive is the path up to it (#520, item 2).
+  arch_re <- "^(.*?[^/]+\\.(zip|tar|tgz|tar\\.gz))/.*$"
+  struct_path <- if (!is.null(structure_df) && "file_path" %in% names(structure_df))
+    gsub("\\\\", "/", structure_df$file_path) else rep(NA_character_, length(struct_base))
+  struct_archive <- ifelse(!is.na(struct_path) & grepl(arch_re, struct_path, perl = TRUE),
+                           sub(arch_re, "\\1", struct_path, perl = TRUE), NA_character_)
 
   # A file genuinely absent from the repository is sometimes actually PRESENT
   # under a near-identical name — a typo in the code, or a capitalisation/
@@ -1483,12 +1548,24 @@ repro_missing_inputs <- function(refs, plan, structure_df, skipped = NULL) {
   rows <- lapply(refs, function(b) {
     if (b %in% skip_base) {
       i <- which(skip_base == b)[1]
-      sz <- suppressWarnings(as.numeric(skipped$file_size[i]))
+      # without a file_size column the size is left out: NULL[i] stopped the
+      # function ("argument is of length zero") (U135)
+      sz <- if ("file_size" %in% names(skipped))
+        suppressWarnings(as.numeric(skipped$file_size[i])) else NA_real_
       mb <- if (is.finite(sz)) sprintf(" (%.0f MB)", sz / (1024 * 1024)) else ""
       return(data.frame(basename = b, status = "withheld_size",
                         detail = sprintf(
                           "referenced file is in the repository but was not downloaded%s: over the size cap",
                           mb), similar_to = NA_character_))
+    }
+    # in the repository only inside an archive: the code runs on the package
+    # as it is, so it cannot read the file before someone unpacks it
+    in_arch <- which(struct_base == b)
+    if (length(in_arch) && all(!is.na(struct_archive[in_arch]))) {
+      return(data.frame(basename = b, status = "in_archive",
+                        detail = sprintf("referenced file is only inside %s; unpack it so the code finds it",
+                                         paste(unique(struct_archive[in_arch]), collapse = ", ")),
+                        similar_to = NA_character_))
     }
     if (b %in% struct_base) {
       i <- which(struct_base == b)[1]
@@ -1829,7 +1906,11 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #'   goes up out of the package.
 #'
 #' A reference left as written is marked `as_written`; it is not counted as
-#' rewritten, and not as a missing input.
+#' rewritten, and not as a missing input. The exception is a file the
+#' package has only inside an archive, read at the path unpacking it would
+#' give: as the package is, that path does not exist, so the reference is
+#' not found, and the file becomes a missing input (`in_archive` in
+#' [repro_missing_inputs()]).
 #'
 #' @param rw a [repro_rewrite_paths()] result for one script
 #' @param plan the package layout's plan ([.repro_package_plan()])
@@ -1856,6 +1937,16 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   # a path built by sprintf()/file.path() is kept unless it holds an absolute path
   absolute_call <- is_call & grepl("[\"']([A-Za-z]:[/\\\\]|/|~)", rw$ref, perl = TRUE)
   keep <- in_place | (!relocate & ((is_call & !absolute_call) | (!is_call & !absolute & !up)))
+  # A file found by name only inside an archive ("data.zip/data/x.csv"),
+  # read at the path unpacking the archive would give it ("data/x.csv"): the
+  # code runs on the package as it is, where that path does not exist, so the
+  # reference is not found, and the file is a missing input (#520, item 2).
+  arch_re <- "(^|/)[^/]+\\.(zip|tar|tgz|tar\\.gz)/"
+  tgt <- if ("target" %in% names(rw)) sub("^(\\./)+", "", gsub("\\\\", "/", rw$target)) else rep(NA_character_, nrow(rw))
+  unpacked <- sub(arch_re, "\\1", tgt)
+  in_archive <- keep & !in_place & !is.na(tgt) & grepl(arch_re, tgt) &
+    (unpacked == ref | endsWith(unpacked, paste0("/", ref)))
+  keep <- keep & !in_archive
 
   rw$matched[relocate] <- TRUE
   rw$ambiguous[relocate] <- FALSE
@@ -1864,6 +1955,8 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   rw$matched[keep] <- TRUE
   rw$ambiguous[keep] <- FALSE
   rw$target[keep] <- rw$ref[keep]
+  rw$matched[in_archive] <- FALSE
+  rw$target[in_archive] <- NA_character_
   rw
 }
 
@@ -2038,13 +2131,17 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
   # start (allowing leading whitespace), so a call inside a longer expression
   # is still caught by the call token. The quoted argument (if any) is
   # captured for the warning.
+  # Also base::setwd(), and chdir() after `from os import chdir` or under
+  # another module name (o.chdir()): only setwd( and os.chdir( were caught,
+  # so such a call ran and failed on the author's own path
+  # (tue_datamanager_check#4, item 5). Not mychdir( or print(chdir).
   setwd_line_for <- list(
-    R = "^(\\s*)(setwd\\s*\\(.*)$",
-    Python = "^(\\s*)(os\\.chdir\\s*\\(.*)$"
+    R = "^(\\s*)((?:base::)?setwd\\s*\\(.*)$",
+    Python = "^(\\s*)((?:[A-Za-z_][A-Za-z0-9_]*\\.)?chdir\\s*\\(.*)$"
   )
   setwd_arg_for <- list(
-    R = "setwd\\s*\\(\\s*['\"]([^'\"]+)['\"]",
-    Python = "os\\.chdir\\s*\\(\\s*['\"]([^'\"]+)['\"]"
+    R = "(?:base::)?setwd\\s*\\(\\s*['\"]([^'\"]+)['\"]",
+    Python = "(?:[A-Za-z_][A-Za-z0-9_]*\\.)?chdir\\s*\\(\\s*['\"]([^'\"]+)['\"]"
   )
 
   rows <- lapply(seq_along(code_text_list), function(i) {
@@ -2067,6 +2164,11 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     # orphaned in a now-broken expression.
     if (!is.null(rw) && nrow(rw)) {
       good <- rw$matched & !rw$ambiguous & !is.na(rw$target) & nzchar(rw$target)
+      # a reference kept as written is left alone: for a call its target is
+      # the call itself, which was put in quotes, so `sprintf("%s/x.xlsx", wd)`
+      # became the unparseable `"sprintf("%s/x.xlsx", wd)"`
+      # (Lakens/tue_datamanager_check#4, item 9)
+      if ("as_written" %in% names(rw)) good <- good & !(rw$as_written %in% TRUE)
       is_call_col <- if ("is_call" %in% names(rw)) rw$is_call else rep(FALSE, nrow(rw))
       for (k in which(good)) {
         repl <- if (isTRUE(is_call_col[k]))
@@ -2289,8 +2391,9 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
     cran_main <- identical(src, "cran") && isTRUE(cran_to_main_lib)
     if (cran_main && length(find.package(pkg, lib.loc = old_lib, quiet = TRUE)) > 0) {
       message("[repro]     '", pkg, "' already installed (main library); skipping.")
+      # the same columns as every other row, with category NA (U135)
       return(data.frame(package = pkg, source = src, installed = TRUE, message = "",
-                        via_archive = FALSE))
+                        via_archive = FALSE, category = NA_character_))
     }
     # DEBUG (TEMPORARY — remove before release): quiet = FALSE so compilation
     # progress is visible; a slow install then reads as work, not a hang.
@@ -2517,11 +2620,14 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
     return(fail("package not found in the CRAN Archive"))
 
   date_pat <- "(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2})"
-  dates <- suppressWarnings(as.POSIXct(
-    sub(paste0(".*", date_pat, ".*"), "\\1", hit_lines), tz = "UTC"))
+  # A line without a date sorts last: given the whole line, as.POSIXct()
+  # stopped, and the whole install failed (U135)
+  date_txt <- ifelse(grepl(date_pat, hit_lines, perl = TRUE),
+                     sub(paste0(".*", date_pat, ".*"), "\\1", hit_lines), NA_character_)
+  dates <- as.POSIXct(date_txt, format = "%Y-%m-%d %H:%M", tz = "UTC")
   files <- regmatches(hit_lines, regexpr(tarball_pat, hit_lines))
-  ord <- if (all(!is.na(dates))) order(dates, decreasing = TRUE) else
-    order(files, decreasing = TRUE)
+  ord <- if (all(is.na(dates))) order(files, decreasing = TRUE) else
+    order(is.na(dates), -as.numeric(dates))
   latest_file <- files[ord][1]
   version <- sub(paste0("^", pkg, "_(.*)\\.tar\\.gz$"), "\\1", latest_file)
   tarball_url <- paste0(archive_url, latest_file)
@@ -2554,6 +2660,31 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
   }, error = function(e) conditionMessage(e))
   if (isTRUE(ok)) list(ok = TRUE, msg = "", version = version)
   else fail(ok)
+}
+
+# Where code file `idx` of `files` (code_check's table) came from, for the
+# report: its link, else its path in the repository, else NA. Never its
+# place on the computer that runs the check, which on a server is the
+# server's job folder (Lakens/tue_datamanager_check#5, item 2).
+.repro_shown_location <- function(files, idx) {
+  col <- function(nm) if (nm %in% names(files)) as.character(files[[nm]][idx]) else rep(NA_character_, length(idx))
+  url <- col("file_url")
+  path <- col("file_path")
+  ifelse(!is.na(url) & grepl("^https?://", url), url,
+         ifelse(!is.na(path) & nzchar(path), path, NA_character_))
+}
+
+# The time for all of a paper's scripts together: the moment after which no
+# script is started (NULL: no limit), and the seconds left until then
+# (Lakens/tue_datamanager_check#4, item 6).
+.repro_deadline <- function(total_timeout) {
+  if (is.null(total_timeout) || length(total_timeout) != 1 ||
+      is.na(total_timeout) || !is.finite(total_timeout)) return(NULL)
+  Sys.time() + total_timeout
+}
+.repro_time_left <- function(deadline) {
+  if (is.null(deadline)) return(Inf)
+  as.numeric(difftime(deadline, Sys.time(), units = "secs"))
 }
 
 #' Run the paper's scripts, in order, in isolated subprocesses
@@ -2593,10 +2724,14 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
 #'   own text, one element per source line — the exact text `stdout`'s echoed
 #'   statements were run from, so [read_r_output()] can match them back to a
 #'   line number; empty character(0) for a script that did not run).
+#' @param deadline the time ([Sys.time()] plus the time for all scripts
+#'   together) after which no script is started, recorded as
+#'   `skipped_time_limit`; a running script is stopped then. `NULL` (the
+#'   default) sets no such limit.
 #' @export
 repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
                               skip = character(0), parses = NULL,
-                              failed_deps = character(0)) {
+                              failed_deps = character(0), deadline = NULL) {
   if (is.null(run_tbl) || nrow(run_tbl) == 0)
     return(data.frame(file_name = character(0), outcome = character(0),
                       error = character(0), error_type = character(0),
@@ -2631,6 +2766,16 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
                         error = "", error_type = NA_character_,
                         undefined_var = NA_character_,
                         stdout = "", stderr = "", elapsed = 0)))
+    # Once the time for all scripts together has run out, a script is not
+    # started; a script that is started stops when that time runs out
+    # (Lakens/tue_datamanager_check#4, item 6)
+    left <- .repro_time_left(deadline)
+    if (left <= 0)
+      return(no_lines(data.frame(file_name = fn, outcome = "skipped_time_limit",
+                        error = "not started: the time for all scripts together had run out",
+                        error_type = NA_character_, undefined_var = NA_character_,
+                        stdout = "", stderr = "", elapsed = 0)))
+    timeout <- min(timeout, ceiling(left))
 
     # The EXECUTED script's own text (path-rewritten, setwd()-commented — what
     # actually ran), one element per source line: this is what read_r_output()
@@ -2729,7 +2874,10 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
       # form; match it against failed_deps rather than trusting the message's
       # wording alone, so a script that merely REFERENCES an unavailable
       # package's name elsewhere is not misclassified.
-      nopkg_pat <- "there is no package called ['\"]([^'\"]+)['\"]"
+      # curly quotes too: in a UTF-8 locale R writes them around the name,
+      # which the ASCII-only quotes missed, so the script was "errored", not
+      # dependency_unavailable (U132)
+      nopkg_pat <- "there is no package called ['\"\u2018]([^'\"\u2019]+)['\"\u2019]"
       nopkg_src <- if (grepl(nopkg_pat, msg)) msg else
         if (grepl(nopkg_pat, se)) se else NA_character_
       nopkg_var <- if (!is.na(nopkg_src))

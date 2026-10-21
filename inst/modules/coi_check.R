@@ -21,6 +21,9 @@
 #'
 #' @returns a list
 coi_check <- function(paper) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # table ----
 
   # get text and send to rtransparent function (defined below)
@@ -144,14 +147,19 @@ rtransparent_coi <- function(splitted) {
   if (length(index) == 1) {
     no_stop_words <- gsub(" of ", " ", coi_text, ignore.case = T)
     if (length(strsplit(no_stop_words, " ")[[1]]) < 4) {
-      if (!grepl("no", splitted[index], ignore.case = T)) {
-        if (nchar(splitted[index + 1]) == 0) {
+      # Only lines that exist are read: a heading as the last sentence made
+      # nchar(NA) the condition, which stopped the module, and a read past
+      # the end pasted "NA" into the statement (U97). The heading is then
+      # used as found.
+      n_lines <- length(splitted)
+      if (!grepl("no", splitted[index], ignore.case = T) && index < n_lines) {
+        if (nchar(splitted[index + 1]) == 0 && index + 2 <= n_lines) {
           index <- c(index, index + 2)
         } else {
           index <- c(index, index + 1)
         }
         new_str <- gsub("^.+(None.*$)", "\\1", splitted[index[2]])
-        if (grepl("^.*\\.$", new_str)) {
+        if (grepl("^.*\\.$", new_str) || index[2] >= n_lines) {
           # make sure this is a whole sentence
           coi_text <- paste(coi_text, new_str)
         } else {
@@ -208,11 +216,14 @@ rtransparent_coi <- function(splitted) {
     }
   }
 
-  # If only None/No/Nothing appear, stop after the fullstop.
+  # If only None/No/Nothing appear, stop after the fullstop. One group for
+  # all the endings: the replacement kept only groups 1-4 of 11, so "Nil.",
+  # "No.", "None mentioned." and "Nothing to declare." became "" and the
+  # statement was dropped (U95).
   coi_text <-
     gsub(
-      "(^.+None\\.).*$|(^.+None disclosed\\.).*$|(^.+None reported\\.).*$|(^.+None declared\\.).*$|(^.+None mentioned\\.).*$|(^.+None aired\\.).*$|(^.+None communicated\\.).*$|(^.+None revealed\\.).*$|(^.+Nothing to declare\\.).*$|(^.+No\\.).*$|(^.+Nil\\.).*$",
-      "\\1\\2\\3\\4",
+      "^(.+(None|None disclosed|None reported|None declared|None mentioned|None aired|None communicated|None revealed|Nothing to declare|No|Nil)\\.).*$",
+      "\\1",
       coi_text,
       fixed = F, ignore.case = T
     )

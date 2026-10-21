@@ -15,6 +15,11 @@ extract_urls <- function(paper) {
   # simplified version without strict IPv4 validation or IPv6 support
   # these are very unlikely to be in papers
   pattern <- "\\b((doi:)?(https?://)?(([\\w.-]+\\.[a-z]{2,})|(\\d{1,3}(\\.\\d{1,3}){3}))(:\\d+)?(/[^\\s]*)?)\\b"
+  # An e-mail address is matched whole and skipped, so neither its local
+  # part nor its domain is listed as a URL (U206); a host name right after
+  # "et " is "et al." glued to the next word ("et al.Inhibitory"; U158).
+  pattern <- paste0("[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)+(*SKIP)(*FAIL)|(?<!\\bet\\s)",
+                    pattern)
   table <- text_search(paper, pattern, return = "match", "perl" = TRUE)
 
   return(table)
@@ -39,6 +44,12 @@ extract_urls <- function(paper) {
 #' paper <- demopaper()
 #' p_values <- extract_p_values(paper)
 extract_p_values <- function(paper) {
+  # a character vector is searched as a text table, one row per string:
+  # text_search() returns plain matches for one, and p$text stopped with "$
+  # operator is invalid for atomic vectors" (U150)
+  if (is.character(paper))
+    paper <- data.frame(text = paper, text_id = seq_along(paper))
+
   # set up pattern
   operators <- c(
     "=", "<", ">", "~",
@@ -50,12 +61,16 @@ extract_p_values <- function(paper) {
     "\u226B" # >>
   ) |> paste(collapse = "")
 
+  # p may be written "ps", "p's" or "p-values", and scientific notation may
+  # use the multiplication sign, leave out "^" and use the Unicode minus:
+  # "ps < .05" gave no row, and "p = 1.8 \u00d7 10 -6" was read as 1.8
+  # (U204, U205)
   pattern <- paste0(
-    "\\b[pP]-?(value)?\\s*", # ways to write p (or P)
+    "\\b[pP](?:-?values?|s|['\u2019]s)?\\s*", # ways to write p (or P)
     "[", operators, "]{1,2}\\s*", # 1-2 operators
     "(n\\.?s\\.?|\\d?\\.\\d+)", # ns or valid numbers
-    "\\s*(e\\s*-\\d+)?", # also match scientific notation
-    "(\\s*[x\\*]\\s*10\\s*\\^\\s*-\\d+)?"
+    "\\s*(e\\s*[-\u2212]\\d+)?", # also match scientific notation
+    "(\\s*[x\\*\u00d7]\\s*10\\s*\\^?\\s*[-\u2212]\\s*\\d+)?"
   )
 
   p <- text_search(paper, pattern,
@@ -72,7 +87,8 @@ extract_p_values <- function(paper) {
   s <- strsplit(p$text, paste0("\\s*[", operators, "]{1,2}\\s*"))
   pvals <- sapply(s, \(x) x[[2]]) |>
     gsub("\\s", "", x = _) |>
-    gsub("[x*]10\\^", "e", x = _)
+    gsub("\u2212", "-", x = _) |>
+    gsub("[x*\u00d7]10\\^?", "e", x = _)
   p$p_value <- suppressWarnings(as.numeric(pvals))
 
   return(p)
@@ -96,6 +112,11 @@ extract_p_values <- function(paper) {
 #' equations <- extract_eq(paper)
 extract_eq <- function(paper) {
   paper_id <- text_id <- grp_id <- NULL # CMD-check :(
+  # a character vector is searched as a text table, one row per string:
+  # text_search() returns plain matches for one, which stopped bind_rows()
+  # below (U150)
+  if (is.character(paper))
+    paper <- data.frame(text = paper, text_id = seq_along(paper))
 
   # set up pattern
   operators <- c(
@@ -150,7 +171,8 @@ extract_eq <- function(paper) {
   # precede a number ("sample size n = 40" -> "size n", "mean age years = 25"
   # -> "age years" -- confirmed these are what the engine already backtracks
   # to for the bare, unscoped case).
-  bare_subscript <- paste0("[gd]\\s+(?:av|z|rm|s)(?=\\s*[", op, "])")
+  # \\b: the g or d is a word of its own, else "and z = 3.1" was "d z" (U218)
+  bare_subscript <- paste0("\\b[gd]\\s+(?:av|z|rm|s)(?=\\s*[", op, "])")
   pattern <- paste0(
     "(?:(Hedge.{0,3}|Cronbach.{0,2}|Cohen.{0,2}|\\d{1,2}%)\\s+)?", # common prefix
     "(?:", bare_subscript, "|",
@@ -166,9 +188,12 @@ extract_eq <- function(paper) {
     "\\s*", # statistic name
     "(?:\\(", df_inner, "\\))?\\s*", # optional df-shaped parentheses
     "[", op , "]{1,3}\\s*", # 1-3 operators
-    "([0-9\\.,+-]*[0-9]|\\[[^\\]]+\\]|n\\.?\\s*s\\.?)", # valid numbers or anything in [] or NS
-    "\\s*(e\\s*-\\d+)?", # also match scientific notation
-    "(\\s*[x\\*]\\s*10\\s*\\^\\s*-\\d+)?"
+    # valid numbers or anything in [] or NS; a number may have the Unicode
+    # minus, a leading one with a space after it ("r = \u2212 0.12"): those
+    # statistics were lost (U205)
+    "((?:\u2212\\s?)?[0-9\\.,+\u2212-]*[0-9]|\\[[^\\]]+\\]|n\\.?\\s*s\\.?)",
+    "\\s*(e\\s*[-\u2212]\\d+)?", # also match scientific notation
+    "(\\s*[x\\*\u00d7]\\s*10\\s*\\^?\\s*[-\u2212]\\s*\\d+)?"
   )
 
   eq <- paper |>
@@ -213,21 +238,26 @@ extract_eq <- function(paper) {
   s <- strsplit(eq$text, paste0("\\s*[", op, "]{1,2}\\s*"))
   eq$lhs <- sapply(s, \(x) x[[1]]) |> trimws()
 
-  eq$rhs <- sapply(s, \(x) x[[2]]) |> trimws()
+  # the Unicode minus as "-" ("\u2212 0.12" gives "-0.12"; U205)
+  eq$rhs <- sapply(s, \(x) x[[2]]) |> trimws() |>
+    gsub("\u2212\\s?", "-", x = _)
   #   gsub("\\s", "", x = _) |>
   #   gsub("[x*]10\\^", "e", x = _)
   # eq$rhs <- suppressWarnings(as.numeric(rhs))
 
   # set group equal to sentence for now
-  eq$grp_id <- 1
-  for (i in seq_along(eq$text_id)) {
-    if (i == 1 || eq$paper_id[[i]] != eq$paper_id[[i-1]]) {
-      eq$grp_id[[i]] <- 1
-    } else if (eq$text_id[[i]] == eq$text_id[[i-1]]) {
-      eq$grp_id[[i]] <- eq$grp_id[[i-1]]
-    } else {
-      eq$grp_id[[i]] <- eq$grp_id[[i-1]] + 1
-    }
+  # identical(), not != / ==: a text table without a paper_id (or text_id)
+  # has NA there, and NA != NA stopped with "missing value where TRUE/FALSE
+  # needed" (U150)
+  # Each sentence numbered within its own paper, in text order: counted in
+  # search order, the count restarted whenever the search moved to another
+  # paper, so sentences of a paper in a list shared grp_ids (U10)
+  pkey <- paste(eq$paper_id)
+  eq$grp_id <- NA_real_
+  for (k in unique(pkey)) {
+    r <- which(pkey == k)
+    tid <- eq$text_id[r]
+    eq$grp_id[r] <- match(tid, unique(tid[order(tid)]))
   }
 
   cols <- c("text_id", "grp_id", "lhs", "df", "comp", "rhs", "paper_id")

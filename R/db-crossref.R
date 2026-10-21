@@ -35,20 +35,17 @@ datacite_doi <- function(doi) {
       bibdata[[i]] <- list(doi = doi[i])
     }
   }
+  # A failed lookup is an empty row of its own: return() inside tryCatch()
+  # returned from datacite_doi(), so one error emptied the whole result, and
+  # bibdata[[i]] <- NULL deleted the element, shifting later rows (U12)
   for (j in seq_along(valid_idx)) {
     i <- valid_idx[j]
-    bibdata[[i]] <- tryCatch({
-      resp <- resps[[j]]
-      if (inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
-        return(NULL)
-      }
-      ct <- httr2::resp_content_type(resp)
-      if (ct == "application/json") {
-        httr2::resp_body_json(resp)
-      } else {
-        NULL
-      }
+    resp <- resps[[j]]
+    failed <- is.null(resp) || inherits(resp, "error") || httr2::resp_status(resp) >= 400
+    bd <- if (failed) NULL else tryCatch({
+      if (httr2::resp_content_type(resp) == "application/json") httr2::resp_body_json(resp) else NULL
     }, error = \(e) NULL)
+    bibdata[i] <- list(bd %||% list(doi = doi[i]))
   }
 
   bib_table <- lapply(bibdata, \(bd) {
@@ -231,7 +228,7 @@ crossref_doi <- function(doi, select = c(
     valid_results <- lapply(seq_along(valid_idx), \(j) {
       tryCatch({
         resp <- resps[[j]]
-        if (inherits(resp, "error")) {
+        if (is.null(resp) || inherits(resp, "error")) {
           return(data.frame(DOI = doi[valid_idx[j]], error = "connection error"))
         }
         if (httr2::resp_status(resp) >= 400) {
@@ -307,7 +304,15 @@ crossref_doi <- function(doi, select = c(
 
   to_select <- intersect(select, names(item))
 
-  ret <- data.frame(item[to_select], check.names = FALSE)
+  # A JSON null leaves a field of length zero, which stopped data.frame()
+  # ("differing number of rows: 1, 0"), and a list-valued field gave deparsed
+  # column names; empty fields are left out and lists become one text (U13)
+  vals <- item[to_select]
+  vals <- vals[lengths(vals) > 0]
+  vals <- lapply(vals, \(v) if (is.list(v) || length(v) > 1)
+    paste(unlist(v), collapse = "; ") else v)
+  ret <- if (length(vals)) data.frame(vals, check.names = FALSE) else
+    data.frame(DOI = NA_character_)
   if ("author" %in% select & nrow(authors)) ret$author <- list(authors)
 
   return(ret)
@@ -744,16 +749,15 @@ openalex_doi <- function(doi, select = NULL) {
       oa[[i]] <- list(DOI = doi[i], error = "malformed")
     }
   }
+  # each DOI its own entry: return() inside tryCatch() returned from
+  # openalex_doi(), so one failure gave only that DOI's error (U12)
   for (j in seq_along(valid_idx)) {
     i <- valid_idx[j]
-    oa[[i]] <- tryCatch({
-      resp <- resps[[j]]
-      if (inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
-        return(list(DOI = doi[i], error = "not found"))
-      }
-      info <- httr2::resp_body_json(resp)
-      .openalex_add_abstract(info)
-    }, error = \(e) list(DOI = doi[i], error = "not found"))
+    resp <- resps[[j]]
+    failed <- is.null(resp) || inherits(resp, "error") || httr2::resp_status(resp) >= 400
+    oa[[i]] <- if (failed) list(DOI = doi[i], error = "not found") else
+      tryCatch(.openalex_add_abstract(httr2::resp_body_json(resp)),
+               error = \(e) list(DOI = doi[i], error = "not found"))
   }
   return(oa)
 }
@@ -763,7 +767,8 @@ openalex_doi <- function(doi, select = NULL) {
 #' @returns the info list with abstract field added
 #' @keywords internal
 .openalex_add_abstract <- function(info) {
-  if (!is.null(info$abstract_inverted_index)) {
+  # an empty index ({}) has no words to put in order: rep() stopped (U14)
+  if (length(info$abstract_inverted_index) > 0) {
     aii <- info$abstract_inverted_index
     words <- rep(names(aii), sapply(aii, length))
     order <- unname(unlist(aii))
@@ -862,7 +867,9 @@ openalex_query <- function(title, source = NA, authors = NA, strict = TRUE) {
     res <- unlist(res)
   }) |>
     do.call(dplyr::bind_rows, args = _) |>
-    dplyr::arrange(dplyr::desc(relevance_score))
+    # unlist() made every field text, so the scores were sorted as text
+    # ("9.5" before "10.2") (U13)
+    dplyr::arrange(dplyr::desc(suppressWarnings(as.numeric(relevance_score))))
 
   required_cols <- c("display_name", "source")
   for (rq in required_cols) {

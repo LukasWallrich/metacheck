@@ -61,7 +61,7 @@ zenodo_links <- function(paper) {
   }
 
   if (length(zenodo_url) > 1) {
-    return(vapply(zenodo_url, .zenodo_id, character(1)))
+    return(vapply(zenodo_url, .zenodo_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single zenodo_url ----
@@ -264,7 +264,8 @@ zenodo_info <- function(zenodo_url, id_col = 1, pb = NULL, cache = FALSE) {
 
   resp <- .batch_query(zenodo_api_url, msg = NULL)[[1]]
 
-  if (httr2::resp_status(resp) != 200) {
+  # a connection failure comes back from .batch_query() as NULL (U33)
+  if (is.null(resp) || httr2::resp_status(resp) != 200) {
     warning(zenodo_id, " could not be found", call. = FALSE)
     return(.zenodo_unread(zenodo_id, "unfound"))
   }
@@ -300,8 +301,8 @@ zenodo_info <- function(zenodo_url, id_col = 1, pb = NULL, cache = FALSE) {
   obj$resource_type <-    metadata$resource_type$type %empty_or% NA_character_
   obj$journal <-          list(metadata$journal) %||% list(c())
   obj$owners <-           list(rec$owners) %||% list(c())
-  obj$license <-          metadata$license$id %empty_or%
-                          metadata$license$title %empty_or%
+  obj$license <-          .field_or_value(metadata$license, "id") %empty_or%
+                          .field_or_value(metadata$license, "title") %empty_or%
                           metadata$license %empty_or%
                           NA_character_
   obj$downloads <-        rec$stats$downloads %empty_or% NA_real_
@@ -466,45 +467,16 @@ zenodo_file_download <- function(zenodo_id,
     unzippable <- .is_zip(files$key) & !is.na(files$self) & nzchar(files$self %||% "")
 
   # --- size filters (MB) ----
-  if (!is.null(max_file_size) && is.finite(max_file_size) && max_file_size > 0) {
-    too_big_files <- which(files$size > max_file_size * 1024 * 1024 & !unzippable)
-    if (length(too_big_files) > 0) {
-      for (i in too_big_files) {
-        paste0(
-          "- omitting ", files$key[[i]],
-          " (", round(files$size[[i]] / 1024 / 1024, 1), "MB)"
-        ) |>
-          list(what = _) |>
-          pb$tick(0, tokens = _)
-      }
-      files <- files[-too_big_files, , drop = FALSE]
-      unzippable <- unzippable[-too_big_files]
-    }
-  }
+  # Omitted files stay in the table with downloaded = FALSE, as documented;
+  # they were dropped from it (U36).
+  omit <- .omit_for_size(files$size, files$key, unzippable,
+                         max_file_size, max_download_size, pb)
 
-  # remove largest files until total <= limit
-  if (!is.null(max_download_size) && is.finite(max_download_size) && max_download_size > 0) {
-    # Only the files that will be transferred whole count against the total.
-    while (any(!unzippable) &&
-           sum(files$size[!unzippable], na.rm = TRUE) > max_download_size * 1024 * 1024) {
-      capped <- which(!unzippable)
-      max_file <- capped[which.max(files$size[capped])]
-      paste0(
-        "- omitting ", files$key[[max_file]],
-        " (", round(files$size[[max_file]] / 1024 / 1024, 1), "MB)"
-      ) |>
-        list(what = _) |>
-        pb$tick(0, tokens = _)
-      files <- files[-max_file, , drop = FALSE]
-      unzippable <- unzippable[-max_file]   # keep the mask aligned with `files`
-    }
-  }
-
-  if (nrow(files) == 0) {
+  if (all(omit)) {
     paste0("- All files omitted due to size constraints") |>
       list(what = _) |>
       pb$tick(0, tokens = _)
-    return(NULL)
+    return(invisible(.all_omitted_table(files, list(zenodo_id = as.character(zenodo_id)))))
   }
 
   # --- target directory (avoid overwrite) ----
@@ -513,10 +485,13 @@ zenodo_file_download <- function(zenodo_id,
   if (dir.exists(download_to)) {
     download_to <- file.path(download_to, as.character(zenodo_id))
   }
+  # the base name is kept as it is: stripping "_<digits>" on each pass also
+  # stripped the deposit id of "figshare_<id>", so the next download went to
+  # "figshare_1" instead of "figshare_<id>_1" (U37)
   i <- 0L
+  base <- download_to
   while (dir.exists(download_to)) {
     i <- i + 1L
-    base <- sub("_\\d+$", "", download_to)
     download_to <- paste0(base, "_", i)
   }
   dir.create(download_to, showWarnings = FALSE, recursive = FALSE)
@@ -527,7 +502,7 @@ zenodo_file_download <- function(zenodo_id,
   # --- download into temp, then copy to target ----
   # temppath <- fs::file_temp()
   temppath <- tempfile()
-  on.exit(unlink(temppath, recursive = TRUE))
+  on.exit(unlink(temppath, recursive = TRUE), add = TRUE)
   dir.create(temppath)
 
   n <- nrow(files)
@@ -556,7 +531,9 @@ zenodo_file_download <- function(zenodo_id,
   # paid one wasted request before the file-by-file loop below did the real
   # work. Remembered per session rather than removed outright, so the bulk
   # path comes back by itself if Zenodo restores the endpoint.
-  if (n == n_in_record && !any(unzip_me) &&
+  # !any(omit): omitted files now stay in `files` (U36), so the row count
+  # alone no longer shows that the size limits left nothing out
+  if (n == n_in_record && !any(omit) && !any(unzip_me) &&
       !isTRUE(.zenodo_files_archive_state$unavailable)) {
     zip_url <- sprintf("https://zenodo.org/api/records/%s/files-archive", zenodo_id)
     zip_path <- file.path(temppath, "archive.zip")
@@ -609,6 +586,7 @@ zenodo_file_download <- function(zenodo_id,
                        error = character(0), stringsAsFactors = FALSE)
   if (!used_bulk) {
     for (i in seq_len(n)) {
+      if (omit[i]) next                       # left out for its size (U36)
       if (isTRUE(files$downloaded[i])) next   # already extracted from the archive
 
       # --- selected members out of a zip, instead of the whole zip ----
@@ -673,7 +651,7 @@ zenodo_file_download <- function(zenodo_id,
           error = \(e) NULL
         )
         if (!is.null(resp) && httr2::resp_status(resp) == 200) {
-          writeBin(httr2::resp_body_raw(resp), target_path)
+          writeBin(.resp_bytes(resp), target_path)
           ok <- TRUE
         }
       }
@@ -703,9 +681,9 @@ zenodo_file_download <- function(zenodo_id,
   # --- verify what actually reached the disk ----
   files <- .zenodo_verify_downloads(files, download_to)
 
-  n_missing <- sum(!files$downloaded)
+  n_missing <- sum(!files$downloaded & !omit)   # omitted files were never meant to arrive
   if (n_missing > 0) {
-    worst <- files[!files$downloaded, ]
+    worst <- files[!files$downloaded & !omit, ]
     warning(sprintf(
       "%d of %d file%s from Zenodo record %s did not arrive intact (e.g. %s). The returned table marks %s downloaded = FALSE. Run again to retry.",
       n_missing, nrow(files), plural(nrow(files)), zenodo_id,

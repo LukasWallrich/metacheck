@@ -682,6 +682,43 @@ test_that("Dryad datasets with enough files still use zip", {
   dl <- download_repo_files(files, max_file_size = 10, max_download_size = 100)
   expect_true(all(!is.na(dl$file_location)))
 })
+
+test_that("a row without repo_url and a stale location do not break the Dryad zip (U74)", {
+  # a row with repo_url NA made the zip gate NA, which stopped the call for
+  # 13-50 wanted files; a wanted row with an out-of-date file_location
+  # counted as delivered although the zip did not write it, so it was never
+  # fetched
+  n <- 16
+  repo <- "https://doi.org/10.5061/dryad.u74test"
+  files <- data.frame(
+    repo_url = c(rep(repo, n), NA),
+    file_name = paste0("f", seq_len(n + 1), ".csv"),
+    file_path = paste0("f", seq_len(n + 1), ".csv"),
+    file_url = sprintf("https://datadryad.org/api/v2/files/%d/download", seq_len(n + 1)),
+    file_size = rep(1024, n + 1),
+    file_location = c("C:/old/stale/f1.csv", rep(NA_character_, n)),
+    stringsAsFactors = FALSE)
+  unlink(metacheck:::.repo_cache_subdir(repo), recursive = TRUE)
+  fetched <- character(0)
+  local_mocked_bindings(
+    .dryad_doi = function(x) if (is.na(x)) NA_character_ else "10.5061/dryad.u74test",
+    .download_zip_to_cache = function(files, row_idx, ...) {   # delivers all but f1
+      w <- row_idx[files$file_name[row_idx] != "f1.csv"]
+      files$file_location[w] <- files$.cache_path[w]
+      files
+    },
+    .download_one = function(url, dest, ...) {
+      fetched <<- c(fetched, url); NA_character_
+    },
+    .download_many_parallel = function(urls, dests, ...) {
+      fetched <<- c(fetched, urls); rep(NA_character_, length(urls))
+    },
+    .package = "metacheck"
+  )
+  dl <- download_repo_files(files, max_file_size = 10, max_download_size = 100)
+  expect_true(any(grepl("/files/1/download", fetched)))
+  expect_false(identical(dl$file_location[1], "C:/old/stale/f1.csv"))
+})
 assignInNamespace(".dryad_doi", .real_dryad_doi, ns = "metacheck")
 
 test_that(".download_many_parallel reports HTTP errors and retries a truncated download", {
@@ -712,6 +749,22 @@ test_that(".download_many_parallel reports HTTP errors and retries a truncated d
   errs2 <- .download_many_parallel(ok_url, file.path(tmp, "ok2.csv"),
                                    expected_size = real_size + 1)
   expect_true(grepl("^truncated \\(", errs2))
+})
+
+test_that("an empty or partial download is not left at the cache path (U75, U203)", {
+  # an empty response left a 0-byte file, and a stopped download a partial
+  # one, which the next run's file.exists() check reused as the file
+  empty <- tempfile(fileext = ".csv"); file.create(empty)
+  full  <- tempfile(fileext = ".csv"); writeLines("a,b\n1,2", full)
+  url <- function(p) paste0("file:///", gsub("\\\\", "/", p))
+  tmp <- withr::local_tempdir()
+
+  expect_equal(.download_one(url(empty), file.path(tmp, "e1.csv")), "empty response")
+  expect_equal(.download_many_parallel(url(empty), file.path(tmp, "e2.csv")), "empty response")
+  expect_true(is.na(.download_one(url(full), file.path(tmp, "f1.csv"))))
+  expect_true(is.na(.download_many_parallel(url(full), file.path(tmp, "f2.csv"))))
+  # only the complete files, and no ".part" files
+  expect_setequal(list.files(tmp), c("f1.csv", "f2.csv"))
 })
 
 test_that("osfstorage and Zenodo file-by-file rows use the parallel path, others don't", {

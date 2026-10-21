@@ -402,3 +402,8 @@ test_that("format_ref", {
   obs <- format_ref(bib)
   expect_equal(obs, bib)
 })
+
+test_that("link(type = 'doi') gives no link for a missing DOI (U8)", {
+  # sprintf() made NA into a link to https://doi.org/NA
+  expect_true(is.na(link(c("10.1/x", NA), type = "doi")[2]))
+})

@@ -33,18 +33,40 @@ stat_p_exact <- function(paper) {
     expand_to = c("sentence")
   )
 
+  # "==" is "=": it counted as imprecise (U127)
+  p$p_comp[p$p_comp %in% "=="] <- "="
+  # the match keeps trailing spaces, so one p-value twice in a sentence gave
+  # two report rows (U127)
+  p$text <- trimws(p$text)
+
   # Flag imprecise p-values
   p$imprecise <- p$p_comp == "<" & p$p_value > .001
   p$imprecise <- p$imprecise | !p$p_comp %in% c("=", "<")
   p$imprecise <- p$imprecise | is.na(p$p_value)
 
-  # remove false positive "*p < .05"
-  star_pattern <- "\\*\\s*[pP]\\s*<\\s*0?\\.0+[15]"
-  stars <- grepl(star_pattern, p$expanded)
-  p$imprecise <- p$imprecise & !stars
+  # remove false positive "*p < .05": only the p-value that is itself
+  # starred, and only .05, .01 or .001. Tested on the whole sentence, one
+  # footnote hid every imprecise p-value in it, and "*p < .005" counted (U127)
+  # The same p-value can appear unstarred and starred in one sentence, so
+  # as many of its rows are left out as there are starred copies, the last
+  # ones (a footnote comes after the results).
+  esc <- gsub("([][{}()+*^$|\\\\.?])", "\\\\\\1", p$text)
+  can_star <- grepl("^[pP]\\s*<\\s*0?\\.0*[15]$", p$text) &
+    p$p_value %in% c(.05, .01, .001)
+  starred <- rep(FALSE, nrow(p))
+  key <- paste(p$expanded, p$text, sep = "\r")
+  for (k in unique(key[can_star])) {
+    rows <- which(key == k)
+    i <- rows[1]
+    n_star <- lengths(regmatches(p$expanded[i],
+                                 gregexpr(paste0("\\*\\s*", esc[i]), p$expanded[i])))
+    if (n_star > 0) starred[utils::tail(rows, n_star)] <- TRUE
+  }
+  p$imprecise <- p$imprecise & !starred
 
-  # Flag p-values reported as exactly zero (e.g., p = .000, p = 0.00)
-  p$zero <- p$p_comp == "=" & !is.na(p$p_value) & p$p_value == 0
+  # Flag p-values reported as exactly zero (e.g., p = .000, p = 0.00), also
+  # "p < .000", which was neither imprecise nor zero (U127)
+  p$zero <- p$p_comp %in% c("=", "<") & !is.na(p$p_value) & p$p_value == 0
 
   cols <- c("text", "expanded")
   report_table <- unique(p[p$imprecise, cols, drop = FALSE])

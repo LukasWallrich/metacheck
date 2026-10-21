@@ -298,7 +298,20 @@ check_file_naming <- function(file_name, file_path = file_name,
 
   data_type <- rep_len(data_type, n)
 
-  per_file <- lapply(seq_len(n), function(i) {
+  # A name that is not valid UTF-8 (a zip's old Windows name) stopped the
+  # checks below ("input string 1 is invalid", U76). Check a valid copy, and
+  # give the result the names as they came in, so callers can match them.
+  given <- c(file_name, file_path)
+  file_name <- .utf8_lines(as.character(file_name))
+  file_path <- .utf8_lines(as.character(file_path))
+  as_given <- function(x) {
+    i <- match(x, c(file_name, file_path))
+    ifelse(is.na(i), x, given[i])
+  }
+
+  # a file without a name (a platform listing can have one) has nothing to
+  # check; it stopped the module ("missing value where TRUE/FALSE needed", U122)
+  per_file <- lapply(which(!is.na(file_name)), function(i) {
     df <- .file_naming_check_one(file_name[[i]], data_type[[i]])
     # Add file_name even when 0 rows, so rbind()-ing an all-clean batch still
     # produces a data.frame with a file_name column to select below (a bare
@@ -314,12 +327,13 @@ check_file_naming <- function(file_name, file_path = file_name,
     stringsAsFactors = FALSE)
   per_file <- per_file[, c("file_name", "rule", "detail")]
 
-  padding <- .file_naming_check_padding(file_name)
-  length_issues <- .file_naming_check_length(file_path)
+  padding <- .file_naming_check_padding(file_name[!is.na(file_name)])
+  length_issues <- .file_naming_check_length(file_path[!is.na(file_path)])
 
   out <- rbind(per_file, padding, length_issues)
   out$severity <- unname(.file_naming_severity[out$rule])
   out <- out[, c("file_name", "rule", "severity", "detail")]
+  if (nrow(out)) out$file_name <- as_given(out$file_name)
   rownames(out) <- NULL
   out
 }

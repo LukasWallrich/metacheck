@@ -77,7 +77,9 @@ convert <- function(file_path,
   }
 
   # check server priority list ----
-  if (!surf && (method == "auto" || is.null(args$api_url))) {
+  # XML is converted locally, so no server is looked up for it (offline, the
+  # lookup stopped an XML conversion, U18)
+  if (!surf && method != "xml" && (method == "auto" || is.null(args$api_url))) {
     servers_url <- "https://www.scienceverse.org/metacheck/convert.json"
 
     if (!online(servers_url)) {

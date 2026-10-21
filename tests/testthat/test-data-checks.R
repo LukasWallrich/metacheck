@@ -14,6 +14,28 @@ test_that("data_check_outliers flags Tukey outliers", {
   expect_false(data_check_outliers(rep(5, 20))$problem)
   # non-numeric → no problem
   expect_false(data_check_outliers(c("a", "b"))$problem)
+  # both quartiles infinite: no spread, so no outliers (stopped, U55)
+  expect_false(data_check_outliers(c(1, Inf, Inf, Inf))$problem)
+})
+
+test_that("data_check_scale_values treats fractional range bounds as an interval (U55)", {
+  # lo:hi made 1.5, 2.5, ... and "%d" stopped on 1.5
+  r <- data_check_scale_values(c(1.5, 2.5, 3.5, 9), valid_range = c(1.5, 4.5))
+  expect_equal(r$values, 9)
+  expect_match(r$message, "outside the 1.5-4.5 scale", fixed = TRUE)
+  # values between the bounds are valid, not only 1.5, 2.5, ...
+  r <- data_check_scale_values(c(1.7, 2.2, 3.9, 9), valid_range = c(1.5, 4.5))
+  expect_equal(r$values, 9)
+  # whole-number bounds keep the scale points and the message
+  r <- data_check_scale_values(c(1, 2, 3, 4, 9), valid_range = c(1, 7))
+  expect_match(r$message, "outside the 1-7 scale", fixed = TRUE)
+})
+
+test_that("an NA value-label name does not stop the label reader (U60)", {
+  labs <- setNames(1:6, c("a", "b", NA, "c", "d", "e"))
+  expect_false(metacheck:::.looks_like_freetext_labels(names(labs)))
+  vl <- metacheck:::.haven_value_labels(haven::labelled(c(1, 2, 3), labels = labs))
+  expect_match(vl$value_labels, '"1":"a"', fixed = TRUE)
 })
 
 test_that(".detect_likert_scale infers scale ranges robustly", {
@@ -1436,4 +1458,147 @@ test_that(".bh_is_trial_level_file reads only the header line (#477)", {
   writeLines(c(paste(c("sample", nm), collapse = ","),
                paste(c("S1", rep(0, 1600)), collapse = ",")), wide)
   expect_lt(system.time(.bh_is_trial_level_file(wide))[["elapsed"]], 10)
+})
+
+test_that("a column with value labels but no variable label gets no variable label (U145)", {
+  # attr(x, "label") partially matches "labels": the first value code became
+  # the variable label
+  df <- data.frame(q1 = haven::labelled(c(1, 2), labels = c(Yes = 1, No = 2)),
+                   q2 = haven::labelled(c(1, 2), labels = c(Yes = 1, No = 2), label = "Question 2"))
+  lab <- metacheck:::.extract_haven_labels(df, "data.sav")
+  expect_false("1" %in% lab$label)
+  expect_true("Question 2" %in% lab$label)
+  expect_equal(metacheck:::.pad_to(1:2, 4), c(1L, 2L, NA, NA))
+})
+
+test_that("blank column names collide; 1e5 digits; Latin-1 text; UTF-8 with NA cells (U56, U59, U63, U64)", {
+  # a blank name's collision could not be looked up
+  coll <- data_check_colname_collisions(c("", "", "x"))
+  expect_true("" %in% names(coll))
+  # 1e5 gave its digits as "1e+05", with coercion warnings
+  expect_no_warning(metacheck:::.scale_typo_of(1e5, 1, 7))
+  expect_equal(metacheck:::.scale_typo_of(1e5, 1, 7), metacheck:::.scale_typo_of(100000L, 1, 7))
+  # an 8-bit (Latin-1) text file stopped text_peek()
+  f <- withr::local_tempfile(fileext = ".txt")
+  writeBin(c(charToRaw("caf"), as.raw(0xe9), charToRaw(" notes\nline 2\n")), f)
+  expect_equal(text_peek(f)[1], "café notes")
+  # a UTF-8 file with an "NA" cell was re-read as Latin-1 ("é" became "Ã©")
+  csv <- withr::local_tempfile(fileext = ".csv")
+  writeLines(enc2utf8(c("name,score", "café,1", "NA,2")), csv, useBytes = TRUE)
+  d <- data_read_head(csv)
+  expect_true("café" %in% d[[1]])
+})
+
+test_that("a UTF-16 text file (E-Prime export) is read, not reported empty (U217)", {
+  f <- withr::local_tempfile(fileext = ".txt")
+  txt <- "Subject\tTrial\tRT\n1\t1\t512\n1\t2\t498\n"
+  con <- file(f, "wb")
+  writeBin(as.raw(c(0xff, 0xfe)), con)
+  writeBin(iconv(txt, "UTF-8", "UTF-16LE", toRaw = TRUE)[[1]], con)
+  close(con)
+  d <- data_read_head(f)
+  expect_equal(names(d), c("Subject", "Trial", "RT"))
+  expect_equal(nrow(d), 2)
+})
+
+test_that("codebook ranges V1-V10 expand; a column without a group gets no other group's label (U58)", {
+  cols <- data.frame(paper_id = "p", source_file = "d.csv", column_name = c("V1", "V10", "Q3"),
+                     group = NA_character_)
+  cb <- data.frame(codebook_variable = c("V1-V10", "Q1-5"), label = c("Item", "Question"),
+                   codebook_source = "cb.txt", group = NA_character_)
+  r <- match_column_labels(cols, cb)
+  expect_equal(r$label, c("Item", "Item", "Question"))
+  # a label scoped to study 2 is not applied to a column without a group
+  cb2 <- data.frame(codebook_variable = "Q3", label = "Study 2 question",
+                    codebook_source = "cb.txt", group = "study2")
+  r2 <- match_column_labels(cols[3, ], cb2)
+  expect_false(isTRUE(r2$label_status == "labelled"))
+})
+
+test_that("variable labels in .rds and .RData files are kept (U61)", {
+  # head() dropped the label attribute of plain and factor columns
+  df <- data.frame(age = c(20, 30, 40), grp = factor(c("a", "b", "a")))
+  attr(df$age, "label") <- "Age in years"; attr(df$grp, "label") <- "Group"
+  f <- withr::local_tempfile(fileext = ".rds"); saveRDS(df, f)
+  d <- data_read_head(f)
+  expect_equal(attr(d$age, "label", exact = TRUE), "Age in years")
+  expect_equal(attr(d$grp, "label", exact = TRUE), "Group")
+  f2 <- withr::local_tempfile(fileext = ".RData"); dat <- df; save(dat, file = f2)
+  expect_equal(attr(data_read_head(f2)$age, "label", exact = TRUE), "Age in years")
+})
+
+test_that(".strip_rtf keeps lines and characters, without the font table (U215)", {
+  # an RTF codebook reached the model as one line starting with the font
+  # table, without escaped characters
+  rtf <- paste0(
+    "{\\rtf1\\ansi{\\fonttbl{\\f0\\fswiss Times;}{\\f1 Arial;}}",
+    "{\\colortbl;\\red0\\green0\\blue0;}",
+    "\\pard\\f0 age: Age of the participant in years\\par ",
+    "caf\\'e9 \\u233? and \\{braces\\} and a back\\\\slash\\par ",
+    "gender: 1 = male, 2 = female}")
+  out <- strsplit(metacheck:::.strip_rtf(rtf), "\n")[[1]]
+  expect_equal(out, c("age: Age of the participant in years",
+                      "café é and {braces} and a back\\slash",
+                      "gender: 1 = male, 2 = female"))
+})
+
+test_that("data_check counts the files it extracted columns from (U99)", {
+  # an .RData file without data counted as extracted
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  write.csv(data.frame(a = 1:3, b = 4:6), file.path(d, "one.csv"), row.names = FALSE)
+  save(list = character(0), file = file.path(d, "empty.RData"))
+  withr::local_options(metacheck.cache.dir = withr::local_tempdir())
+  mo <- suppressMessages(module_run(test_paper("x"), "data_check", local_path = d))
+  expect_match(mo$summary_text, "extracted 2 columns from 1 of them", fixed = TRUE)
+})
+
+test_that("an .xls that crashes the reader in a separate process is not read (tue_datamanager_check#4)", {
+  # an old Mac Excel .xls made readxl crash the whole R process, so there
+  # was no report; such a file is now first opened in a separate process
+  skip_if_not_installed("readxl")
+  skip_if_not_installed("callr")
+  src <- readxl::readxl_example("datasets.xls")
+  ok <- file.path(withr::local_tempdir(), "ok.xls"); file.copy(src, ok)
+  expect_true(.xls_readable(ok))
+  expect_true(nrow(data_read_head(ok)) > 0)
+
+  bad <- file.path(withr::local_tempdir(), "bad.xls"); file.copy(src, bad)
+  local_mocked_bindings(r = function(...) stop("R session crashed"), .package = "callr")
+  expect_false(.xls_readable(bad))
+  expect_null(data_read_head(bad))
+})
+
+test_that("data_check warns about a column that needs an R package to be read (Lakens/tue_datamanager_check#4, item 8a)", {
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  span <- asS4(structure(as.numeric(1:20),
+                         class = structure("Span", package = "notinstalledpkg")))
+  df <- structure(list(id = 1:20, score = round(seq(1, 5, length.out = 20), 1), span = span),
+                  class = "data.frame", row.names = 1:20)
+  saveRDS(df, file.path(d, "trials.rds"))
+
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  expect_equal(mo$table$needs_package[mo$table$column_name == "span"],
+               "Span, from the R package notinstalledpkg")
+  expect_equal(mo$table$needs_package[mo$table$column_name == "id"], "")
+  f <- mo$findings[mo$findings$check == "Needs an R package", ]
+  expect_equal(f$column, "span")
+  expect_match(f$detail, "type Span, from the R package notinstalledpkg, so the file cannot be read without that package")
+  expect_false(mo$traffic_light == "green")
+})
+
+test_that("data_check warns about an .rds file made with save() (Lakens/tue_datamanager_check#5, item 3)", {
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  # as in OSF zy7u6: only named number vectors, no data frame
+  v1 <- c(o = 1, c = 2); v2 <- c(o = 3, c = 4)
+  save(v1, v2, file = file.path(d, "demos.rds"))
+  utils::write.csv(data.frame(x = 1:20, y = 20:1), file.path(d, "other.csv"), row.names = FALSE)
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  f <- mo$findings[mo$findings$check == "R workspace named .rds", ]
+  expect_equal(f$source_file, "demos.rds")
+  expect_match(f$detail, "saved with save(), not saveRDS()", fixed = TRUE)
+  expect_false(mo$traffic_light == "green")
+  expect_match(mo$summary_text, "saved with save() instead of saveRDS()", fixed = TRUE)
 })

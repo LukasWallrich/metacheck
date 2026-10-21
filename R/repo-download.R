@@ -184,6 +184,66 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
   size
 }
 
+# Which files of a dataset the size limits leave out (MB), for the
+# *_file_download() functions: over `max_file_size` each, then the largest
+# until the rest fits `max_download_size`. `exempt` (zips read member by
+# member) are never left out. Returns a logical vector; the files stay in the
+# caller's table with downloaded = FALSE, as documented -- they were removed
+# from it (U36). Each omission is reported on `pb`, as before.
+.omit_for_size <- function(size, name, exempt, max_file_size, max_download_size, pb) {
+  size <- suppressWarnings(as.numeric(size))
+  omit <- rep(FALSE, length(size))
+  say <- function(i) paste0("- omitting ", name[[i]], " (",
+                           round(size[[i]] / 1024 / 1024, 1), "MB)") |>
+    list(what = _) |>
+    pb$tick(0, tokens = _)
+  if (!is.null(max_file_size) && is.finite(max_file_size) && max_file_size > 0) {
+    for (i in which(size > max_file_size * 1024 * 1024 & !exempt)) {
+      say(i)
+      omit[i] <- TRUE
+    }
+  }
+  if (!is.null(max_download_size) && is.finite(max_download_size) && max_download_size > 0) {
+    capped <- function() which(!exempt & !omit)
+    while (length(capped()) > 0 &&
+           sum(size[capped()], na.rm = TRUE) > max_download_size * 1024 * 1024) {
+      i <- capped()[which.max(size[capped()])]
+      say(i)
+      omit[i] <- TRUE
+    }
+  }
+  omit
+}
+
+# A response's bytes, raw(0) for an empty body: resp_body_raw() refuses one
+# ("Can't retrieve empty body"), outside any tryCatch(), so one zero-byte file
+# stopped a whole *_file_download() (U36).
+.resp_bytes <- function(resp) {
+  if (httr2::resp_has_body(resp)) httr2::resp_body_raw(resp) else raw(0)
+}
+
+# The table a *_file_download() function returns when the size limits leave
+# out every file: each one listed with downloaded = FALSE and no folder (none
+# is made), instead of NULL (U36). `id_cols` are the function's own id
+# columns, e.g. list(zenodo_id = "123").
+.all_omitted_table <- function(files, id_cols) {
+  files$downloaded <- FALSE
+  files$extracted <- NA_integer_
+  files$path <- NA_character_
+  files$size_on_disk <- NA_real_
+  files$checksum_ok <- NA
+  files$folder <- NA_character_
+  for (nm in names(id_cols)) files[[nm]] <- id_cols[[nm]]
+  cols <- c("folder", names(id_cols), "id", "key", "path", "size",
+            "size_on_disk", "checksum", "checksum_ok", "self",
+            "downloaded", "extracted")
+  for (col in setdiff(cols, names(files))) files[[col]] <- NA
+  out <- files[, cols]
+  attr(out, "failed") <- data.frame(key = character(0), member = character(0),
+                                    error = character(0), stringsAsFactors = FALSE)
+  out
+}
+
 # Estimated size (bytes) of a repository's whole-archive download: the sum of
 # the file sizes listed for it in `files`, or NA when none are listed. Used
 # because no whole-archive endpoint reports its size ahead of time (see
@@ -670,6 +730,13 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
 .download_one <- function(url, dest, skip_on_api_limit = FALSE,
                           expected_bytes = NA_real_) {
   dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)
+  # Written to "<dest>.part" and renamed when complete: an interrupted
+  # download left a partial file at `dest`, and an empty response a 0-byte
+  # one, which the next run's file.exists() check reused as the file
+  # (U75, U203).
+  final <- dest
+  dest <- paste0(final, ".part")
+  on.exit(if (file.exists(dest)) unlink(dest), add = TRUE)
   tryCatch({
     # Throttle realm = the host (explicit: the default derivation errors on
     # host-less URLs such as file://, which the tests use).
@@ -714,8 +781,9 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
       unlink(dest)
       return("not authorised (the OSF returned a sign-in page; see ?osf_pat)")
     }
-    if (file.exists(dest) && file.size(dest) > 0) NA_character_
-    else "empty response"
+    if (!(file.exists(dest) && file.size(dest) > 0)) return("empty response")
+    if (!file.rename(dest, final)) return("could not move the download into place")
+    NA_character_
   }, error = function(e) {
     if (file.exists(dest)) unlink(dest)
     # A 429 caught here (rather than retried away) means .storage_is_transient
@@ -767,6 +835,11 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
 .download_many_parallel <- function(urls, dests, expected_size = NA_real_,
                                     .retried = FALSE, skip_on_api_limit = FALSE) {
   if (length(urls) == 0) return(character(0))
+  # Each file is written to "<dest>.part" and renamed when complete, as in
+  # .download_one() (U75, U203).
+  final <- dests
+  dests <- paste0(final, ".part")
+  on.exit(unlink(dests[file.exists(dests)]), add = TRUE)
 
   expected_size <- rep_len(as.numeric(expected_size), length(urls))
   for (d in dests) dir.create(dirname(d), showWarnings = FALSE, recursive = TRUE)
@@ -835,7 +908,10 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
       # has no body either, so this still reports "empty response" for that
       # case (checked below).
       body <- tryCatch(httr2::resp_body_raw(r), error = \(e) raw(0))
-      if (length(body) == 0) return("empty response")
+      if (length(body) == 0) {
+        if (file.exists(dests[i])) unlink(dests[i])   # no 0-byte file (U75)
+        return("empty response")
+      }
       writeBin(body, dests[i])
     }
     # A sign-in page served in place of the file: the file is private and the
@@ -867,9 +943,12 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
   # .retried stops this at one pass: an `expected_size` that is simply wrong
   # (as opposed to a genuinely truncated transfer) would otherwise recurse
   # forever, since every attempt reports the same "mismatch".
+  for (i in which(is.na(errs)))
+    if (!file.rename(dests[i], final[i])) errs[i] <- "could not move the download into place"
+
   retry <- if (.retried) integer(0) else which(!is.na(errs) & startsWith(errs, "truncated ("))
   if (length(retry) > 0) {
-    retry_errs <- .download_many_parallel(urls[retry], dests[retry], expected_size[retry],
+    retry_errs <- .download_many_parallel(urls[retry], final[retry], expected_size[retry],
                                           .retried = TRUE, skip_on_api_limit = skip_on_api_limit)
     errs[retry] <- retry_errs
   }
@@ -1053,7 +1132,9 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
       sprintf("archive exceeded the %s MB cap during download and was aborted",
               .cap_num(round(max_bytes / (1024 * 1024))))
     } else if (isTRUE(timed_out)) {
-      sprintf("archive download exceeded the %ds timeout", timeout_s)
+      # whole seconds: %d with a fractional timeout failed, and its own error
+      # ("invalid format '%d'") was reported instead (U73)
+      sprintf("archive download exceeded the %ds timeout", as.integer(ceiling(timeout_s)))
     } else if (!file.exists(zip_tmp) || file.size(zip_tmp) == 0) {
       "empty response"
     } else {
@@ -1076,7 +1157,9 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
   lookup_paths <- gsub("\\\\", "/", lookup_paths)
   lookup_paths <- gsub("^/+",  "",  lookup_paths)
 
-  rel <- files$file_path[row_idx]
+  # without a file_path column the paths were empty, nothing matched, and
+  # the archive was downloaded for nothing (U73)
+  rel <- (files$file_path %||% files$file_name)[row_idx]
   empty_rel <- is.na(rel) | !nzchar(rel %||% "")
   rel[empty_rel] <- files$file_name[row_idx][empty_rel]
   rel <- gsub("\\\\", "/", rel)
@@ -1104,12 +1187,21 @@ repo_cache_clear <- function(repo_url = NULL, quiet = FALSE) {
     dest <- files$.cache_path[row_idx[j]]
     if (file.exists(src) && file.size(src) > 0) {
       dir.create(dirname(dest), showWarnings = FALSE, recursive = TRUE)
-      if (file.copy(src, dest, overwrite = TRUE))
+      if (.copy_into_place(src, dest))
         files$file_location[row_idx[j]] <- dest
     }
   }
 
   files
+}
+
+# Copy `src` to `dest` through "<dest>.part", so an interrupted copy leaves no
+# partial file at `dest` for the next run to reuse as complete (U203).
+.copy_into_place <- function(src, dest) {
+  part <- paste0(dest, ".part")
+  ok <- isTRUE(file.copy(src, part, overwrite = TRUE)) && isTRUE(file.rename(part, dest))
+  if (!ok && file.exists(part)) unlink(part)
+  ok
 }
 
 
@@ -1706,7 +1798,10 @@ download_repo_files <- function(files,
       # actually hitting the hourly cap repeatedly -- a deliberate,
       # observed-behaviour-driven adjustment, not a re-run of that sweep.
       n_wanted   <- length(ridx)
-      record_n   <- sum(files$repo_url == repo)
+      # na.rm: a row without a repo_url made this NA, and with 13-50 wanted
+      # files the if() below stopped with "missing value where TRUE/FALSE
+      # needed" (U74)
+      record_n   <- sum(files$repo_url == repo, na.rm = TRUE)
       size_why   <- .archive_size_refusal(zip_bytes, max_download_size, mb)
       quota_worth_it <- n_wanted > 12L
       worth_it <- (n_wanted > 50L || record_n <= 2L * n_wanted) && quota_worth_it
@@ -1724,6 +1819,11 @@ download_repo_files <- function(files,
         next   # leaves ridx in `remaining` for the file-by-file loop below
       }
 
+      # These rows are not cached, so a location they carry is out of date;
+      # cleared, a location after the zip means the zip wrote that file.
+      # Kept, a row the zip did not deliver counted as done and was never
+      # fetched (U74).
+      files$file_location[ridx] <- NA_character_
       message(sprintf("Downloading %s as zip (%d file%s)...",
                       repo, length(ridx), plural(length(ridx))))
       files <- .download_zip_to_cache(files, ridx, zip_url,
@@ -1759,6 +1859,11 @@ download_repo_files <- function(files,
         next   # leaves ridx in `remaining` for the file-by-file loop below
       }
       expected_bytes <- sum(as.numeric(files$file_size[ridx]), na.rm = TRUE)
+      # These rows are not cached, so a location they carry is out of date;
+      # cleared, a location after the zip means the zip wrote that file.
+      # Kept, a row the zip did not deliver counted as done and was never
+      # fetched (U74).
+      files$file_location[ridx] <- NA_character_
       message(sprintf("Downloading %s as zip (%d file%s)...",
                       repo, length(ridx), plural(length(ridx))))
       files <- .download_zip_to_cache(files, ridx, zip_url,
@@ -1798,6 +1903,11 @@ download_repo_files <- function(files,
         next   # leaves ridx in `remaining` for the file-by-file loop below
       }
       expected_bytes <- sum(as.numeric(files$file_size[ridx]), na.rm = TRUE)
+      # These rows are not cached, so a location they carry is out of date;
+      # cleared, a location after the zip means the zip wrote that file.
+      # Kept, a row the zip did not deliver counted as done and was never
+      # fetched (U74).
+      files$file_location[ridx] <- NA_character_
       message(sprintf("Downloading %s as zip (%d file%s)...",
                       repo, length(ridx), plural(length(ridx))))
       # strip_dir = TRUE: like GitHub's zipball, GitLab's archive.zip wraps

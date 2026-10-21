@@ -22,7 +22,9 @@ osf_api_check <- function(osf_api = getOption("metacheck.osf.api"),
   on_error <- match.arg(on_error)
   status_code <- 0
   status <- tryCatch({
-    if (!curl::has_internet()) return("no internet")
+    # stop(), not return(): a return() here left osf_api_check() at once, so
+    # offline it never got to `on_error` below (U53)
+    if (!curl::has_internet()) stop("no internet")
     resp <- .mc_request(osf_api) |>
       .osf_headers() |>
       httr2::req_error(is_error = \(resp) FALSE) |>
@@ -375,7 +377,7 @@ osf_check_id <- function(osf_id) {
         if (grepl("^[a-z0-9]{5}(_v\\d+)?\\?view_only=.+$", id)) {
           return(id)
         }
-        if (nchar(id) == 24 && grepl("^[a-z0-9]+$", id)) {
+        if (grepl("^[a-f0-9]{24}$", id)) {
           return(id)
         }
 
@@ -383,18 +385,26 @@ osf_check_id <- function(osf_id) {
         parsed <- tryCatch(httr2::url_parse(id), error = \(e) NULL)
         if (is.null(parsed)) stop()
 
-        path <- parsed$path |>
-          strsplit("/", fixed = TRUE) |> # fs::path_split() |>
-          sapply(utils::tail, 1)
+        segs <- strsplit(parsed$path %||% "", "/", fixed = TRUE)[[1]]
+        segs <- segs[nzchar(segs)]
+        last <- utils::tail(segs, 1)
 
-        # All OSF IDs are 5 or 24 characters
-        if (grepl("^[a-z0-9]{5}(_v\\d+)?$", path)) {
+        # A 24-character last segment is a file id when it is hexadecimal and
+        # not a registration schema (osf.io/<id>/register/<schema>) (U51)
+        if (length(last) && grepl("^[a-f0-9]{24}$", last) &&
+            !identical(utils::tail(segs, 2)[1], "register")) {
+          return(last)
+        }
+
+        # The id is the first id-shaped segment that is not a route name: the
+        # last segment made osf.io/j3gcx/files/ the id "files" (U51)
+        routes <- c("files", "forks", "links", "login", "about", "wiki")
+        cand <- segs[grepl("^[a-z0-9]{5}(_v\\d+)?$", segs) & !segs %in% routes]
+        if (length(cand)) {
+          path <- cand[[1]]
           if (!is.null(parsed$query$view_only)) {
             path <- paste0(path, "?view_only=", parsed$query$view_only)
           }
-          return(path)
-        }
-        if (nchar(path) == 24) {
           return(path)
         }
 
@@ -402,13 +412,17 @@ osf_check_id <- function(osf_id) {
       },
       error = \(e) {
         # try to extract 5-char ID
-        m <- gregexpr("(?<=osf\\.io/)[a-z0-9]{5}(_v\\d+)?[?/]?",
+        # a whole path segment only, and the first of several: any word after
+        # osf.io/ was cut to five characters ("prereg" gave "prere"), and two
+        # ids made this fail (U51)
+        m <- gregexpr("(?<=osf\\.io/)[a-z0-9]{5}(_v\\d+)?(?=[?/#]|$)",
           id,
           perl = TRUE
         )
-        id5 <- regmatches(id, m) |> sub("[?/]$", "", x = _)
-        if (nchar(id5) %in% c(5, 8, 9)) {
-          return(id5)
+        id5 <- regmatches(id, m)[[1]]
+        id5 <- id5[!id5 %in% c("files", "forks", "links", "login", "about", "wiki")]
+        if (length(id5) && nchar(id5[[1]]) %in% c(5, 8, 9)) {
+          return(id5[[1]])
         }
 
         # else...
@@ -1612,11 +1626,11 @@ osf_file_download <- function(osf_id,
       ret <- dplyr::left_join(ret, copied, by = "osf_id")
       ret$downloaded <- ifelse(ret$downloaded %in% TRUE, TRUE, FALSE)
     } else {
-      ret$path <- NA_character_
-      ret$downloaded <- FALSE
+      ret$path <- rep(NA_character_, nrow(ret))
+      ret$downloaded <- rep(FALSE, nrow(ret))
     }
   } else {
-    ret$downloaded <- FALSE
+    ret$downloaded <- rep(FALSE, nrow(ret))
   }
 
   # Where the project landed and which project it was, so the result can be
@@ -1625,9 +1639,11 @@ osf_file_download <- function(osf_id,
   # name rather than overwriting it. `download_path` is absolute -- `folder` is
   # only the basename, which is not enough to find the files again from a
   # different working directory.
-  ret$download_path <- download_to
-  ret$osf_project <- osf_id
-  ret$osf_url <- paste0("https://osf.io/", osf_id)
+  # rep(): a project with only folders has no file rows, and a single value
+  # in a 0-row table stopped with "replacement has 1 row, data has 0" (U53)
+  ret$download_path <- rep(download_to, nrow(ret))
+  ret$osf_project <- rep(osf_id, nrow(ret))
+  ret$osf_url <- rep(paste0("https://osf.io/", osf_id), nrow(ret))
 
   ## the parts of the project that are not files ----
   # Wikis, the activity log, and the descriptive metadata. A project is often a

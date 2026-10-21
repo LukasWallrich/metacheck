@@ -242,3 +242,52 @@ test_that("all_urls", {
   ids <- mod_output$table$paper_id |> unique()
   expect_contains(names(paper), ids)
 })
+
+test_that("every module runs on an empty paper or paper list and reports na (U79)", {
+  # an empty paper list stopped nearly every module (paper_table() returned
+  # no columns, text_search() logical ones), and an empty paper stopped the
+  # repository modules, ethics_check, power and prereg_check
+  skip_if_quick()
+  llm_use(FALSE)
+  for (m in module_list()$name) {
+    for (input in list(paper(), paperlist(), list())) {
+      light <- tryCatch(
+        suppressWarnings(suppressMessages(module_run(input, m)))$traffic_light,
+        error = function(e) paste("error:", conditionMessage(e)))
+      # nothing to check is "na", not red ("no statement found") or green
+      expect_equal(light, "na", label = m)
+    }
+  }
+})
+
+test_that("paper = NULL checks only a local folder (U78)", {
+  # documented as allowed, but paper_id(NULL) stopped repo_check and every
+  # module that runs it; the unknown id also became "0" through na_replace
+  skip_if_quick()
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  write.csv(data.frame(id = 1:3, score = c(4, 5, 6)), file.path(d, "data.csv"),
+            row.names = FALSE)
+  writeLines(c("# analysis", "d <- read.csv(\"data.csv\")"), file.path(d, "analysis.R"))
+  for (m in c("repo_check", "code_check", "data_check")) {
+    mo <- suppressWarnings(suppressMessages(module_run(NULL, m, local_path = d)))
+    expect_equal(nrow(mo$summary_table), 1, label = m)
+    expect_true(is.na(mo$summary_table$paper_id), label = m)
+  }
+  mo <- suppressWarnings(suppressMessages(module_run(NULL, "repo_check", local_path = d)))
+  expect_setequal(mo$table$file_name, c("analysis.R", "data.csv"))
+})
+
+test_that("a module's na_replace fills only its own summary columns in a chain (U77)", {
+  # stat_check's na_replace = 0 turned open_practices' list cells into 0
+  p1 <- test_paper("All data are at https://osf.io/abcde."); p1$paper_id <- "a"
+  p2 <- test_paper("Nothing here, t(20) = 2.1, p = .04."); p2$paper_id <- "b"
+  mo <- module_run(paperlist(p1, p2), "open_practices") |> module_run("stat_check")
+  expect_true(all(vapply(mo$summary_table$code_statements, is.character, logical(1))))
+})
+
+test_that("marginal cites its reference with readable authors (U3)", {
+  # the authors as one string were re-parsed into "Hartgerink &amp;, J. CH"
+  r <- paste(unlist(module_run(demopaper(), "marginal")$report), collapse = "\n")
+  expect_match(r, "Olsson-Collentine A, van Assen MALM, Hartgerink CHJ (2019)", fixed = TRUE)
+})

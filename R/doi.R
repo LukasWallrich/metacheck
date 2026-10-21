@@ -98,7 +98,8 @@ doi_resolves <- function(doi, timeout = 10) {
     resps <- .batch_query(urls, batch_size = batch_size, msg = msg, delay = 0)
 
     check_res <- vapply(resps, \(resp) {
-      if (inherits(resp, "error")) return(NA)
+      # a connection failure comes back from .batch_query() as NULL (U33)
+      if (is.null(resp) || inherits(resp, "error")) return(NA)
       if (!resp$status_code %in% 200L) return(FALSE)
 
       body <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
@@ -153,15 +154,15 @@ doi_lookup <- function(doi) {
       next
     }
   }
+  # A failed lookup is an empty row of its own: return() inside tryCatch()
+  # returned from doi_lookup(), so one 404 emptied the whole result, and
+  # bibdata[[i]] <- NULL deleted the element, shifting later rows (U12)
   for (j in seq_along(valid_idx)) {
     i <- valid_idx[j]
-    bibdata[[i]] <- tryCatch({
-      resp <- resps[[j]]
-      if (inherits(resp, "error") || httr2::resp_status(resp) >= 400) {
-        return(NULL)
-      }
-      httr2::resp_body_json(resp)
-    }, error = \(e) NULL)
+    resp <- resps[[j]]
+    failed <- is.null(resp) || inherits(resp, "error") || httr2::resp_status(resp) >= 400
+    bd <- if (failed) NULL else tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
+    bibdata[i] <- list(bd %||% list(doi = doi[i]))
   }
 
   bib_table <- lapply(bibdata, \(bd) {
@@ -175,10 +176,14 @@ doi_lookup <- function(doi) {
     }
 
     # authors
+    # an organisation author has a name or literal, not family and given:
+    # paste() of two NULLs gave character(0) in the author string (U12)
     authors <- bd$author |>
-      sapply(\(a) {
-        paste(a$family, a$given, sep = ", ")
-      }) |>
+      vapply(\(a) {
+        fam <- a$family %||% a$name %||% a$literal %||% ""
+        giv <- a$given %||% ""
+        if (nzchar(giv)) paste(fam, giv, sep = ", ") else fam
+      }, character(1)) |>
       paste(collapse = "; ")
 
     info <- list(

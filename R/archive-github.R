@@ -1,3 +1,13 @@
+# A paper's url table with its href as the text to search. Without a text
+# column, text_search() searches the table's first column, which in a bibr
+# 12.x paper is the integer url_id, so no GitHub or GitLab link was ever
+# found (U196).
+.url_hrefs <- function(paper) {
+  urls <- paper_table(paper, "url")
+  if ("href" %in% names(urls)) urls$text <- urls$href
+  urls
+}
+
 #' Find GitHub Links in Papers
 #'
 #' GitHub links can be in PDFs in several ways.
@@ -22,7 +32,7 @@ github_links <- function(paper) {
   github_regex <- "(?:https?://)?github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
   # found_gh <- text_search(strip_text, github_regex, return = "match", perl = TRUE)
 
-  found_gh <- paper_table(paper, "url") |>
+  found_gh <- .url_hrefs(paper) |>
     text_search(github_regex, perl = TRUE) |>
     dplyr::select(href, text_id, paper_id)
 
@@ -30,7 +40,7 @@ github_links <- function(paper) {
   # but is kept so repo_check can report it as an account rather than drop it
   # without a word (see .github_account_name(), #485).
   account_regex <- "^(?:https?://)?(?:www\\.)?github\\.com/(?:orgs/)?[A-Za-z0-9-]+/?[.,;:)]*$"
-  found_account <- paper_table(paper, "url") |>
+  found_account <- .url_hrefs(paper) |>
     text_search(account_regex, perl = TRUE) |>
     dplyr::select(href, text_id, paper_id)
   found_account <- found_account[
@@ -235,7 +245,8 @@ github_files <- function(repo, dir = "",
   if (length(repo) > 1) {
     unique_repos <- unique(repo) |> setdiff(NA)
 
-    file_lists <- lapply(unique_repos, github_files, recursive = recursive)
+    # dir passed on: each repository was listed from its root (U48)
+    file_lists <- lapply(unique_repos, github_files, dir = dir, recursive = recursive)
     info <- do.call(dplyr::bind_rows, args = file_lists)
     orig <- data.frame(repo = repo)
     df <- dplyr::left_join(orig, info, by = "repo")
@@ -275,6 +286,11 @@ github_files <- function(repo, dir = "",
     # return NULL instead of error to handle rate limit exceeding at end of file list, will still return files up to that point
     return(NULL)
   }
+
+  # a single file comes back as one object, not a list of them, and an
+  # empty folder as an empty list; both stopped the listing (U48)
+  if (!is.null(contents$name)) contents <- list(contents)
+  if (length(contents) == 0) return(NULL)
 
   files <- lapply(contents, \(file) {
     data.frame(
@@ -406,7 +422,7 @@ github_tree_files <- function(repo) {
   # %empty_or% (not %||%) because spdx_id can come back as a length-zero
   # value rather than NULL, which would otherwise propagate as a
   # length-zero "license" into the caller's vapply(..., character(1)).
-  license <- meta$license$spdx_id %empty_or% NA_character_
+  license <- .field_or_value(meta$license, "spdx_id") %empty_or% NA_character_
 
   # ── 2. Git tree (recursive, 1 request) ──────────────────────────────────────
   tree_resp <- tryCatch(
@@ -532,6 +548,8 @@ github_languages <- function(repo) {
     httr2::req_error(is_error = \(resp) FALSE) |>
     httr2::req_perform()
   languages <- tryCatch(httr2::resp_body_json(resp), error = \(e) list())
+  # an error answer's fields ("message", "documentation_url") are no languages (U48)
+  if (httr2::resp_status(resp) != 200) languages <- list()
   if (length(languages)) {
     lang_df <- data.frame(
       repo = repo,
