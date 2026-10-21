@@ -97,6 +97,7 @@
 * `ref_accuracy` (a paper without `bib_match` rows) and `reg_check` (every comparison failed) give the traffic light "fail"; they gave "error", which is not one of metacheck's lights, so the report showed no symbol (#507: U30)
 * `open_practices` on a paper list gives every paper a row, so the light and summary follow the number of papers: a list where only one paper had a flagged sentence was reported as a single paper (with a green, yellow or red light), and papers without a flagged sentence did not count as "neither" (#507: U106)
 * `open_practices` flags "on request" whatever its case ("ON REQUEST" passed the repository search but was not flagged), quotes each on-request sentence once in one paragraph, and counts only a capital "R" as a word for code, so a statistic such as "r(68) = .58" is not a code statement (#507: U107)
+* `ref_consistency` reports a citation whose reference number is not in the bibliography (it was never reported), counts the citations of older bibr exports, which have the type "bib" (every reference was reported as uncited and the light was red), counts a reference with several `bib_match` rows once, and always has the summary columns `n_missing` and `n_extra` (#507: U115, U207)
 
 # metacheck 0.4.0
 

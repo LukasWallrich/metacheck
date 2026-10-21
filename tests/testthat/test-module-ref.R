@@ -250,3 +250,20 @@ test_that("ref_pubpeer reports a failed PubPeer request instead of stopping (U23
   expect_equal(mo$traffic_light, "fail")
   expect_match(mo$summary_text, "PubPeer could not be reached", fixed = TRUE)
 })
+
+test_that("ref_consistency reports a citation to a missing reference, and reads 'bib' xrefs (U115, U207)", {
+  # a citation with a bib_id that is not in the bibliography was never
+  # reported, and an older bibr export ("bib" xrefs) had no citations at all
+  p <- demopaper()
+  x <- p$xref[p$xref$xref_type == "bibr", ][1, ]
+  x$xref_id <- 99L; x$contents <- "(Nobody, 1900)"
+  p$xref <- rbind(p$xref, x)
+  mo <- module_run(p, "ref_consistency")
+  expect_equal(mo$summary_table$n_missing, 1)
+  expect_true(99L %in% mo$table$bib_id)
+
+  p2 <- demopaper()
+  n_cited <- module_run(p2, "ref_consistency")$summary_table$n_xrefs
+  p2$xref$xref_type[p2$xref$xref_type == "bibr"] <- "bib"
+  expect_equal(module_run(p2, "ref_consistency")$summary_table$n_xrefs, n_cited)
+})
