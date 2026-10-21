@@ -143,9 +143,11 @@ reg_check <- function(paper,
   tl <- "info"
 
   # summary counts ----
+  # a missing judgement is left out of the counts: without na.rm the summary
+  # read "flagged NA potential deviationNA" (U120)
   j <- tolower(trimws(regcheck_table$deviation_judgement))
-  n_dev <- sum(j == "yes")
-  n_unclear <- sum(j == "missing")
+  n_dev <- sum(j == "yes", na.rm = TRUE)
+  n_unclear <- sum(j == "missing", na.rm = TRUE)
   n_prereg_compared <- length(unique(regcheck_table$prereg_id))
 
   summary_table <- data.frame(
@@ -154,9 +156,9 @@ reg_check <- function(paper,
   ) |>
     dplyr::summarise(
       .by = "paper_id",
-      regcheck_deviations = sum(j == "yes"),
-      regcheck_consistent = sum(j == "no"),
-      regcheck_unclear = sum(j == "missing")
+      regcheck_deviations = sum(j == "yes", na.rm = TRUE),
+      regcheck_consistent = sum(j == "no", na.rm = TRUE),
+      regcheck_unclear = sum(j == "missing", na.rm = TRUE)
     )
 
   # summary text ----
@@ -182,9 +184,17 @@ reg_check <- function(paper,
 
   strip_refs <- function(x) gsub("\\s*\\[[A-Z_0-9,; ]+\\]", "", x)
 
+  # one section per paper and preregistration: two papers linking the same
+  # preregistration shared one section without saying whose rows were whose
+  # (U120)
+  pairs <- unique(regcheck_table[, c("paper_id", "prereg_id")])
+  shared <- pairs$prereg_id[duplicated(pairs$prereg_id)]
   prereg_sections <- lapply(
-    unique(regcheck_table$prereg_id), \(rid) {
-      sub <- regcheck_table[regcheck_table$prereg_id == rid, ]
+    seq_len(nrow(pairs)), \(k) {
+      rid <- pairs$prereg_id[k]
+      pid <- pairs$paper_id[k]
+      sub <- regcheck_table[regcheck_table$prereg_id %in% rid &
+                              regcheck_table$paper_id %in% pid, ]
       sub_j <- tolower(trimws(sub$deviation_judgement))
       labels <- judgement_label[sub_j]
       labels[is.na(labels)] <- sub$deviation_judgement[is.na(labels)]
@@ -202,7 +212,8 @@ reg_check <- function(paper,
         prereg_quotes   = strip_refs(sub$prereg_quotes)
       )
       c(
-        sprintf("Comparison with preregistration %s:", rid),
+        if (rid %in% shared) sprintf("Comparison of paper %s with preregistration %s:", pid, rid)
+        else sprintf("Comparison with preregistration %s:", rid),
         scroll_table(judgement_table),
         collapse_section(
           scroll_table(evidence_table, maxrows = 5),
