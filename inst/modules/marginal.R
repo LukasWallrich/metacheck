@@ -72,7 +72,11 @@ marginal <- function(paper) {
 marg_ref <- bibentry(
   bibtype = "Article",
   title = "The Prevalence of Marginally Significant Results in Psychology Over Time",
-  author = "Olsson-Collentine, A., van Assen, M. A. L. M., & Hartgerink, C. H. J.",
+  # person() objects: as one string, R's formatter re-parsed the names into
+  # "van Assen, M. MAL, Hartgerink &amp;, J. CH" (U3)
+  author = c(person(given = "A.", family = "Olsson-Collentine"),
+             person(given = c("M.", "A.", "L.", "M."), family = "van Assen"),
+             person(given = c("C.", "H.", "J."), family = "Hartgerink")),
   year = "2019",
   journal = "Psychological Science",
   volume = 30,

@@ -285,3 +285,9 @@ test_that("a module's na_replace fills only its own summary columns in a chain (
   mo <- module_run(paperlist(p1, p2), "open_practices") |> module_run("stat_check")
   expect_true(all(vapply(mo$summary_table$code_statements, is.character, logical(1))))
 })
+
+test_that("marginal cites its reference with readable authors (U3)", {
+  # the authors as one string were re-parsed into "Hartgerink &amp;, J. CH"
+  r <- paste(unlist(module_run(demopaper(), "marginal")$report), collapse = "\n")
+  expect_match(r, "Olsson-Collentine A, van Assen MALM, Hartgerink CHJ (2019)", fixed = TRUE)
+})
