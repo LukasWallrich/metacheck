@@ -109,11 +109,11 @@ psychds_check <- function(paper, local_path = NULL, local_only = FALSE,
   group_no_evidence <- isTRUE(group_no_evidence)
   labels_df <- get_prev_outputs("codebook_check", "table")
 
-  empty <- function(text) {
+  empty <- function(text, pid = .pid(structure_df, columns_df)) {
     list(
       table = data.frame(),
       summary_table = data.frame(
-        paper_id = .pid(structure_df, columns_df),
+        paper_id = pid,
         required_met = 0L, required_missing = 0L,
         recommended_met = 0L, recommended_missing = 0L,
         misplaced_n = 0L
@@ -129,6 +129,10 @@ psychds_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (is.null(structure_df) || nrow(structure_df) == 0)
     return(empty("We found no repository files to check for Psych-DS compliance."))
 
+  # One paper's files are checked by check_one(); a paper list is checked
+  # paper by paper below. Checked together, a list got one summary row for the
+  # first paper and 0 for the others (U113).
+  check_one <- function(structure_df, columns_df, labels_df, group_no_evidence, pid) {
   # ── 2. File-to-target-path plan (the file/folder organisation logic lives in
   # psychds_file_plan(), shared with reproducibility_check) ────────────────────
   plan <- psychds_file_plan(structure_df, group_no_evidence)
@@ -136,7 +140,7 @@ psychds_check <- function(paper, local_path = NULL, local_only = FALSE,
   group_no_evidence <- isTRUE(plan$group_no_evidence)
 
   if (nrow(plan_table) == 0)
-    return(empty("We found no repository files to check for Psych-DS compliance."))
+    return(empty("We found no repository files to check for Psych-DS compliance.", pid))
 
   current_path <- plan_table$current_path
   target_path  <- plan_table$target_path
@@ -328,7 +332,7 @@ psychds_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   # ── 9. Summary table + return ────────────────────────────────────────────────
   summary_table <- data.frame(
-    paper_id            = .pid(structure_df, columns_df),
+    paper_id            = pid,
     required_met        = sum(req_met),
     required_missing    = n_req_missing,
     recommended_met     = sum(rec_met),
@@ -366,6 +370,53 @@ psychds_check <- function(paper, local_path = NULL, local_only = FALSE,
                    recommended_met = 0, recommended_missing = 0,
                    misplaced_n = 0),
     traffic_light = tl,
+    report = report,
+    summary_text = summary_text
+  )
+  }
+
+  all_ids <- if (.is_paper_list(paper)) paper_id(paper) else character(0)
+  by_paper <- length(all_ids) > 1 && "paper_id" %in% names(structure_df) &&
+    any(structure_df$paper_id %in% all_ids)
+  if (!by_paper)
+    return(check_one(structure_df, columns_df, labels_df, group_no_evidence,
+                     .pid(structure_df, columns_df)))
+
+  # each paper from its own files, codebook columns and labels
+  own_rows <- function(df, id) {
+    if (is.null(df) || !"paper_id" %in% names(df)) return(df)
+    df[df$paper_id %in% id, , drop = FALSE]
+  }
+  per <- lapply(all_ids, function(id) {
+    s <- own_rows(structure_df, id)
+    if (!nrow(s)) return(empty("We found no repository files to check for Psych-DS compliance.", id))
+    check_one(s, own_rows(columns_df, id), own_rows(labels_df, id), group_no_evidence, id)
+  })
+
+  table <- dplyr::bind_rows(lapply(seq_along(per), function(k) {
+    tb <- per[[k]]$table
+    if (nrow(tb)) tb$paper_id <- all_ids[k]
+    tb
+  }))
+  summary_table <- dplyr::bind_rows(lapply(per, `[[`, "summary_table"))
+  lights <- vapply(per, `[[`, character(1), "traffic_light")
+  summary_text <- sprintf(
+    "Of %d papers, %d already contain%s the files required for a Psych-DS dataset, %d could be converted, %d could not be converted yet, and %d had no repository files to check.",
+    length(per), sum(lights == "green"), plural(sum(lights == "green"), "s", ""),
+    sum(lights == "yellow"), sum(lights == "red"), sum(lights == "na"))
+  # one section per paper; its own headings one level down
+  report <- unlist(lapply(seq_along(per), function(k) {
+    r <- per[[k]]$report %||% per[[k]]$summary_text
+    c(sprintf("#### Paper %s", all_ids[k]), sub("^#### ", "##### ", r))
+  }))
+
+  list(
+    table = table,
+    summary_table = summary_table,
+    na_replace = c(required_met = 0, required_missing = 0,
+                   recommended_met = 0, recommended_missing = 0,
+                   misplaced_n = 0),
+    traffic_light = "info",
     report = report,
     summary_text = summary_text
   )

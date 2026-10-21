@@ -20,3 +20,27 @@ test_that("psychds_file_plan leaves correctly placed files and valid data names 
   expect_equal(tb$status, c("present", "present", "move"))
   expect_equal(tb$target_path[2], "data/study-a_data.csv")
 })
+
+test_that("psychds_check gives each paper of a list its own row and report section (U113)", {
+  # checked together, the first paper got the one summary row and the
+  # others 0 through na_replace
+  llm_use(FALSE)
+  pa <- test_paper("a"); pa$paper_id <- "A"
+  pb <- test_paper("b"); pb$paper_id <- "B"
+  structure_df <- data.frame(
+    paper_id = c("A", "A", "B", "B", "B"),
+    file_name = c("raw.csv", "README.md", "data/study-x_data.csv", "dataset_description.json", "README.md"),
+    file_path = c("raw.csv", "README.md", "data/study-x_data.csv", "dataset_description.json", "README.md"),
+    data_type = c("data", "documentation", "data", "documentation", "documentation"),
+    doc_role = c(NA, "readme", NA, NA, "readme"),
+    group = NA_character_)
+  columns_df <- data.frame(paper_id = c("A", "B"), source_file = c("raw.csv", "data/study-x_data.csv"),
+                           column_name = "x")
+  fake <- structure(list(module = "data_check", table = columns_df, paper = paperlist(pa, pb),
+                         summary_table = data.frame(paper_id = c("A", "B")),
+                         structure = structure_df),
+                    class = "metacheck_module_output")
+  mo <- module_run(fake, "psychds_check")
+  expect_equal(mo$summary_table$required_missing, c(1, 0))
+  expect_equal(sum(grepl("^#### Paper ", unlist(mo$report))), 2)
+})
