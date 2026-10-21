@@ -15,15 +15,24 @@
 #' @examples
 #' retractionwatch() |> head()
 retractionwatch <- function() {
+  # a row with a blank DOI matched every reference without a DOI in a join on
+  # doi (ref_retraction filtered it first, other joins did not) (U15)
+  no_blank <- function(x) {
+    date <- attr(x, "date")
+    x$doi <- trimws(x$doi)
+    x <- x[!is.na(x$doi) & nzchar(x$doi), , drop = FALSE]
+    attr(x, "date") <- date
+    x
+  }
   int <- system.file("databases/retractionwatch.Rds", package = "metacheck")
-  int_rw <- readRDS(int)
+  int_rw <- no_blank(readRDS(int))
 
   ext <- rappdirs::user_data_dir("metacheck", "scienceverse") |>
     file.path("retractionwatch.Rds")
 
   if (file.exists(ext)) {
     # check dates
-    ext_rw <- readRDS(ext)
+    ext_rw <- no_blank(readRDS(ext))
     ext_date <- attr(ext_rw, "date")
     int_date <- attr(int_rw, "date")
     if (ext_date > int_date) {
@@ -81,7 +90,8 @@ rw_update <- function() {
       # pmid = OriginalPaperPubMedID,
       retractionwatch = RetractionNature
     ) |>
-    dplyr::filter(doi != "unavailable", retractionwatch != "") |>
+    dplyr::mutate(doi = trimws(doi)) |>
+    dplyr::filter(doi != "unavailable", doi != "", retractionwatch != "") |>   # U15
     dplyr::summarise(retractionwatch = unique(retractionwatch) |>
                        paste(collapse = ";"), .by = doi)
 

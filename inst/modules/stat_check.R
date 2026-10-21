@@ -37,7 +37,7 @@ stat_check <- function(paper) {
   # handle no stats
   if (nrow(stat_table) == 0) {
     ret <- list(
-      summary_table = data.frame(paper_id = paper$paper_id),
+      summary_table = .per_paper_table(paper),   # every paper of a list (U124)
       table = data.frame(),
       traffic_light = "na",
       report = "No detectable t- or F-tests. StatCheck currently only detects statistics written in APA format.",
@@ -56,7 +56,7 @@ stat_check <- function(paper) {
   # no validated stats
   if (nrow(table) == 0) {
     ret <- list(
-      summary_table = data.frame(paper_id = paper$paper_id),
+      summary_table = .per_paper_table(paper),   # every paper of a list (U124)
       table = data.frame(),
       traffic_light = "na",
       report = "No t-tests or F-tests detected.\n\nThe accuracy of StatCheck has only been validated for *t*-tests and *F*-tests.",

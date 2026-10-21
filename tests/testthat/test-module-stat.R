@@ -151,3 +151,10 @@ test_that("stat_p_exact: p < .000 is zero, == is =, and a starred footnote hides
   expect_equal(mo$summary_table$n_zero, 2)
   expect_equal(mo$summary_table$n_imprecise, 2)   # .05 and .01, not the starred footnote
 })
+
+test_that("stat_check without statistics gives every paper of a list a summary row (U124)", {
+  p1 <- test_paper("no stats"); p1$paper_id <- "a"
+  p2 <- test_paper("none"); p2$paper_id <- "b"
+  mo <- module_run(paperlist(p1, p2), "stat_check")
+  expect_equal(mo$summary_table$paper_id, c("a", "b"))
+})
