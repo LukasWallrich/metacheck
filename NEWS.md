@@ -109,6 +109,7 @@
 * `ref_miscitation` counts only citation xrefs (a footnote, figure or table xref with the same number counted), a missing DOI in the database matches nothing (it matched every reference without a DOI), and two references with the same DOI give one entry instead of list columns with a warning (#507: U117)
 * `funding_check_oi` favours acknowledgment sections; it looked for the type "acknowledgement", but metacheck spells the section type "acknowledgment", so only funding sections were favoured (#507: U105)
 * `stat_p_exact` reports "p < .000" and "p == .000" as zero, treats "==" as "=" (it counted as imprecise; in `stat_p_nonsig` as non-significant), lets a starred footnote ("*p < .05") excuse only that p-value instead of every p-value in its sentence (and no longer "*p < .005"), and lists the same p-value once (#507: U127)
+* `module_run()` fills missing summary values (`na_replace`) only in the columns the module adds: in a chain, an unnamed `na_replace = 0` or `FALSE` (as in `stat_check`, `marginal`, `coi_check`) also filled the earlier modules' NA cells, turning list columns into numbers (#507: U77)
 
 # metacheck 0.4.0
 

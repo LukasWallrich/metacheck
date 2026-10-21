@@ -133,6 +133,7 @@ module_run <- function(paper, module, ...) {
       sub("\\.(r|R)$", "", x = _, ) |>
       paste0(".", x = _)
 
+    cols_before <- colnames(summary_table)
     summary_table <- summary_table |>
       dplyr::left_join(results$summary_table,
         by = "paper_id",
@@ -142,12 +143,20 @@ module_run <- function(paper, module, ...) {
     if (!is.null(results$na_replace)) {
       # replace NAs
       narep <- results$na_replace
-      # never the paper id: an unknown id (paper = NULL, local files only)
-      # became the text "0" (U78)
-      cols <- setdiff(colnames(summary_table), "paper_id")
+      # only this module's own columns: in a chain the table also holds the
+      # earlier modules' columns, whose NA cells an unnamed na_replace filled
+      # with 0/FALSE (U77); never the paper id: an unknown id (paper = NULL,
+      # local files only) became the text "0" (U78)
+      cols <- setdiff(colnames(summary_table), c(cols_before, "paper_id"))
       if (is.null(names(narep))) {
         narep <- rep_len(narep, length(cols))
         names(narep) <- cols
+      } else {
+        # a named value finds its column under the module's suffix too
+        nm <- names(narep)
+        nm <- ifelse(nm %in% cols, nm,
+                     ifelse(paste0(nm, suffix) %in% cols, paste0(nm, suffix), nm))
+        names(narep) <- nm
       }
       narep <- narep[intersect(names(narep), cols)]
       for (col in names(narep)) {

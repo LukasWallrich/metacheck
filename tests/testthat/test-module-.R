@@ -277,3 +277,11 @@ test_that("paper = NULL checks only a local folder (U78)", {
   mo <- suppressWarnings(suppressMessages(module_run(NULL, "repo_check", local_path = d)))
   expect_setequal(mo$table$file_name, c("analysis.R", "data.csv"))
 })
+
+test_that("a module's na_replace fills only its own summary columns in a chain (U77)", {
+  # stat_check's na_replace = 0 turned open_practices' list cells into 0
+  p1 <- test_paper("All data are at https://osf.io/abcde."); p1$paper_id <- "a"
+  p2 <- test_paper("Nothing here, t(20) = 2.1, p = .04."); p2$paper_id <- "b"
+  mo <- module_run(paperlist(p1, p2), "open_practices") |> module_run("stat_check")
+  expect_true(all(vapply(mo$summary_table$code_statements, is.character, logical(1))))
+})
