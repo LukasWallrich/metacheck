@@ -54,3 +54,26 @@ test_that("a report on an uploaded .zip does not show the server's folders (#500
     expect_match(txt, "analysis.R", fixed = TRUE)
   }
 })
+
+test_that("an empty .zip is called empty, not damaged (Lakens/tue_datamanager_check#4, item 8)", {
+  check_zip <- .repocheck_fun("check_zip")$fun
+  explain_error <- .repocheck_fun("explain_error")$fun
+  # a .zip without entries is only the 22-byte end-of-archive record
+  empty <- withr::local_tempfile(fileext = ".zip")
+  writeBin(as.raw(c(0x50, 0x4b, 0x05, 0x06, rep(0, 18))), empty)
+  msg <- tryCatch(check_zip(empty), error = conditionMessage)
+  expect_equal(msg, "The .zip holds no files.")
+  expect_true(startsWith(explain_error(msg), "The .zip holds no files."))
+  # a file that is not a .zip is still called damaged
+  broken <- withr::local_tempfile(fileext = ".zip")
+  writeLines("not a zip", broken)
+  msg <- tryCatch(check_zip(broken), error = conditionMessage)
+  expect_match(explain_error(msg), "could not be opened as a .zip archive")
+  # a .zip of an empty folder holds only the folder's entry
+  src <- withr::local_tempdir()
+  dir.create(file.path(src, "my_study"))
+  folders <- file.path(withr::local_tempdir(), "folders.zip")
+  withr::with_dir(src, utils::zip(folders, "my_study", flags = "-q"))
+  skip_if_not(file.exists(folders), "zip utility unavailable")
+  expect_error(check_zip(folders), "holds no files")
+})

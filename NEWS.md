@@ -134,6 +134,7 @@
 * An old Excel `.xls` file is first opened in a separate R process before metacheck reads it. Some files (an old Mac Excel file) make readxl crash the whole R process, which no error handler can catch, so the job ended without a report; such a file is now reported as unreadable and the rest of the check goes on. Applies to `data_read_head()`, the codebook reader and data_check's sheet loop (Lakens/tue_datamanager_check#4, item 4)
 * In a package layout, a path-building call that the reproducibility check keeps as written is no longer put in quotes: `sprintf("%s/x.xlsx", wd)` became the unparseable `"sprintf("%s/x.xlsx", wd)"`, so the script stopped with a parse error before running (Lakens/tue_datamanager_check#4, item 9)
 * Every language-model request `llm()` makes now waits at most `llm_timeout()` (3 minutes by default), and a failed structured answer is not tried again once that time has passed. ellmer's own limit was 5 minutes with 3 tries, and with metacheck's 5 attempts one answer could take over an hour, so a job hung at "Querying LLM" until the server stopped it (Lakens/tue_datamanager_check#4, item 7; also U20)
+* The repository check app says "The .zip holds no files." for an uploaded .zip without files (no entries, or only empty folders). R's `unzip()` cannot open a .zip without entries, so the app said the file could not be opened as a .zip archive and asked for it to be zipped again (Lakens/tue_datamanager_check#4, item 8)
 
 # metacheck 0.4.0
 
