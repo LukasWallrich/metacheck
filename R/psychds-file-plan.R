@@ -143,6 +143,11 @@ psychds_file_plan <- function(structure_df, group_no_evidence = FALSE) {
       paste0("study-", grp, "/") else ""
 
     if (dt == "data") {
+      # a name that is already a valid Psych-DS data file name is kept:
+      # study-a_data.csv became data/study-studyadata_data.csv, so data files
+      # were never in place, even in a compliant dataset (U112)
+      if (grepl("^([a-z]+-[a-zA-Z0-9]+_)+data\\.(csv|tsv)$", name))
+        return(paste0(prefix, "data/", name))
       stem <- keyword_slug(tools::file_path_sans_ext(name))
       if (!nzchar(stem)) stem <- paste0("file", i)
       # Every data file gets a Psych-DS *_data.csv target: the fileRegex
@@ -180,8 +185,6 @@ psychds_file_plan <- function(structure_df, group_no_evidence = FALSE) {
   # contents are extracted, rather than keeping a placeholder row for them).
   # This guard is kept defensively in case a future data_type slips through
   # unmapped; it should never trigger in practice.
-  is_excluded  <- is.na(target_path)
-  misplaced    <- !is_excluded & current_path != target_path
 
   # A TABULAR data file whose source is not already a CSV (xlsx/xls/ods/tsv/dat/
   # sav/dta/sas7bdat/jasp/omv/rds/rdata) is planned to be CONVERTED to CSV for
@@ -236,6 +239,10 @@ psychds_file_plan <- function(structure_df, group_no_evidence = FALSE) {
     if (isTRUE(is_raw_data[i])) same_dir_real_name(target_path[i], i) else NA_character_,
     character(1))
   target_path <- ifelse(is_raw_data, raw_target, target_path)
+  # judged against the final target: computed before raw data got its own
+  # name, data/eeg.npy was told "Move data/eeg.npy -> data/eeg.npy" (U112)
+  is_excluded  <- is.na(target_path)
+  misplaced    <- !is_excluded & current_path != target_path
 
   # referenced_by: which OTHER studies reuse this file (cross-study reuse via
   # a script's own read/write references -- see data_group_llm()). A plain

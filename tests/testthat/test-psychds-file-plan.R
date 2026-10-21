@@ -9,3 +9,14 @@ test_that("psychds_file_plan takes a missing name from the path and excludes a f
   s$file_name <- NULL
   expect_equal(nrow(psychds_file_plan(s, FALSE)$table), 3)
 })
+
+test_that("psychds_file_plan leaves correctly placed files and valid data names alone (U112)", {
+  # data/eeg.npy was told to move to itself, and study-a_data.csv was renamed
+  # data/study-studyadata_data.csv
+  s <- data.frame(file_name = c("data/eeg.npy", "data/study-a_data.csv", "raw.csv"),
+                  file_path = c("data/eeg.npy", "data/study-a_data.csv", "raw.csv"),
+                  data_type = "data", group = NA_character_)
+  tb <- psychds_file_plan(s)$table
+  expect_equal(tb$status, c("present", "present", "move"))
+  expect_equal(tb$target_path[2], "data/study-a_data.csv")
+})

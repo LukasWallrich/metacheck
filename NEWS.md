@@ -118,6 +118,7 @@
 * `data_check` counts the files it actually extracted columns from ("extracted 2 columns from 3 of them" also counted .RData and unreadable files), keeps the manifest's zip-peek reasons with their own files after archives are expanded, and reports the language model used for the study groups; it read a column that does not exist, so the model was never reported (#507: U99)
 * OSF helpers: a versioned id (`abcde_v1`) is looked up as a GUID (it was sent to /files/), only unnamed folders take their storage provider's name (unnamed rows of any kind were renamed when several rows were read at once), and a record without `root` no longer reads `root_folder` in its place (#507: U52)
 * A CrossRef record with a null field is read (it stopped with "differing number of rows: 1, 0", so the record was lost), a list-valued field becomes one text value, and `openalex_query()` sorts its results by relevance score as numbers; they were sorted as text (#507: U13, partly: `crossref_query()` on data frames and `openalex_doi()`'s `select` are unchanged)
+* `psychds_check` judges whether a file is misplaced against its final target (raw data already at `data/eeg.npy` was told "Move data/eeg.npy -> data/eeg.npy") and keeps a data file name that is already a valid Psych-DS name (`study-a_data.csv` became `data/study-studyadata_data.csv`, so data files were never in place) (#507: U112, partly: where `dataset_description.json`, LICENSE and CHANGES go is unchanged)
 
 # metacheck 0.4.0
 
