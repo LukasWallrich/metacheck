@@ -283,3 +283,16 @@ test_that("ref_accuracy counts a reference with several bib_match rows once, and
   after <- module_run(p, "ref_accuracy")$table
   expect_equal(after$title_mismatch, before$title_mismatch)
 })
+
+test_that("ref_pubpeer counts a DOI cited three times once, and runs without url fields (U118)", {
+  # 3 citations x 3 lookups gave 9 rows ("You cited 9 references", 18
+  # comments); without a url the module stopped
+  p <- test_paper("x")
+  local_mocked_bindings(
+    ref_table = function(paper) data.frame(paper_id = paper$paper_id, bib_id = 1:3,
+                                           doi = "10.1/x", text = c("A", "A2", "A3")),
+    pubpeer_comments = function(doi) data.frame(doi = doi, total_comments = 2, users = "someone"))
+  mo <- module_run(p, "ref_pubpeer")
+  expect_match(mo$summary_text, "You cited 1 reference", fixed = TRUE)
+  expect_equal(mo$summary_table$pubpeer_comments, 2)
+})

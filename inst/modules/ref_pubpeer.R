@@ -45,7 +45,13 @@ ref_pubpeer <- function(paper) {
     ))
   }
   pp <- pp[pp$total_comments > 0 & pp$users != "Statcheck", ]
+  # pubpeer_comments() gives one row per DOI looked up, so a DOI cited three
+  # times joined to three rows each (9 rows); each commented DOI counts once
+  # per paper (U118)
+  pp <- pp[!duplicated(pp$doi), , drop = FALSE]
+  if (!"url" %in% names(pp)) pp$url <- rep(NA_character_, nrow(pp))
   table <- dplyr::inner_join(bib, pp, by = "doi")
+  table <- table[!duplicated(table[, c("paper_id", "doi")]), , drop = FALSE]
 
   # traffic_light ----
   tl <- if (nrow(table)) "info" else "na"
@@ -80,10 +86,12 @@ ref_pubpeer <- function(paper) {
     )
 
     ## report_table ----
-    rows <- !is.na(table$url)
+    # every commented reference, with a link where PubPeer gives one: rows
+    # without a url were left out, and without a url column this stopped (U118)
     cols <- c("text", "total_comments", "url")
-    report_table <- table[rows, cols]
-    report_table$url <- link(report_table$url, "link")
+    report_table <- table[, cols]
+    report_table$url <- ifelse(is.na(report_table$url), "",
+                               link(report_table$url, "link"))
     names(report_table) <- c("Reference", "Comments", "PubPeer Link")
 
     ## report ----
