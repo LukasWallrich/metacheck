@@ -18,3 +18,15 @@ test_that("funding_check synonyms match, and the reference list starts at a sent
   art <- c("Intro.", "References", "Smith 2020.", "Appendix: see the References Section.")
   expect_equal(env$.where_refs_txt(art), 2L)
 })
+
+test_that("funding_check_oi favours acknowledgment sections (U105)", {
+  # the favoured types had only the British spelling "acknowledgement"
+  p <- test_paper(c("This study was funded by the NSF grant 123.",
+                    "This research was supported by NIH grant 456."))
+  p$text$section_id <- c(0, 1)
+  p$section <- dplyr::bind_rows(p$section, p$section)
+  p$section$section_id <- c(0, 1)
+  p$section$section_type <- c("intro", "acknowledgment")
+  mo <- module_run(p, "funding_check_oi")
+  expect_equal(mo$table$text, "This research was supported by NIH grant 456.")
+})

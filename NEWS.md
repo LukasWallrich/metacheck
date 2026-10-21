@@ -107,6 +107,8 @@
 * `ref_retraction`, `ref_replication` and `ref_miscitation` compare DOIs without regard to case, and keep the reference's own DOI: a fifth of the RetractionWatch DOIs have capitals (such as the retracted Wakefield paper, 10.1016/S0140-6736(97)11096-0) while reference DOIs are lower case, so these were never flagged. A DOI that RetractionWatch lists under two spellings gets both notices (#507: U157)
 * `ref_replication` leaves out a citation of an original only when the same paper also cites the replication; in a paper list, one paper citing a replication hid every other paper's citation of the original (#507: U116)
 * `ref_miscitation` counts only citation xrefs (a footnote, figure or table xref with the same number counted), a missing DOI in the database matches nothing (it matched every reference without a DOI), and two references with the same DOI give one entry instead of list columns with a warning (#507: U117)
+* `funding_check_oi` favours acknowledgment sections; it looked for the type "acknowledgement", but metacheck spells the section type "acknowledgment", so only funding sections were favoured (#507: U105)
+* `stat_p_exact` reports "p < .000" and "p == .000" as zero, treats "==" as "=" (it counted as imprecise; in `stat_p_nonsig` as non-significant), lets a starred footnote ("*p < .05") excuse only that p-value instead of every p-value in its sentence (and no longer "*p < .005"), and lists the same p-value once (#507: U127)
 
 # metacheck 0.4.0
 

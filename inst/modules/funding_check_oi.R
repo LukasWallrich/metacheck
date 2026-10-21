@@ -65,7 +65,9 @@ funding_check <- function(paper) {
   )
 
   # if more than 1 per ID, favour those in specific sections
-  likely_section <- c("funding", "annex", "acknowledgement")
+  # metacheck's section type is "acknowledgment"; with only the British
+  # spelling, acknowledgment sections were not favoured (U105)
+  likely_section <- c("funding", "annex", "acknowledgement", "acknowledgment")
 
   table <- paper |>
     text_search(pattern_fund) |>
