@@ -113,6 +113,7 @@
 * `reg_check` leaves a missing judgement out of its counts (the summary read "flagged NA potential deviationNA", and `na_replace` turned the counts into 0), and gives each paper and preregistration its own report section, naming the paper when several papers link the same preregistration; they shared one section (#507: U120)
 * Reading Mplus output: a section header that is the last line, or is followed directly by another header, has no lines; its lines were NA or the next header (#507: U147)
 * Reading Stata (SMCL) output: `{c 0xNN}` is read as hexadecimal (`{c 0x41}` gave ")"), `{c -(}` and `{c )-}` give literal braces (they were dropped), and a `{dup}` count outside the integer range is left out instead of making the line NA (#507: U146)
+* `stat_effect_size` counts only eta labels as eta-squared: d, r, beta or R² next to an F-test were reported as "Eta-squared reported; cannot be reconstructed" and are now "not verifiable from F and degrees of freedom". An F-test with zero degrees of freedom, such as F(0, 0), no longer stops the module (#507: U126)
 
 # metacheck 0.4.0
 

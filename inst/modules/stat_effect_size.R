@@ -141,8 +141,12 @@ stat_effect_size <- function(paper) {
       } else if (grepl("ω", raw_label) || grepl("omega", raw_label)) {
         # Omega squared (partial or not) depends on the total sample size N which cannot yet be recovered. 
         "non_checkable"
-      } else if ((grepl("η", raw_label) || grepl("eta", raw_label)) &&
-                 (grepl("partial", raw_label) || grepl("p", raw_label))) {
+      } else if (grepl("beta|theta|zeta", raw_label) ||
+                 !(grepl("\u03b7", raw_label) || grepl("eta", raw_label))) {
+        # only eta labels are eta-squared: d, r, beta or R2 next to an F-test
+        # was called eta-squared (U126)
+        "non_checkable"
+      } else if (grepl("partial", raw_label) || grepl("p", raw_label)) {
         "partial_eta_squared"
       } else {
         "eta_squared"
@@ -385,6 +389,13 @@ stat_effect_size <- function(paper) {
 
     eta_implied <- (df1 * abs(f_value)) / (df1 * abs(f_value) + df2)
     out$eta_implied_partial <- as.character(eta_implied)
+    # F(0, 0) gives 0/0: the NaN stopped the module later (U126)
+    if (!is.finite(eta_implied)) {
+      out$eta_coherence <- "indeterminate"
+      out$eta_coherence_assumption <- "none"
+      out$eta_coherence_note <- "The F-test's degrees of freedom do not give an eta-squared."
+      return(out)
+    }
 
     omega_implied <- (df1 * (abs(f_value) - 1)) / (df1 * abs(f_value) + df2 + 1)
     out$omega_implied_partial <- as.character(omega_implied)

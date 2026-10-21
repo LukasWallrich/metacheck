@@ -277,3 +277,10 @@ test_that("stat_effect_size labels an unmatched subscripted Hedges' g as indeter
   expect_equal(mod_output$table$d_coherence[[1]], "match_under_assumptions")
 })
 
+test_that("stat_effect_size: d next to an F-test is not eta-squared, and F(0, 0) does not stop it (U126)", {
+  s <- c("There was an effect, F(1, 40) = 6.2, p = .02, d = 0.45.",
+         "Another effect, F(0, 0) = 3.1, p = .04, \u03b7p2 = .10.")
+  mo <- module_run(test_paper(s), "stat_effect_size")
+  expect_false(any(grepl("Eta-squared reported", mo$table$eta_coherence_note)))
+  expect_true(any(mo$table$eta_coherence %in% "indeterminate"))
+})
