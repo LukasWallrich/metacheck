@@ -569,9 +569,10 @@ paper_table <- function(paper, table, cols = NULL) {
 paper_id <- function(paper) {
   # each paper's own id: read from the info tables, a paper whose info table
   # has no rows had no id, so a paper list lost it (U102)
-  if (.is_paper(paper) && !is.null(paper$paper_id)) return(as.character(paper$paper_id))
-  if (.is_paper_list(paper) &&
-      all(vapply(paper, \(p) length(p$paper_id) == 1, logical(1)))) {
+  valid_id <- \(id) length(id) == 1 && !is.na(id) && nzchar(id)
+  if (.is_paper(paper) && valid_id(paper$paper_id)) return(as.character(paper$paper_id))
+  if (.is_paper_list(paper) && length(paper) > 0 &&
+      all(vapply(paper, \(p) valid_id(p$paper_id), logical(1)))) {
     return(unname(vapply(paper, \(p) as.character(p$paper_id), character(1))))
   }
   paper_table(paper, "info", "paper_id")$paper_id
