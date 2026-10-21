@@ -764,6 +764,12 @@ code_extract_r <- function(file_path = NULL, save_path = NULL, documentation = 0
     close(purl_stderr)
   }, add = TRUE)
 
+  # A numeric or logical YAML chunk label ("#| label: 3") is read by knitr
+  # as a number and used as a position: "subscript out of bounds", so the
+  # whole file was skipped. Quoted, it is the chunk's name (U153).
+  text <- sub("^(\\s*#\\|\\s*label:\\s*)([0-9][0-9.]*|TRUE|FALSE|true|false)\\s*$",
+              "\\1'\\2'", text)
+
   # purl errors are very unlikely
   knitr::purl(
     text = text,
