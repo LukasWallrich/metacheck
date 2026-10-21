@@ -58,6 +58,8 @@ read <- function(file_path, include_images = FALSE, recursive = FALSE) {
 #' @keywords internal
 .read_bibr <- function(file_path, include_images = FALSE) {
   # read JSON ----
+  # keys read exactly ([[ ]], not $): with no bib key, data$bib read the
+  # bib_match rows as references (U25)
   data <- jsonlite::read_json(file_path,
                               simplifyVector = TRUE,
                               simplifyDataFrame = TRUE)
@@ -66,22 +68,22 @@ read <- function(file_path, include_images = FALSE, recursive = FALSE) {
   # read as a paper with no paper_id, and every module then failed with
   # "replacement has 0 rows, data has 1" (#499). Every bibr export, old and
   # current schema, has a paper_id at its root.
-  id <- if (is.list(data)) data$paper_id else NULL
+  id <- if (is.list(data)) data[["paper_id"]] else NULL
   if (!is.character(id) || length(id) != 1 || is.na(id) || !nzchar(id)) {
     stop(basename(file_path), " is not bibr output (it has no paper_id), ",
          "so it cannot be read as a paper", call. = FALSE)
   }
 
   # bibr export schema 11 and later put schema_version at the root ----
-  if (!is.null(data$schema_version)) {
+  if (!is.null(data[["schema_version"]])) {
     return(.read_bibr12(file_path, include_images))
   }
 
   paper <- paper()
-  paper$paper_id <- data$paper_id
+  paper$paper_id <- data[["paper_id"]]
 
   # info ----
-  info <- data$info
+  info <- data[["info"]]
   keywords <- info$keywords
   info$keywords <- NA
   zeros <- sapply(info, length) == 0
@@ -91,13 +93,13 @@ read <- function(file_path, include_images = FALSE, recursive = FALSE) {
   paper$info$abstract <- NULL # TODO: remove after bibr fixed
 
   # author ----
-  if (!is.null(data$author) && length(data$author) > 0) {
-    paper$author <- as.data.frame(data$author)
+  if (!is.null(data[["author"]]) && length(data[["author"]]) > 0) {
+    paper$author <- as.data.frame(data[["author"]])
   }
 
   # bib ----
-  if (!is.null(data$bib) && length(data$bib) > 0) {
-    paper$bib <- as.data.frame(data$bib)
+  if (!is.null(data[["bib"]]) && length(data[["bib"]]) > 0) {
+    paper$bib <- as.data.frame(data[["bib"]])
     # paper$bib$authors <- .coerce_bib_authors(paper$bib$authors)
     # if ("editors" %in% names(paper$bib)) {
     #   paper$bib$editors <- .coerce_bib_authors(paper$bib$editors)
@@ -105,14 +107,14 @@ read <- function(file_path, include_images = FALSE, recursive = FALSE) {
   }
 
   # eq ----
-  if (!is.null(data$eq) && length(data$eq) > 0) {
-    paper$eq <- as.data.frame(data$eq)
+  if (!is.null(data[["eq"]]) && length(data[["eq"]]) > 0) {
+    paper$eq <- as.data.frame(data[["eq"]])
   }
 
 
   # figure ----
-  if (!is.null(data$figure) && length(data$figure) > 0) {
-    paper$figure <- as.data.frame(data$figure)
+  if (!is.null(data[["figure"]]) && length(data[["figure"]]) > 0) {
+    paper$figure <- as.data.frame(data[["figure"]])
     if (!include_images) {
       paper$figure$image <- NA_character_
     }
@@ -120,20 +122,20 @@ read <- function(file_path, include_images = FALSE, recursive = FALSE) {
   }
 
   # url ----
-  if (!is.null(data$url) && length(data$url) > 0) {
-    paper$url <- as.data.frame(data$url)
+  if (!is.null(data[["url"]]) && length(data[["url"]]) > 0) {
+    paper$url <- as.data.frame(data[["url"]])
     paper$url$href <- gsub("\\s", "", paper$url$href) # tempfix
     paper$url$href <- gsub("\\.$", "", paper$url$href) # tempfix
   }
 
   # section ----
-  if (!is.null(data$section) && length(data$section) > 0) {
-    paper$section <- as.data.frame(data$section)
+  if (!is.null(data[["section"]]) && length(data[["section"]]) > 0) {
+    paper$section <- as.data.frame(data[["section"]])
   }
 
   # table ----
-  if (!is.null(data$table) && length(data$table) > 0) {
-    paper$table <- as.data.frame(data$table)
+  if (!is.null(data[["table"]]) && length(data[["table"]]) > 0) {
+    paper$table <- as.data.frame(data[["table"]])
     paper$table$caption <- NULL #tempfix
 
     # `contents` is a RAGGED array of arrays (one row per table row, itself an
@@ -173,18 +175,18 @@ read <- function(file_path, include_images = FALSE, recursive = FALSE) {
   }
 
   # text ----
-  if (!is.null(data$text) && length(data$text) > 0) {
-    paper$text <- as.data.frame(data$text)
+  if (!is.null(data[["text"]]) && length(data[["text"]]) > 0) {
+    paper$text <- as.data.frame(data[["text"]])
   }
 
   # xref ----
-  if (!is.null(data$xref) && length(data$xref) > 0) {
-    paper$xref <- as.data.frame(data$xref)
+  if (!is.null(data[["xref"]]) && length(data[["xref"]]) > 0) {
+    paper$xref <- as.data.frame(data[["xref"]])
   }
 
   # bib_match ----
-  if (!is.null(data$bib_match) && length(data$bib_match) > 0) {
-    paper$bib_match <- as.data.frame(data$bib_match)
+  if (!is.null(data[["bib_match"]]) && length(data[["bib_match"]]) > 0) {
+    paper$bib_match <- as.data.frame(data[["bib_match"]])
     # TODO: check if this is needed
     # if ("authors" %in% names(paper$bib_match)) {
     #   paper$bib_match$authors <- .coerce_bib_authors(paper$bib_match$authors)
