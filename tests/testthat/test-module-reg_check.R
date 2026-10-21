@@ -155,7 +155,7 @@ test_that("all comparisons failing returns an error light", {
     "RegCheck comparison failed"
   )
 
-  expect_equal(mo$traffic_light, "error")
+  expect_equal(mo$traffic_light, "fail")   # "error" is not a light (U30)
   expect_match(mo$summary_text, "RegCheck comparison failed")
   expect_true(is.na(mo$summary_table$regcheck_deviations))
 }, "mock")
@@ -182,4 +182,21 @@ test_that("partial failure: successful comparisons are still returned", {
   expect_equal(mo$traffic_light, "info")
   expect_equal(nrow(mo$table), 3)
   expect_equal(length(unique(mo$table$prereg_id)), 1)
+}, "mock")
+
+test_that("a missing judgement is left out of the counts, and shared preregistrations get a section per paper (U120)", {
+  # the summary read "flagged NA potential deviationNA"; two papers linking
+  # one preregistration shared one section
+  odd <- mock_regcheck_table
+  odd$deviation_judgement[2] <- NA
+  testthat::local_mocked_bindings(regcheck_compare = function(...) odd, .package = "metacheck")
+  guid <- "5xysn"
+  p1 <- test_paper(url = paste0("https://osf.io/", guid)); p1$paper_id <- "p1"
+  p2 <- test_paper(url = paste0("https://osf.io/", guid)); p2$paper_id <- "p2"
+  mo <- module_run(paperlist(p1, p2), "reg_check")
+  expect_false(grepl("NA", mo$summary_text))
+  expect_equal(mo$summary_table$regcheck_deviations, c(1, 1))
+  r <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(r, "Comparison of paper p1 with preregistration", fixed = TRUE)
+  expect_match(r, "Comparison of paper p2 with preregistration", fixed = TRUE)
 }, "mock")

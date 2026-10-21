@@ -40,6 +40,13 @@ if (exists("%||%", envir = baseenv())) {
   if (length(x) == 0) y else x
 }
 
+# One field of an API value that some servers send as a plain string instead
+# of an object (an older Dataverse's or Zenodo's licence, Mendeley's doi): the
+# string itself, else x[[name]]. x$name stopped on a string with "$ operator
+# is invalid for atomic vectors", which aborted dataverse_info() for every
+# dataset in the call (U34).
+.field_or_value <- function(x, name) if (is.list(x)) x[[name]] else x
+
 #' Replace If
 #'
 #' Replace values if NULL, NA, or specified value

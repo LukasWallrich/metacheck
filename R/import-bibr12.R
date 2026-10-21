@@ -283,8 +283,9 @@
 #' @noRd
 .read_bibr12 <- function(file_path, include_images = FALSE) {
   x <- jsonlite::read_json(file_path, simplifyVector = FALSE)
+  # keys read exactly ([[ ]], not $), which matches a unique prefix (U25)
 
-  version <- as.character(x$schema_version[[1]])
+  version <- as.character(x[["schema_version"]][[1]])
   if (!grepl("^12\\.", version)) {
     major <- suppressWarnings(as.integer(sub("^\\s*([0-9]+).*$", "\\1", version)))
     advice <- if (isTRUE(major > 12)) {
@@ -308,8 +309,8 @@
 
   if (!include_images) tables$figure$image <- NULL
 
-  info <- .bibr12_info(x$metadata, x$source, version, x$extraction$producer)
-  .bibr12_paper(x$paper_id, info, tables, x$extraction)
+  info <- .bibr12_info(x[["metadata"]], x[["source"]], version, x[["extraction"]][["producer"]])
+  .bibr12_paper(x[["paper_id"]], info, tables, x[["extraction"]])
 }
 
 #' Convert a paper to bibr export schema 12.0

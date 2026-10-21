@@ -211,3 +211,15 @@ test_that("manifest is split one file per paper for a paperlist batch", {
   expect_true(mB$not_downloaded$rerun_recommended)
   expect_false(mA$not_downloaded$rerun_recommended)
 })
+
+test_that("manifest_merge keeps small numbers and nulls (U62)", {
+  # digits = 4 wrote 0.000012345 as 0; a null became {} on the next merge
+  f <- withr::local_tempfile(fileext = ".json")
+  manifest_merge(f, list(a = 0.000012345, c = list(x = NULL)))
+  manifest_merge(f, list(d = 1))
+  m <- jsonlite::fromJSON(f, simplifyVector = FALSE)
+  expect_equal(m$a, 0.000012345)
+  expect_true("x" %in% names(m$c))
+  expect_null(m$c$x)
+  expect_false(grepl("{}", paste(readLines(f), collapse = ""), fixed = TRUE))
+})

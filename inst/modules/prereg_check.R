@@ -37,25 +37,30 @@ prereg_check <- function(paper) {
     resp <- list(
       traffic_light = "na",
       summary_text = "No preregistration links were found.",
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        preregistration = 0
+      summary_table = .per_paper_table(paper,
+                preregistration = 0
       )
     )
     return(resp)
   }
 
   ## AsPredicted preregs ----
-  table_ap <- suppressMessages(
-    aspredicted_info(links_ap$href)
-  )
+  # Only with AsPredicted links: aspredicted_info() first checks that
+  # aspredicted.org is online, so an OSF-only paper failed offline (U109).
+  table_ap <- if (nrow(links_ap) > 0) {
+    suppressMessages(aspredicted_info(links_ap$href))
+  } else {
+    data.frame()
+  }
   ap_schema_table <- ap_schema(table_ap)
 
   ## OSF prereg ----
   osf_ids <- links_osf$href |>
     osf_check_id() |>
     unique()
-  link_types <- osf_type(osf_ids)
+  # osf_type(character(0)) stopped an AsPredicted-only paper ("argument is of
+  # length zero", U109)
+  link_types <- if (length(osf_ids) > 0) osf_type(osf_ids) else character(0)
   reg_ids <- osf_ids[link_types == "registrations" & !is.na(link_types)]
   # A validly-formed OSF id that cannot be read (private, embargoed,
   # withdrawn, or deleted) is a different finding from "not a registration at
@@ -73,9 +78,8 @@ prereg_check <- function(paper) {
         nrow(links_osf), nrow(links_osf) |> plural()
       ),
       na_replace = 0,
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        preregistration = 0
+      summary_table = .per_paper_table(paper,
+                preregistration = 0
       )
     )
     return(resp)
@@ -95,12 +99,14 @@ prereg_check <- function(paper) {
 
   # have to iterate, process then merge
   # because pagination > 10 usually returns unmergeable dfs
-  ps <- lapply(urls, \(url) {
-    reg_info <- osf_get_all_pages(url)
+  ps <- lapply(seq_along(urls), \(i) {
+    reg_info <- osf_get_all_pages(urls[i])
 
     if (length(reg_info) == 0) {
+      # named by the paper's own link, not the API address (U110)
       if (!is.null(attr(reg_info, "osf_error"))) {
-        inaccessible_regs <<- c(inaccessible_regs, url)
+        own <- links_osf$href[osf_check_id(links_osf$href) %in% reg_ids[i]][1]
+        inaccessible_regs <<- c(inaccessible_regs, if (is.na(own)) urls[i] else own)
       }
       return(NULL)
     }
@@ -109,9 +115,15 @@ prereg_check <- function(paper) {
     osf_prereg_extract(info)
   })
 
-  # make sure all items are not lists
-  prereg_schemas <- c(ps, list(ap_schema_table)) |>
-    lapply(\(x) lapply(x, paste, collapse = "\n\n"))
+  # make sure all items are not lists. Each AsPredicted preregistration is
+  # its own row: collapsing the whole table pasted every one of the call into
+  # a single row whose link matched no paper (paper_id NA, every paper
+  # counting 0), and a missing field became the text "NA" (U109).
+  ap_rows <- lapply(seq_len(nrow(ap_schema_table)), \(i) as.list(ap_schema_table[i, , drop = FALSE]))
+  collapse_field <- \(v) if (length(v) > 0 && all(is.na(v))) NA_character_ else
+    paste(v, collapse = "\n\n")
+  prereg_schemas <- c(ps, ap_rows) |>
+    lapply(\(x) lapply(x, collapse_field))
   prereg_info <- do.call(dplyr::bind_rows, prereg_schemas)
 
   ## every registration inaccessible, nothing else found ----
@@ -131,9 +143,8 @@ prereg_check <- function(paper) {
         length(inaccessible_regs), length(inaccessible_regs) |> plural()
       ),
       na_replace = 0,
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        preregistration = 0
+      summary_table = .per_paper_table(paper,
+                preregistration = 0
       ),
       report = sprintf(
         "The following registration link%s could not be accessed and may be private, embargoed, or withdrawn: %s.",
@@ -145,13 +156,24 @@ prereg_check <- function(paper) {
   }
 
   if (nrow(prereg_info)) {
+    # Joined by OSF id, or by the AsPredicted address without scheme, "www."
+    # and case: http://, upper-case, view_only and path links matched no
+    # paper (paper_id NA, every paper counting 0), and a link given twice in
+    # a paper counted its registration twice (U110).
+    link_key <- function(x) {
+      id <- suppressWarnings(osf_check_id(x))
+      osf <- !is.na(id)
+      key <- tolower(sub("/+$", "", sub("^(https?://)?(www\\.)?", "", x)))
+      key[osf] <- paste0("osf:", tolower(sub("[?#/].*$", "", id[osf])))
+      key
+    }
     paper_ids <- data.frame(
       paper_id = c(links_ap$paper_id, links_osf$paper_id),
-      link = c(links_ap$href, links_osf$href)
-    )
-    paper_ids$link <- gsub("^(https://)?", "https://", paper_ids$link)
-
-    prereg_info <- dplyr::left_join(prereg_info, paper_ids, by = "link")
+      key = link_key(c(links_ap$href, links_osf$href))
+    ) |> dplyr::distinct()
+    prereg_info$key <- link_key(prereg_info$link)
+    prereg_info <- dplyr::left_join(prereg_info, paper_ids, by = "key")
+    prereg_info$key <- NULL
   }
 
   # traffic light ----
@@ -503,7 +525,8 @@ osf_pages_labels <- function(pages) {
 # names so the same concept lines up across templates; unmapped labels fall
 # back to a slugified version so no information is dropped.
 osf_label_to_field <- function(label) {
-  key <- tolower(trimws(label))
+  # U+FFFE/U+FFFF (non-characters) made tolower() stop the module (U111)
+  key <- tolower(trimws(gsub("\uFFFE|\uFFFF", "", label)))
   if (key %in% names(osf_label_field)) {
     return(unname(osf_label_field[[key]]))
   }
@@ -656,7 +679,11 @@ withdrawn <- function(info) {
 ## Pre-Registration in Social Psychology (van 't Veer & Giner-Sorolla, 2016): Pre-Registration ----
 prsp <- function(info) {
   ra <- info$attributes
-  prereg_answers <- ra$registration_responses
+  # read through an environment, where `$` matches a key exactly: on the list
+  # it matched partially, so a missing "84-5" returned "84-56" (U111)
+  rr <- ra$registration_responses
+  if (!is.list(rr) || is.null(names(rr))) rr <- list()
+  prereg_answers <- list2env(rr[nzchar(names(rr))], parent = emptyenv())
 
   common <- common_osf(info)
 

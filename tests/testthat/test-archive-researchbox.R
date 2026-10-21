@@ -64,3 +64,16 @@ test_that("rbox_info", {
 
 
 
+
+test_that("an empty ResearchBox page, and several boxes that all fail (U43, U45)", {
+  # an empty body stopped resp_body_string() before the status was checked
+  for (st in c(200, 403)) {
+    local_mocked_bindings(req_perform = function(req, ...) httr2::response(st, body = raw(0)),
+                          .package = "httr2")
+    info <- suppressWarnings(.rbox_info("https://researchbox.org/1"))
+    expect_equal(info$error, if (st == 200) "unfound" else "HTTP 403")
+  }
+  # several boxes that all fail: NULL, as for one; the join stopped
+  local_mocked_bindings(.rbox_info = function(u, ...) data.frame(rb_url = u, error = "unfound"))
+  expect_null(rbox_file_download(c("https://researchbox.org/1", "https://researchbox.org/2")))
+})

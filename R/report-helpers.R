@@ -731,7 +731,8 @@ report_type <- function(report_type = NULL) {
         outcome_labels <- c(
           skipped_missing_inputs = "could not be run because a referenced input file is missing",
           not_parsed              = "could not be parsed and so could not be run",
-          dependency_unavailable  = "could not be run because a required dependency is unavailable"
+          dependency_unavailable  = "could not be run because a required dependency is unavailable",
+          skipped_time_limit      = "could not be started because the time for all scripts together had run out"
         )
         groups <- split(seq_len(nrow(grouped_rows)), grouped_rows$Outcome)
         vapply(groups, \(rows) {
@@ -912,9 +913,12 @@ scroll_table <- function(table,
   }
 
   # replace line breaks with <br>
-  for (col in names(table)) {
-    if (is.character(table[[col]])) {
-      table[[col]] <- gsub("\n", "<br>", table[[col]])
+  # by position: a blank or repeated column name is not found by name, so
+  # those columns kept their line breaks (U131)
+  for (j in seq_along(table)) {
+    if (is.factor(table[[j]])) table[[j]] <- as.character(table[[j]])
+    if (is.character(table[[j]])) {
+      table[[j]] <- gsub("\n", "<br>", table[[j]])
     }
   }
 
@@ -976,9 +980,12 @@ metacheck::report_table(table, %s, %s, %s)
 #' report_table(iris)
 report_table <- function(table, colwidths = "auto", maxrows = 2, escape = FALSE) {
   # replace line breaks with <br>
-  for (col in names(table)) {
-    if (is.character(table[[col]])) {
-      table[[col]] <- gsub("\n", "<br>", table[[col]])
+  # by position: a blank or repeated column name is not found by name, so
+  # those columns kept their line breaks (U131)
+  for (j in seq_along(table)) {
+    if (is.factor(table[[j]])) table[[j]] <- as.character(table[[j]])
+    if (is.character(table[[j]])) {
+      table[[j]] <- gsub("\n", "<br>", table[[j]])
     }
   }
 
@@ -1053,10 +1060,10 @@ report_table <- function(table, colwidths = "auto", maxrows = 2, escape = FALSE)
   # a list left open inside the table, and the rest of the report was nested
   # in it (confirmed: tue_datamanager_check's README sections table). The
   # marker is escaped so it shows as written.
-  for (col in names(table)) {
-    if (is.character(table[[col]])) {
-      table[[col]] <- sub("^(\\s*[0-9]+)([.)]\\s)", "\\1\\\\\\2", table[[col]])
-      table[[col]] <- sub("^(\\s*)([-*+]\\s)", "\\1\\\\\\2", table[[col]])
+  for (j in seq_along(table)) {   # by position, as above (U131)
+    if (is.character(table[[j]])) {
+      table[[j]] <- sub("^(\\s*[0-9]+)([.)]\\s)", "\\1\\\\\\2", table[[j]])
+      table[[j]] <- sub("^(\\s*)([-*+]\\s)", "\\1\\\\\\2", table[[j]])
     }
   }
 
@@ -1250,6 +1257,9 @@ cap_gate_count <- function(n_needed, param, current, unit = "item",
 #' @examples
 #' link("https://scienceverse.org")
 link <- function(url, text = url, new_window = TRUE, type = "") {
+  # recorded before the DOI prefix is added: sprintf() made NA into
+  # "https://doi.org/NA", so a missing DOI became a link (U8)
+  missing_url <- is.na(url)
   if (type == "doi") {
     url <- gsub("https?://doi.org/", "", url) |>
       sprintf("https://doi.org/%s", x = _)
@@ -1262,7 +1272,7 @@ link <- function(url, text = url, new_window = TRUE, type = "") {
     "<a href='%s'%s>%s</a>",
     url, nw, text
   )
-  links[is.na(url)] <- NA
+  links[missing_url | is.na(url)] <- NA
 
   return(links)
 }

@@ -360,3 +360,68 @@ test_that(".r_output_tables stays fast on a long print that is not a table (#483
   expect_length(tabs3, 1)
   expect_equal(tabs3[[1]]$data[["Pr(>|t|)"]], c("0.00912", "2.07e-05"))
 })
+
+test_that("read_stat_tables of a path that is not a zip has no tables (U137)", {
+  # unzip() gives NULL for it, and basename(NULL) stopped
+  f <- withr::local_tempfile(fileext = ".jasp"); writeLines("not a zip", f)
+  expect_equal(read_stat_tables(f), list())
+  expect_equal(read_stat_tables(withr::local_tempdir()), list())
+})
+
+test_that("R output: a '+' output line stays output, and an untitled result takes the source label (U139, U140)", {
+  # every line starting with ">" or "+" counted as statement text, so
+  # "Formula:" was lost; cur_title started as NA, which %||% did not replace
+  ch <- .r_echo_chunks(c("> summary(m)", "Formula:", "+ y ~ x", "Estimate 1.2"),
+                       code_lines = "summary(m)")
+  expect_equal(ch[[1]]$output, c("Formula:", "+ y ~ x", "Estimate 1.2"))
+  o <- .r_output_oneline("t = 2.31, df = 28, p-value = 0.028", source_label = "analysis.R")
+  expect_equal(o[[1]]$analysis, "analysis.R")
+})
+
+test_that("stat_output_validate reads a JSON string (U136)", {
+  # fromJSON() could not read the text connection, so every JSON string was
+  # "Input is not valid JSON."
+  v <- stat_output_validate('{"a": 1}')
+  expect_false(any(grepl("not valid JSON", v$issues)))
+  expect_true(any(grepl("not valid JSON", stat_output_validate("not json")$issues)))
+})
+
+test_that(".norm_value counts the exponent in a number's decimals (U143)", {
+  # 1.5e-05 had 1 decimal, so its tolerance of 0.05 matched almost any small value
+  expect_equal(.norm_value("1.5e-05")$dec, 6L)
+  expect_equal(.norm_value("0.03")$dec, 2L)
+  expect_equal(.norm_value("2.5E+03")$dec, 0L)
+})
+
+test_that("stat tables: a row without content is dropped, and fields are read by exact name (U141)", {
+  # a short empty row became an NA row, and tb$line read tb$line_seq
+  h <- xml2::read_html(paste0('<table><tr><th>Name</th><th>t</th></tr>',
+                              '<tr><td>A</td><td>2.1</td></tr><tr><td></td></tr><tr></tr>',
+                              '<tr><td>B</td><td>1.1</td></tr></table>'))
+  parsed <- .stat_table_parse(xml2::xml_find_first(h, "//table"))
+  expect_equal(parsed$data$Name, c("A", "B"))
+  ids <- .stat_result_ids(list(list(line_seq = 3L, analysis = "x")), "f.R")
+  expect_false(grepl("l3", ids))
+})
+
+test_that("an Mplus section header at the end, or right before another, has no lines (U147)", {
+  # (h + 1):end counted down and gave NA or the next header
+  x <- c("", "MODEL RESULTS", "a 1", "", "TECHNICAL OUTPUT")
+  s <- .mplus_sections(x)
+  expect_equal(s[[2]]$lines, character(0))
+  expect_true(is.na(.mplus_syntax_lines(c("x", "INPUT INSTRUCTIONS"))))
+})
+
+test_that("SMCL: hex characters, literal braces and a huge dup count (U146)", {
+  # {c 0x41} was read as decimal, {c -(} {c )-} were dropped, and a {dup}
+  # count outside the integer range made the column NA
+  expect_equal(.smcl_render_line("{c 0x41}BC"), "ABC")
+  expect_equal(.smcl_render_line("x {c -(}a{c )-} y"), "x {a} y")
+  expect_equal(.smcl_render_line("{dup 99999999999:-}{col 10}|"), "          |")
+})
+
+test_that("statistics ids: NA source, no repeated prefix, both underscores trimmed (U138)", {
+  expect_equal(.stat_sanitize_id("_abc_"), "abc")
+  expect_equal(.stat_result_ids(list(list(analysis = "x")), NA_character_), "result_x")
+  expect_equal(.stat_test_id(list(), "odd name.spv", "odd_name_spv_t3_r1", "a"), "odd_name_spv_t3_a")
+})

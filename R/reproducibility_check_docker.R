@@ -448,7 +448,12 @@ repro_install_deps_docker <- function(install_deps, lib_dir, image = "rocker/r-v
 # the per-script runner, not a callable object.
 .repro_docker_capture_preamble <- function() {
   helpers <- .r_capture_helpers()
-  out <- character(0)
+  # stato_type_column() reads the vocabulary from its own surroundings, which
+  # deparse() leaves behind, so the vocabulary is written out first; without
+  # it every call to it failed, and aggregate()/tapply() results were never
+  # captured in a container (found with Lakens/tue_datamanager_check#5, item 4).
+  tbl_lines <- deparse(environment(helpers$stato_type_column)$stato_tables)
+  out <- c(paste0("stato_tables <- ", tbl_lines[1]), tbl_lines[-1])
   for (nm in names(helpers)) {
     fn_lines <- deparse(helpers[[nm]])
     nm_lit <- if (grepl("^[.a-zA-Z][.a-zA-Z0-9_]*$", nm)) nm else paste0("`", nm, "`")
@@ -489,11 +494,15 @@ repro_install_deps_docker <- function(install_deps, lib_dir, image = "rocker/r-v
 #' @returns a data frame — identical columns to [repro_run_scripts()]'s
 #'   return: `file_name`, `outcome`, `error`, `error_type`, `undefined_var`,
 #'   `stdout`, `stderr`, `elapsed`, `script_lines`, `captures`
+#' @param deadline the time ([Sys.time()] plus the time for all scripts
+#'   together) after which no script is started, recorded as
+#'   `skipped_time_limit`; a running script is stopped then. `NULL` (the
+#'   default) sets no such limit.
 #' @export
 repro_run_scripts_docker <- function(run_tbl, order, sandbox_root, lib_dir = NULL,
                                      image = "rocker/r-ver:latest", timeout = 600,
                                      skip = character(0), parses = NULL,
-                                     failed_deps = character(0)) {
+                                     failed_deps = character(0), deadline = NULL) {
   if (is.null(run_tbl) || nrow(run_tbl) == 0)
     return(data.frame(file_name = character(0), outcome = character(0),
                       error = character(0), error_type = character(0),
@@ -531,6 +540,16 @@ repro_run_scripts_docker <- function(run_tbl, order, sandbox_root, lib_dir = NUL
                         error = "", error_type = NA_character_,
                         undefined_var = NA_character_,
                         stdout = "", stderr = "", elapsed = 0)))
+    # Once the time for all scripts together has run out, a script is not
+    # started; a script that is started stops when that time runs out
+    # (Lakens/tue_datamanager_check#4, item 6)
+    left <- .repro_time_left(deadline)
+    if (left <= 0)
+      return(no_lines(data.frame(file_name = fn, outcome = "skipped_time_limit",
+                        error = "not started: the time for all scripts together had run out",
+                        error_type = NA_character_, undefined_var = NA_character_,
+                        stdout = "", stderr = "", elapsed = 0)))
+    timeout <- min(timeout, ceiling(left))
 
     exec_lines <- tryCatch(readLines(row$script_path, warn = FALSE),
                            error = function(e) character(0))
@@ -697,7 +716,10 @@ repro_run_scripts_docker <- function(run_tbl, order, sandbox_root, lib_dir = NUL
             regmatches(undef_src, regexpr(fn_pat, undef_src)))
         else NA_character_
 
-      nopkg_pat <- "there is no package called ['\"]([^'\"]+)['\"]"
+      # curly quotes too: in a UTF-8 locale R writes them around the name,
+      # which the ASCII-only quotes missed, so the script was "errored", not
+      # dependency_unavailable (U132)
+      nopkg_pat <- "there is no package called ['\"\u2018]([^'\"\u2019]+)['\"\u2019]"
       nopkg_src <- if (grepl(nopkg_pat, se)) se else NA_character_
       nopkg_var <- if (!is.na(nopkg_src))
         sub(paste0(".*", nopkg_pat, ".*"), "\\1",

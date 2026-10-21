@@ -82,6 +82,10 @@ import_jasp <- function(path) {
 }
 
 # ── Legacy binary format ─────────────────────────────────────────────────────
+# A column read short of the row count (a truncated data.bin) is padded with
+# missing values: as.data.frame() stopped on columns of different lengths (U145).
+.pad_to <- function(v, n) if (length(v) < n) c(v, rep(NA, n - length(v))) else v
+
 .read_jasp_binary <- function(files) {
   base <- basename(files)
   meta <- jsonlite::fromJSON(files[base == "metadata.json"][[1]],
@@ -101,10 +105,10 @@ import_jasp <- function(path) {
     mt <- f$measureType %||% "Nominal"
     is_scale <- identical(mt, "Continuous")
     if (is_scale) {
-      v <- readBin(con, "double", n = nrow, size = 8, endian = "little")
+      v <- .pad_to(readBin(con, "double", n = nrow, size = 8, endian = "little"), nrow)
       v[is.nan(v)] <- NA
     } else {
-      v <- readBin(con, "integer", n = nrow, size = 4, endian = "little")
+      v <- .pad_to(readBin(con, "integer", n = nrow, size = 4, endian = "little"), nrow)
       v[v == .JASP_INT_MIN] <- NA
       labs <- .jasp_binary_labels(f, xdat)          # named vec: names=label, val=code
       if (length(labs)) attr(v, "labels") <- labs
@@ -119,7 +123,7 @@ import_jasp <- function(path) {
   # as.data.frame drops per-column attributes; re-attach them.
   for (j in seq_along(cols)) {
     if (!is.null(attr(cols[[j]], "labels"))) attr(df[[j]], "labels") <- attr(cols[[j]], "labels")
-    if (!is.null(attr(cols[[j]], "label")))  attr(df[[j]], "label")  <- attr(cols[[j]], "label")
+    if (!is.null(attr(cols[[j]], "label", exact = TRUE)))  attr(df[[j]], "label")  <- attr(cols[[j]], "label", exact = TRUE)
   }
   list(data = df, columns = do.call(rbind, cmeta), format = "binary",
        data_file_path = meta$dataFilePath %||% NA_character_)
@@ -171,7 +175,10 @@ import_jasp <- function(path) {
 
   cols <- vector("list", nrow(cmeta))
   for (i in seq_len(nrow(cmeta))) {
+    # a column without a columnType (NULL in the database) is read as nominal;
+    # NA here stopped the if () below (U145)
     cid <- cmeta$id[i]; ctype <- tolower(cmeta$columnType[i])
+    if (length(ctype) != 1 || is.na(ctype)) ctype <- "nominal"
     dblc <- sprintf("Column_%d_DBL", cid)
     intc <- sprintf("Column_%d_INT", cid)
     is_scale <- ctype == "scale"
@@ -195,7 +202,7 @@ import_jasp <- function(path) {
   df <- stats::setNames(as.data.frame(cols, stringsAsFactors = FALSE), cmeta$name)
   for (i in seq_along(cols)) {
     if (!is.null(attr(cols[[i]], "labels"))) attr(df[[i]], "labels") <- attr(cols[[i]], "labels")
-    if (!is.null(attr(cols[[i]], "label")))  attr(df[[i]], "label")  <- attr(cols[[i]], "label")
+    if (!is.null(attr(cols[[i]], "label", exact = TRUE)))  attr(df[[i]], "label")  <- attr(cols[[i]], "label", exact = TRUE)
   }
 
   dfp <- tryCatch(DBI::dbGetQuery(con, "SELECT dataFilePath FROM DataSets LIMIT 1")$dataFilePath,

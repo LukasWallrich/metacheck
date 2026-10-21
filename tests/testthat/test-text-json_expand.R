@@ -123,3 +123,18 @@ test_that("json_expand remove ```json", {
 
   expect_equal(expanded[, 3:5], exp)
 })
+
+test_that("json_expand returns a table without rows unchanged (U151)", {
+  # the join on the empty expansion stopped
+  tbl <- data.frame(id = integer(0), answer = character(0))
+  expect_equal(json_expand(tbl), tbl)
+})
+
+test_that("json_expand keeps a _row key and nested values (U9)", {
+  # jsonlite read "_row" as row names, so the column was lost, and a nested
+  # object was turned into text whole ("c(1, NA)")
+  tbl <- data.frame(id = 1, answer = '[{"_row": "a", "v": {"k": 1}}, {"_row": "b", "v": {"k": null}}]')
+  res <- json_expand(tbl, "answer")
+  expect_equal(res[["_row"]], c("a", "b"))
+  expect_equal(res[["v.k"]], c(1, NA))
+})

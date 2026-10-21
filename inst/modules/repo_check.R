@@ -249,9 +249,15 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # PsychArchives with no OSF among them. Fall back to the paper's own id,
   # which is what this value is for anyway (it labels rows added back later)
   # and is exactly what every other row in `repos` carries.
+  # An empty paper or paper list has no id at all, and [[1]] stopped with
+  # "subscript out of bounds" (U79), so this is NA then.
+  first_paper_id <- function() {
+    ids <- paper_id(paper)
+    if (length(ids) > 0) ids[[1]] else NA_character_
+  }
   osf_paper_ids <- repos$paper_id[repos$repo_type == "osf"]
   osf_paper_id <- if (length(osf_paper_ids) > 0) osf_paper_ids[[1]] else
-    paper_id(paper)[[1]]
+    first_paper_id()
 
   osf_meta_df <- data.frame(repo_url = character(0), doi = character(0),
                             license = character(0))
@@ -288,8 +294,10 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
 
       # "kind" only in table if there are files
       if ("kind" %in% names(osf_info)) {
+        # per row: !isFALSE(public) tested the whole column, so a private file
+        # was left out only when it was the listing's one row (U123)
         osf_file_list <- osf_info |>
-          dplyr::filter(kind == "file", !isFALSE(public))
+          dplyr::filter(kind == "file", !(public %in% FALSE))
 
         # Files found via a registration are attributed to the project it was
         # registered from (the real, reusable location), not the registration
@@ -341,6 +349,16 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # all, with nothing in gated_repos. Now it is a repository that could
       # not be checked, like a failed link on any other platform (#476).
       osf_failed_types <- c("unfound", "error", "too many requests")
+      # A link whose id is not a valid OSF id gets no osf_type: with only
+      # such links the column was missing and filter(osf_type ...) below
+      # found the exported osf_type() function, so dplyr's error text became
+      # the reason; beside valid links it was removed without a word (U122).
+      if (!"osf_type" %in% names(osf_info))
+        osf_info$osf_type <- rep(NA_character_, nrow(osf_info))
+      invalid_osf <- osf_info$osf_url[is.na(osf_info$osf_type) &
+                                        osf_info$osf_url %in% osf_urls]
+      fill <- repos$repo_url %in% invalid_osf & is.na(repos$repo_error)
+      repos$repo_error[fill] <- "not a valid OSF link"
       osf_failed <- osf_info[osf_info$osf_type %in% osf_failed_types &
                                osf_info$osf_url %in% osf_urls, , drop = FALSE]
       if (nrow(osf_failed) > 0) {
@@ -351,7 +369,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         repos$repo_error[fill] <- why[hit[fill]]
       }
       osf_to_remove <- osf_info |>
-        dplyr::filter(!osf_type %in% c("nodes", "files", "private", osf_failed_types)) |>
+        dplyr::filter(!is.na(osf_type),
+                      !osf_type %in% c("nodes", "files", "private", osf_failed_types)) |>
         _$osf_url
       repos <- repos[!repos$repo_url %in% osf_to_remove, ]
 
@@ -393,7 +412,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
         # (same repo_url + file_url + file_path).
         if ("kind" %in% names(parent_info)) {
           parent_file_list <- parent_info |>
-            dplyr::filter(kind == "file", !isFALSE(public))
+            dplyr::filter(kind == "file", !(public %in% FALSE))
           if (nrow(parent_file_list) > 0) {
             osf_files_df <- dplyr::bind_rows(
               osf_files_df,
@@ -684,8 +703,12 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   rb_files_df <- data.frame(repo_name = character(0))
   if (length(rb_urls) > 0) {
     tryCatch({
-      rb_file_list <- rbox_file_download(rb_urls, pb = pb) |>
-        dplyr::filter(!isdir)
+      rb_file_list <- rbox_file_download(rb_urls, pb = pb)
+      # NULL when no box could be retrieved (refused, removed); filter() on
+      # it stopped and the error text became the reason (U43)
+      if (is.null(rb_file_list))
+        stop("ResearchBox did not serve the box", call. = FALSE)
+      rb_file_list <- dplyr::filter(rb_file_list, !isdir)
       rb_files_df <- data.frame(
         repo_url = rb_file_list$rb_url,
         # rb_file_list$name is the RELATIVE PATH within the unzipped
@@ -1549,7 +1572,7 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       }, character(1))
     }
     local_repo <- data.frame(
-      paper_id = paper_id(paper)[[1]],
+      paper_id = first_paper_id(),
       repo_url = local_path,
       repo_type = "local",
       repo_error = NA_character_
@@ -1562,9 +1585,8 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     info <- list(
       traffic_light = "na",
       summary_text = "We found no links to repositories on the Open Science Framework, Github, ResearchBox, DSpace, Zenodo, Dataverse, Figshare, Dryad, ReShare, 4TU.ResearchData, Mendeley Data, DataONE, or LDbase.",
-      summary_table = data.frame(
-        paper_id = paper_id(paper),
-        repo_n = 0,
+      summary_table = .per_paper_table(paper,
+                repo_n = 0,
         files_n = NA,
         files_data = NA,
         files_code = NA,
@@ -1608,8 +1630,16 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (nrow(all_files) > 0) {
     file_path_dedup <- if ("file_path" %in% names(all_files))
       all_files$file_path else all_files$file_name
-    dupes <- duplicated(all_files$file_url) &
-      duplicated(file_path_dedup)
+    # Per file, not two separate tests: duplicated(url) & duplicated(path)
+    # dropped a file whose URL and path each appeared on OTHER rows (U121).
+    # A remote file is the same file when URL and path are; a local one when
+    # its location is.
+    loc <- all_files$file_location %||% rep(NA_character_, nrow(all_files))
+    dedup_key <- ifelse(!is.na(all_files$file_url),
+                        paste("url", all_files$file_url, file_path_dedup, sep = "\x01"),
+                 ifelse(!is.na(loc), paste("loc", loc, sep = "\x01"),
+                        paste("path", all_files$repo_url, file_path_dedup, sep = "\x01")))
+    dupes <- duplicated(dedup_key)
     all_files <- all_files[!dupes, ]
     # keep repos with explicit errors (e.g. gated/private) in summary/reporting
     in_files <- repos$repo_url %in% all_files$repo_url | !is.na(repos$repo_error)

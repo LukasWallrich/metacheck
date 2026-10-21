@@ -1,0 +1,46 @@
+test_that("psychds_file_plan takes a missing name from the path and excludes a file with neither (U113)", {
+  # a missing name became the target "unknown/NA"; no file_name column stopped
+  s <- data.frame(paper_id = "p", file_name = c("data.csv", NA, NA),
+                  file_path = c("data/data.csv", "code/analysis.R", NA),
+                  file_type = c("data", "code", "data"), data_type = NA)
+  plan <- psychds_file_plan(s, FALSE)$table
+  expect_equal(plan$file_name[2], "analysis.R")
+  expect_equal(plan$status[3], "excluded")
+  s$file_name <- NULL
+  expect_equal(nrow(psychds_file_plan(s, FALSE)$table), 3)
+})
+
+test_that("psychds_file_plan leaves correctly placed files and valid data names alone (U112)", {
+  # data/eeg.npy was told to move to itself, and study-a_data.csv was renamed
+  # data/study-studyadata_data.csv
+  s <- data.frame(file_name = c("data/eeg.npy", "data/study-a_data.csv", "raw.csv"),
+                  file_path = c("data/eeg.npy", "data/study-a_data.csv", "raw.csv"),
+                  data_type = "data", group = NA_character_)
+  tb <- psychds_file_plan(s)$table
+  expect_equal(tb$status, c("present", "present", "move"))
+  expect_equal(tb$target_path[2], "data/study-a_data.csv")
+})
+
+test_that("psychds_check gives each paper of a list its own row and report section (U113)", {
+  # checked together, the first paper got the one summary row and the
+  # others 0 through na_replace
+  llm_use(FALSE)
+  pa <- test_paper("a"); pa$paper_id <- "A"
+  pb <- test_paper("b"); pb$paper_id <- "B"
+  structure_df <- data.frame(
+    paper_id = c("A", "A", "B", "B", "B"),
+    file_name = c("raw.csv", "README.md", "data/study-x_data.csv", "dataset_description.json", "README.md"),
+    file_path = c("raw.csv", "README.md", "data/study-x_data.csv", "dataset_description.json", "README.md"),
+    data_type = c("data", "documentation", "data", "documentation", "documentation"),
+    doc_role = c(NA, "readme", NA, NA, "readme"),
+    group = NA_character_)
+  columns_df <- data.frame(paper_id = c("A", "B"), source_file = c("raw.csv", "data/study-x_data.csv"),
+                           column_name = "x")
+  fake <- structure(list(module = "data_check", table = columns_df, paper = paperlist(pa, pb),
+                         summary_table = data.frame(paper_id = c("A", "B")),
+                         structure = structure_df),
+                    class = "metacheck_module_output")
+  mo <- module_run(fake, "psychds_check")
+  expect_equal(mo$summary_table$required_missing, c(1, 0))
+  expect_equal(sum(grepl("^#### Paper ", unlist(mo$report))), 2)
+})

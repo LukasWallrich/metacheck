@@ -44,8 +44,11 @@ a data.frame with columns \code{name} (entry path inside the zip) and
 \code{size} (uncompressed bytes), excluding directory entries; or \code{NULL} when the
 host does not support range requests or the listing cannot be read (the
 caller should then download-and-inspect). Also returns \code{method}, \code{csize},
-\code{offset}, and \code{crc}, which describe where each member's bytes sit in the
-archive so a single member can be fetched without the rest. Zip64 archives
+\code{offset}, \code{crc} and \code{name_bytes}, which describe where each member's bytes
+sit in the archive so a single member can be fetched without the rest.
+Names without the zip's UTF-8 flag are read as CP437 (old Windows zip
+tools) and returned in UTF-8; \code{name_bytes} is the name's stored length.
+Zip64 archives
 (over 4 GB or over 65,535 entries) are read in full, including the sizes
 and offsets stored only in their Zip64 extra fields; \code{csize} and \code{offset}
 are \code{NA} only for an entry whose listing is malformed.

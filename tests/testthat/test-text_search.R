@@ -230,3 +230,11 @@ test_that("vectors and non-table DFs", {
 #   expect_equal(x$text, text[1:3])
 # })
 
+
+test_that("text_search(return = 'section') keeps each section's header (U80)", {
+  # grouped without the header, the header column was NA
+  paper <- demopaper()
+  res <- text_search(paper, "significant", return = "section")
+  expect_true(nrow(res) > 0)
+  expect_false(any(is.na(res$header)))
+})

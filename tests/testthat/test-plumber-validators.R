@@ -1,7 +1,12 @@
 # Unit tests for plumber upload validation.
 # Sources validators.R directly — no running API needed.
 
-source(testthat::test_path("..", "..", "inst", "plumber", "utils", "validators.R"))
+# The plumber API is left out of the built package (.Rbuildignore), so these
+# tests run only from the source folder; covr and R CMD check run the tests
+# on the installed package, where the file does not exist.
+plumber_file <- testthat::test_path("..", "..", "inst", "plumber", "utils", "validators.R")
+testthat::skip_if_not(file.exists(plumber_file), "the plumber API is not in the installed package")
+source(plumber_file)
 
 test_that("rejects missing file", {
   v <- validate_file_upload(NULL)

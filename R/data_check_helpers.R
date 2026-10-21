@@ -582,6 +582,11 @@
 data_classify_files <- function(file_name, file_path = NULL) {
   n <- length(file_name)
   if (n == 0) return(character(0))
+  # a name that is not valid UTF-8 (a zip's old Windows name) stopped the
+  # string functions below with "invalid multibyte string" (U76); it is
+  # classified from a valid copy (only the classes are returned)
+  file_name <- .utf8_lines(as.character(file_name))
+  if (!is.null(file_path)) file_path <- .utf8_lines(as.character(file_path))
 
   # -- Tier 1: format-locked classification ----------------------------------
   # Nothing below this point can override a Tier 1 result. `file_category()`'s
@@ -1280,8 +1285,10 @@ manifest_merge <- function(path, patch) {
   }
   # Overlay each patched key; a NULL value removes that key.
   for (nm in names(patch)) existing[[nm]] <- patch[[nm]]
+  # digits = NA: the default 4 significant digits wrote 0.000012345 as 0; null
+  # = "null": a null read back as NULL was rewritten as {} on every merge (U62)
   json <- jsonlite::toJSON(existing, auto_unbox = TRUE, pretty = TRUE,
-                           na = "null")
+                           na = "null", null = "null", digits = NA)
   writeLines(json, path, useBytes = TRUE)
   invisible(path)
 }
@@ -1969,6 +1976,9 @@ text_peek <- function(path, n = 20L) {
   }
   if (is.na(txt)) return(character(0))
 
+  # an 8-bit (Latin-1) file is converted before any string function, which
+  # stopped on it ("input string 1 is invalid", U63)
+  if (!validUTF8(txt)) txt <- iconv(txt, from = "latin1", to = "UTF-8")
   txt <- sub("^\ufeff", "", txt)                    # strip a BOM
   lines <- strsplit(txt, "\r\n|\n|\r")[[1]]
   utils::head(.utf8_lines(lines), n)
@@ -2169,7 +2179,9 @@ txt_classify_content <- function(path) {
     utils::read.delim(path, sep = sep, header = header, nrows = n_rows,
                       check.names = FALSE))
   has_invalid <- any(vapply(df, function(col) {
-    is.character(col) && any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")))
+    # & !is.na(col): an NA cell is not invalid UTF-8; counting it re-read every
+    # file with an "NA" cell as Latin-1, so "é" became "Ã©" (U64)
+    is.character(col) && any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")) & !is.na(col))
   }, logical(1)))
   if (has_invalid) {
     df <- suppressWarnings(
@@ -2287,6 +2299,44 @@ txt_classify_content <- function(path) {
   df
 }
 
+# A copy of a UTF-16 text file (one starting with a byte order mark) in UTF-8,
+# in the session's temporary folder; any other file is returned as it is.
+.utf16_as_utf8 <- function(path) {
+  bom <- tryCatch(readBin(path, "raw", n = 2), error = function(e) raw(0))
+  if (length(bom) < 2) return(path)
+  enc <- if (identical(bom, as.raw(c(0xff, 0xfe)))) "UTF-16LE" else
+    if (identical(bom, as.raw(c(0xfe, 0xff)))) "UTF-16BE" else return(path)
+  raw <- readBin(path, "raw", n = file.size(path))[-(1:2)]
+  txt <- tryCatch(iconv(list(raw), from = enc, to = "UTF-8")[[1]], error = function(e) NA)
+  if (is.na(txt)) return(path)
+  out <- tempfile(fileext = paste0(".", tools::file_ext(path)))
+  writeBin(charToRaw(enc2utf8(txt)), out)
+  out
+}
+
+# Whether readxl can open an old Excel .xls file without crashing R. Some .xls
+# files (an old Mac Excel file, code page 10000) make readxl's xls library
+# crash the whole R process (a segfault, which tryCatch() cannot catch), so
+# the researcher got no report at all (Lakens/tue_datamanager_check#4, item
+# 4). The file is first opened in a separate R process: its sheets are listed
+# and a few rows of each read. If that process fails, the file counts as
+# unreadable; otherwise it is read as before. Remembered per file for the
+# session. Any file that is not .xls is TRUE.
+.xls_readable_cache <- new.env(parent = emptyenv())
+.xls_readable <- function(path) {
+  if (length(path) != 1 || is.na(path) || !grepl("\\.xls$", path, ignore.case = TRUE) ||
+      !file.exists(path) || !requireNamespace("callr", quietly = TRUE)) return(TRUE)
+  key <- paste(normalizePath(path, winslash = "/", mustWork = FALSE), file.mtime(path))
+  if (exists(key, envir = .xls_readable_cache, inherits = FALSE))
+    return(get(key, envir = .xls_readable_cache, inherits = FALSE))
+  ok <- tryCatch(isTRUE(callr::r(function(p) {
+    for (sh in readxl::excel_sheets(p)) readxl::read_excel(p, sheet = sh, n_max = 10)
+    TRUE
+  }, args = list(p = path), timeout = 120)), error = function(e) FALSE)
+  assign(key, ok, envir = .xls_readable_cache)
+  ok
+}
+
 #' Read the head of a data file regardless of format
 #'
 #' Reads the first `n_rows` of a tabular data file (csv/tsv/txt/dat/xlsx/xls/
@@ -2314,6 +2364,10 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
   tryCatch({
     df <- switch(ext,
       csv = , txt = , tsv = , dat = , tab = , table = {
+        # a UTF-16 file (E-Prime and other Windows exports) is read from a
+        # UTF-8 copy: read as bytes, its first column was named "ÿþS" and
+        # the table had no rows, so data_check called it empty (U217)
+        path <- .utf16_as_utf8(path)
         sep <- if (ext == "tsv") "\t" else .sniff_delimiter(path)
         hdr <- .detect_header(path, sep)
         # Cheap bail-out for a non-tabular file disguised as .csv: one big field
@@ -2353,6 +2407,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
       xlsx = , xls = {
         if (!requireNamespace("readxl", quietly = TRUE))
           stop("The 'readxl' package is required to read Excel files.")
+        if (!.xls_readable(path)) return(NULL)   # crashes the reader (see .xls_readable())
         nmax <- if (is.finite(n_rows)) n_rows else Inf
         # Suppress readxl's per-cell type-guess warnings ("Expecting numeric ...
         # got a date"): a mixed column can emit one per row (hundreds on a wide
@@ -2458,17 +2513,26 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
         # data_check (and the CSV conversion in psychds-convert) treats it exactly
         # like a .sav. Both the old binary and modern SQLite formats are handled.
         df <- import_jasp(path)$data
-        if (is.data.frame(df) && is.finite(n_rows)) utils::head(df, n_rows) else df
+        if (is.data.frame(df) && is.finite(n_rows)) .head_keep_attrs(df, n_rows) else df
       },
       omv = {
         # A .omv (jamovi) is the JASP counterpart -- import_omv() returns the same
         # labelled data frame, so it is treated exactly like a .jasp / .sav.
         df <- import_omv(path)$data
-        if (is.data.frame(df) && is.finite(n_rows)) utils::head(df, n_rows) else df
+        if (is.data.frame(df) && is.finite(n_rows)) .head_keep_attrs(df, n_rows) else df
       },
-      rds = {
+      rds = if (.rds_is_workspace(path)) {
+        # made with save(), not saveRDS(): readRDS() refuses it ("unknown
+        # input format"), load() opens it (Lakens/tue_datamanager_check#5, item 3)
+        .read_rdata_isolated(path, n_rows)
+      } else {
         obj <- readRDS(path)
-        if (is.data.frame(obj)) utils::head(obj, n_rows) else NULL
+        if (is.data.frame(obj)) {
+          obj <- .plain_s4_columns(obj)
+          out <- .head_keep_attrs(obj, n_rows)
+          attr(out, "s4_converted") <- attr(obj, "s4_converted")
+          out
+        } else NULL
       },
       rda = , rdata = {
         # An .RData/.rda workspace can hold arbitrary objects -- fitted models,
@@ -2488,6 +2552,58 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     warning("Could not read ", basename(path), ": ", conditionMessage(e))
     NULL
   })
+}
+
+# Whether an .rds file is really an R workspace, made with save() rather than
+# saveRDS(): after decompressing (gzfile() also reads bzip2, xz and
+# uncompressed files) it starts with "RDX" or "RDA" and a format version,
+# where a saveRDS() file starts with "X\n" or "A\n"
+# (Lakens/tue_datamanager_check#5, item 3).
+.rds_is_workspace <- function(path) {
+  magic <- tryCatch({
+    con <- gzfile(path, "rb")
+    on.exit(close(con))
+    readBin(con, "raw", 4)
+  }, error = function(e) raw(0))
+  length(magic) == 4 && grepl("^RD[XAB][23]$", rawToChar(magic))
+}
+
+# A column of values of a formal (S4) class, such as lubridate's periods and
+# durations, cannot be used without the package that defines the class: R
+# loads the file, but head() and every later step stop with "unable to load
+# required package". Each such column is replaced by its plain stored values,
+# and recorded in the attribute "s4_converted" (column -> "Period, from the R
+# package lubridate") so data_check can warn: the file cannot be read without
+# that package (Lakens/tue_datamanager_check#4, item 8a). The same steps run
+# in the separate R process of .read_rdata_isolated().
+.plain_s4_columns <- function(df) {
+  conv <- character(0)
+  for (j in seq_along(df)) {
+    x <- df[[j]]
+    if (!isS4(x)) next
+    cl <- attr(x, "class")
+    v <- unclass(x)
+    attributes(v) <- NULL
+    if (!is.atomic(v) || length(v) != nrow(df)) v <- rep(NA, nrow(df))
+    df[[j]] <- v
+    conv[names(df)[j]] <- paste0(cl[[1]], ", from the R package ",
+                                 attr(cl, "package") %||% "that defines it")
+  }
+  if (length(conv)) attr(df, "s4_converted") <- conv
+  df
+}
+
+# The first n rows of a data frame with each column's label, value labels
+# and class kept: head() drops the label of unclassed and factor columns, and
+# a haven_labelled column keeps its labels only when vctrs is loaded, so
+# variable labels from .rds/.RData files depended on the session (U61).
+.head_keep_attrs <- function(df, n) {
+  out <- utils::head(df, n)
+  for (j in seq_along(df)) for (a in c("label", "labels", "class")) {
+    v <- attr(df[[j]], a, exact = TRUE)
+    if (!is.null(v) && is.null(attr(out[[j]], a, exact = TRUE))) attr(out[[j]], a) <- v
+  }
+  out
 }
 
 # Read an .RData/.rda workspace in an ISOLATED subprocess and return its first
@@ -2512,8 +2628,19 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     "sink(type='message'); close(con)",
     "df <- NULL",
     "if (ok) { dfs <- Filter(is.data.frame, as.list(e))",
-    "  if (length(dfs) > 0) { d <- as.data.frame(dfs[[1]]); n <- %s",
-    "    df <- if (is.finite(n)) utils::head(d, n) else d } }",
+    "  if (length(dfs) > 0) { d <- dfs[[1]]; conv <- character(0)",
+    # a column of a formal (S4) class: its plain values (see .plain_s4_columns())
+    "    for (j in seq_along(d)) if (isS4(d[[j]])) { cl <- attr(d[[j]], 'class')",
+    "      v <- unclass(d[[j]]); attributes(v) <- NULL",
+    "      if (!is.atomic(v) || length(v) != nrow(d)) v <- rep(NA, nrow(d))",
+    "      d[[j]] <- v; p <- attr(cl, 'package'); if (is.null(p)) p <- 'that defines it'",
+    "      conv[names(d)[j]] <- paste0(cl[[1]], ', from the R package ', p) }",
+    "    d <- as.data.frame(d); n <- %s",
+    "    df <- if (is.finite(n)) utils::head(d, n) else d",
+    "    for (j in seq_along(d)) for (a in c('label', 'labels', 'class')) {",
+    "      v <- attr(d[[j]], a, exact = TRUE)",
+    "      if (!is.null(v) && is.null(attr(df[[j]], a, exact = TRUE))) attr(df[[j]], a) <- v }",
+    "    if (length(conv)) attr(df, 's4_converted') <- conv } }",
     "saveRDS(df, %s)",
     sep = "\n"),
     deparse(path), if (is.finite(nmax)) nmax else "Inf", deparse(out_rds))
@@ -3268,7 +3395,9 @@ normalize_label <- function(x) {
 # label LENGTH can: category names are short, free-text responses run long.
 .looks_like_freetext_labels <- function(labs) {
   txt <- trimws(as.character(labs))
-  txt <- txt[nzchar(txt)]
+  # an NA label name is left out like an empty one: nzchar(NA) is TRUE and
+  # nchar(NA) is NA, so the result was NA and the caller's && stopped (U60)
+  txt <- txt[!is.na(txt) & nzchar(txt)]
   if (length(txt) < 5) return(FALSE)   # too few to judge reliably
   mean(nchar(txt) > 40) > 0.2          # a meaningful fraction are long prose
 }
@@ -3870,7 +3999,9 @@ normalize_label <- function(x) {
 # different study. Callers that know the file's group should pass it.
 .extract_haven_labels <- function(df, src, group = NA_character_) {
   labels <- vapply(names(df), function(col) {
-    lbl <- attr(df[[col]], "label")
+    # exact: attr(x, "label") partially matches "labels", so a column with
+    # value labels but no variable label got its first code as label (U145)
+    lbl <- attr(df[[col]], "label", exact = TRUE)
     if (is.null(lbl)) NA_character_ else trimws(as.character(lbl[1]))
   }, character(1))
   # Value labels + declared missing values are useful even for columns without a
@@ -3952,11 +4083,59 @@ normalize_label <- function(x) {
 
 # Strip RTF control codes from a string, returning plain text.
 .strip_rtf <- function(text) {
-  text <- gsub("\\\\[a-z]+\\-?[0-9]*\\s?", " ", text)
-  text <- gsub("\\\\[^a-z\n]", " ", text)
+  # The text of an RTF document, line by line. It was flattened to one line
+  # that began with the font table, without paragraph breaks or characters
+  # written as escapes (U215). Hidden groups are dropped, \\par and \\line are
+  # line breaks, \\'hh (Windows-1252) and \\uN characters are decoded, and
+  # escaped braces and backslashes are kept as characters.
+  text <- paste(text, collapse = "\n")
+  # hidden groups: font/colour tables, stylesheet, info, pictures, \\* groups
+  hidden <- "\\{\\\\(fonttbl|colortbl|stylesheet|info|pict|\\*)"
+  repeat {
+    m <- regexpr(hidden, text, perl = TRUE)
+    if (m < 0) break
+    chars <- strsplit(substring(text, m), "")[[1]]
+    depth <- cumsum((chars == "{") - (chars == "}"))
+    end <- which(depth == 0)[1]
+    if (is.na(end)) end <- length(chars)
+    text <- paste0(substr(text, 1, m - 1), substring(text, m + end))
+  }
+  # protect escaped characters
+  text <- gsub("\\\\\\\\", "\001", text)
+  text <- gsub("\\\\\\{", "\002", text)
+  text <- gsub("\\\\\\}", "\003", text)
+  text <- gsub("\\\\(par|line)\\b ?", "\n", text, perl = TRUE)
+  text <- gsub("\\\\tab\\b ?", "\t", text, perl = TRUE)
+  # \\'hh: one Windows-1252 byte
+  repeat {
+    m <- regexpr("\\\\'[0-9a-fA-F]{2}", text, perl = TRUE)
+    if (m < 0) break
+    hex <- substr(text, m + 2, m + 3)
+    ch <- iconv(rawToChar(as.raw(strtoi(hex, 16L))), "CP1252", "UTF-8")
+    if (is.na(ch)) ch <- ""
+    text <- paste0(substr(text, 1, m - 1), ch, substring(text, m + 4))
+  }
+  # \\uN with its one-character fallback (often "?")
+  repeat {
+    m <- regexpr("\\\\u-?[0-9]+ ?.?", text, perl = TRUE)
+    if (m < 0) break
+    tok <- regmatches(text, m)
+    num <- as.integer(sub("^\\\\u(-?[0-9]+).*", "\\1", tok))
+    if (!is.na(num) && num < 0) num <- num + 65536L
+    ch <- if (is.na(num)) "" else intToUtf8(num)
+    text <- paste0(substr(text, 1, m - 1), ch, substring(text, m + attr(m, "match.length")))
+  }
+  text <- gsub("\\\\~", " ", text)                       # non-breaking space
+  text <- gsub("\\\\[-_]", "", text)                     # optional hyphen
+  text <- gsub("\\\\[a-zA-Z]+-?[0-9]* ?", "", text)      # other control words
+  text <- gsub("\\\\.", "", text)                        # other control symbols
   text <- gsub("[{}]", "", text)
-  text <- gsub("\\s+", " ", text)
-  trimws(text)
+  text <- gsub("\001", "\\", text, fixed = TRUE)
+  text <- gsub("\002", "{", text, fixed = TRUE)
+  text <- gsub("\003", "}", text, fixed = TRUE)
+  # "[ \t]" with a real tab: inside brackets "\\t" is a backslash and a "t"
+  lines <- trimws(gsub("[ \t]+", " ", strsplit(text, "\n", fixed = TRUE)[[1]]))
+  paste(lines[nzchar(lines)], collapse = "\n")
 }
 
 # Extract plain text from a rich-text or binary codebook file (docx/pdf/rtf/
@@ -4082,7 +4261,7 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
         } else {
           has_invalid <- any(vapply(raw, function(col) {
             is.character(col) &&
-              any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")))
+              any(is.na(iconv(col, from = "UTF-8", to = "UTF-8")) & !is.na(col))  # U64
           }, logical(1)))
           if (has_invalid) {
             raw <- tryCatch(
@@ -4146,7 +4325,7 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
         }
       },
       xlsx = , xls = {
-        if (!requireNamespace("readxl", quietly = TRUE)) {
+        if (!requireNamespace("readxl", quietly = TRUE) || !.xls_readable(path)) {
           NULL
         } else {
           .extract_spreadsheet_codebook(
@@ -4519,7 +4698,9 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
   norm_col <- normalize_varname(columns_df$column_name)
 
   # Expand range notation (e.g. "V1-V10") into individual variable rows.
-  range_pat  <- "^([A-Za-z]*)\\s*(\\d+)\\s*[-\u2013]\\s*(\\d+)$"
+  # The second number may repeat the prefix ("V1-V10") or not ("V1-10"); only
+  # the second form was expanded, though the comment named the first (U58).
+  range_pat  <- "^([A-Za-z]*)\\s*(\\d+)\\s*[-\u2013]\\s*(?:\\1)?(\\d+)$"
   range_rows <- grep(range_pat, codebook_vars_df$codebook_variable, perl = TRUE)
   if (length(range_rows) > 0) {
     expanded <- Filter(Negate(is.null), lapply(range_rows, function(i) {
@@ -4585,9 +4766,12 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
     matches  <- codebook_vars_df[name_idx, , drop = FALSE]
     scoped   <- matches[!is.na(matches$group), , drop = FALSE]
     unscoped <- matches[ is.na(matches$group), , drop = FALSE]
-    same_group   <- scoped[!is.na(scoped$group) & scoped$group == cg, , drop = FALSE]
+    # A column without a group matches only labels without one: with cg NA
+    # the comparisons were NA and selected rows of NAs, bogus labels (U58).
+    in_group     <- !is.na(cg) & scoped$group %in% cg
+    same_group   <- scoped[in_group, , drop = FALSE]
     applicable   <- rbind(unscoped, same_group)
-    other_scoped <- scoped[!is.na(scoped$group) & scoped$group != cg, , drop = FALSE]
+    other_scoped <- scoped[!in_group, , drop = FALSE]
 
     if (nrow(applicable) == 0) {
       if (nrow(other_scoped) > 0) {
@@ -4781,13 +4965,16 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
   # column with a stray decimal value (e.g. 3.5 on an otherwise-integer 1-7
   # scale) hit this on every run.
   if (v == round(v)) {
-    ds <- strsplit(as.character(av), "")[[1]]
+    # the decimal digits: as.character(1e5) is "1e+05", whose "1e+0" read as 1,
+    # so 100000 was "a typo of 1" (U59)
+    av_chr <- format(av, scientific = FALSE, trim = TRUE)
+    ds <- strsplit(av_chr, "")[[1]]
     if (length(ds) >= 2) {
       # each single digit (33->3, 25->2 or 5, 105->1/0/5)
       cand <- c(cand, as.integer(ds))
       # drop the leading digit (25 -> 5, 105 -> 5), drop the trailing (25 -> 2)
-      cand <- c(cand, as.integer(substring(as.character(av), 2)),
-                as.integer(substring(as.character(av), 1, nchar(as.character(av)) - 1)))
+      cand <- c(cand, as.integer(substring(av_chr, 2)),
+                as.integer(substring(av_chr, 1, nchar(av_chr) - 1)))
     }
   }
   # sign flip (a -3 typed on a 1..7 scale, or a 3 that should be -3 on a bipolar)
@@ -4863,6 +5050,7 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
   if (length(xv) == 0) return(none)
 
   # -- Establish the valid range: ground truth, else inferred scale ------------
+  interval <- FALSE   # TRUE: valid values are the interval [lo, hi]
   if (!is.null(valid_values) && length(valid_values)) {
     vv <- sort(unique(as.numeric(valid_values)))
     vv <- vv[is.finite(vv)]
@@ -4901,18 +5089,25 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
   } else if (!is.null(valid_range) && length(valid_range) == 2 &&
              all(is.finite(valid_range))) {
     lo <- min(valid_range); hi <- max(valid_range)
-    valid_set <- lo:hi
+    # A range with fractional bounds (1.5 to 4.5) is a continuous interval,
+    # not a set of scale points: lo:hi made 1.5, 2.5, ... and the message's
+    # "%d" stopped on it (U55). Whole-number bounds keep the scale points.
+    interval <- lo != round(lo) || hi != round(hi)
+    valid_set <- if (interval) c(lo, hi) else lo:hi
   } else {
     lo <- hi <- valid_set <- NULL   # signals "run inference below"
   }
+  in_scale <- function(v) if (interval) v >= lo & v <= hi else v %in% valid_set
 
   # -- Ground truth must actually explain most of the data ---------------------
   # A declared range that covers only a small slice of the column is very likely
   # attached to the WRONG column (see the function doc), not evidence that most
   # of the data is broken. Discard it and fall back to inference rather than
   # flagging the majority of the column.
-  if (!is.null(valid_set) && mean(xv %in% valid_set) < min_ground_truth_coverage)
+  if (!is.null(valid_set) && mean(in_scale(xv)) < min_ground_truth_coverage) {
     lo <- hi <- valid_set <- NULL
+    interval <- FALSE
+  }
 
   if (is.null(valid_set) && !isTRUE(infer)) return(none)
   if (is.null(valid_set)) {
@@ -4922,7 +5117,7 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
     valid_set <- lo:hi
   }
 
-  out <- sort(unique(xv[!(xv %in% valid_set)]))
+  out <- sort(unique(xv[!in_scale(xv)]))
   if (length(out) == 0)
     return(list(problem = FALSE, message = "", values = NULL,
                 lower = lo, upper = hi, classes = character(0)))
@@ -4946,9 +5141,11 @@ data_check_scale_values <- function(x, sentinels = .data_missing_sentinels,
   }
   shown_i <- seq_len(min(length(out), n_max))
   parts <- vapply(shown_i, function(i) describe(out[i], classes[i]), character(1))
+  # format(), not "%d": the bounds of an interval are decimals (U55); whole
+  # numbers print as before ("1-7")
   msg <- sprintf(
-    "%d value%s outside the %d-%d scale: %s%s",
-    length(out), plural(length(out)), lo, hi,
+    "%d value%s outside the %s-%s scale: %s%s",
+    length(out), plural(length(out)), format(lo), format(hi),
     paste(parts, collapse = ", "),
     if (length(out) > n_max) ", ..." else "")
   list(problem = TRUE, message = msg, values = out,
@@ -4974,7 +5171,10 @@ data_check_outliers <- function(x, k = 1.5, n_max = 10) {
   if (length(x) < 4) return(none)
   qs <- stats::quantile(x, c(0.25, 0.75), names = FALSE)
   iqr <- qs[2] - qs[1]
-  if (iqr == 0) return(none)
+  # both quartiles infinite (c(1, Inf, Inf, Inf)) gives Inf - Inf = NaN: no
+  # spread, so no outliers (this stopped with "missing value where TRUE/FALSE
+  # needed", U55)
+  if (is.na(iqr) || iqr == 0) return(none)
   lower <- qs[1] - k * iqr
   upper <- qs[2] + k * iqr
   out <- unique(x[x < lower | x > upper])
@@ -5277,7 +5477,9 @@ data_check_colname_collisions <- function(col_names) {
     members <- nms[key == k]
     for (i in which(key == k)) {
       others <- unique(members[members != nms[i]])
-      out[[nms[i]]] <- sprintf(
+      # setNames(), not out[[name]]: a blank name "" could be stored that way
+      # but never read back, so a blank column's collision was lost (U56)
+      out <- c(out, stats::setNames(list(sprintf(
         "Column name becomes \"%s\" when special characters are replaced, the same as %s: tools that sanitize names (R's make.names(), SPSS/SAS/Stata import, codebook section links) cannot tell these columns apart.",
         k,
         if (length(others) == 0)
@@ -5285,7 +5487,7 @@ data_check_colname_collisions <- function(col_names) {
                   sum(members == nms[i]) - 1L,
                   plural(sum(members == nms[i]) - 1L))
         else
-          paste(sprintf('"%s"', utils::head(others, 5)), collapse = ", "))
+          paste(sprintf('"%s"', utils::head(others, 5)), collapse = ", "))), nms[i]))
     }
   }
   out

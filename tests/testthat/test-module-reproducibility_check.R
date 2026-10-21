@@ -515,6 +515,23 @@ test_that("static analysis: a two-script Python pipeline is ordered by read-afte
 
   ord <- stats::setNames(mo$table$run_order, mo$table$file_name)
   expect_lt(ord[["writes_then_reads.py"]], ord[["reads_written.py"]])
+  # open("intermediate.csv", "w") names the path like a read; the script that
+  # writes it was "missing_input" and not run (U235)
+  expect_true(all(mo$table$runnable))
+})
+
+test_that("static analysis: an R script that reads back the file it saved is runnable (U235)", {
+  paper <- test_paper()
+  script <- withr::local_tempfile(fileext = ".R")
+  writeLines(c('d <- read.csv("data.csv")', 'saveRDS(d, "model.rds")',
+               'm2 <- readRDS("model.rds")'), script)
+  code_tbl <- code_tbl_row(paper, "cache.R", script)
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df))
+  mo <- module_run(fake_code, "reproducibility_check")
+  expect_true(mo$table$runnable)
 })
 
 test_that("static analysis: a paper with BOTH R and Python code combines into one summary row", {
@@ -727,4 +744,74 @@ test_that("execute = TRUE: Python console output feeds stat_output via a real sc
   expect_gt(length(mo$stat_output), 0)
   long <- dplyr::bind_rows(lapply(mo$stat_output, `[[`, "long"))
   expect_gt(nrow(long), 0)
+})
+
+test_that("execute = TRUE: scripts are not started once total_timeout has run out (Lakens/tue_datamanager_check#4, item 6)", {
+  skip_if_quick()
+  skip_if_not_installed("callr")
+
+  paper <- test_paper()
+  d <- withr::local_tempdir()
+  writeLines("Sys.sleep(60)", file.path(d, "1_slow.R"))
+  writeLines("y <- 2", file.path(d, "2_next.R"))
+  code_tbl <- rbind(code_tbl_row(paper, "1_slow.R", file.path(d, "1_slow.R")),
+                    code_tbl_row(paper, "2_next.R", file.path(d, "2_next.R")))
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  plan_df <- data.frame(file_name = "data.csv", target_path = "data.csv")
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df),
+                                 psychds_check = list(table = plan_df))
+
+  mo <- module_run(fake_code, "reproducibility_check", execute = TRUE,
+                   timeout = 60, total_timeout = 5)
+  rr <- mo$run_results
+  expect_equal(rr$outcome[match(c("1_slow.R", "2_next.R"), rr$file_name)],
+               c("timed_out", "skipped_time_limit"))
+  expect_match(paste(mo$report, collapse = "\n"),
+               "1 script was not started, because the time for all scripts together", fixed = TRUE)
+})
+
+test_that("execute = TRUE: a script the second run has no time for keeps its first result (Lakens/tue_datamanager_check#4, item 6)", {
+  skip_if_quick()
+  skip_if_not_installed("callr")
+
+  paper <- test_paper()
+  d <- withr::local_tempdir()
+  # 1_use.R needs x from 2_def.R, so the first run fails on it and a second
+  # run in the corrected order follows; 2_def.R uses up the time
+  writeLines("print(x)", file.path(d, "1_use.R"))
+  writeLines(c("x <- 1", "Sys.sleep(60)"), file.path(d, "2_def.R"))
+  code_tbl <- rbind(code_tbl_row(paper, "1_use.R", file.path(d, "1_use.R")),
+                    code_tbl_row(paper, "2_def.R", file.path(d, "2_def.R")))
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  plan_df <- data.frame(file_name = "data.csv", target_path = "data.csv")
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df),
+                                 psychds_check = list(table = plan_df))
+
+  mo <- module_run(fake_code, "reproducibility_check", execute = TRUE,
+                   timeout = 60, total_timeout = 8)
+  rr <- mo$run_results
+  expect_true(attr(rr, "reran_for_order"))
+  expect_equal(rr$outcome[match(c("1_use.R", "2_def.R"), rr$file_name)],
+               c("errored", "timed_out"))
+  expect_false(any(rr$outcome == "skipped_time_limit"))
+})
+
+test_that("the duplicate note gives each copy's path in the package, not its place on this computer (Lakens/tue_datamanager_check#5, item 2)", {
+  paper <- test_paper()
+  code_tbl <- dplyr::bind_rows(
+    code_tbl_row(paper, "ok.R", repro_fixture("ok.R")),
+    code_tbl_row(paper, "ok.R", repro_fixture("ok.R")))
+  code_tbl$file_path <- c("study1/ok.R", "study2/ok.R")
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df))
+  mo <- module_run(fake_code, "reproducibility_check")
+  txt <- paste(mo$report, collapse = "\n")
+  expect_match(txt, "`ok.R` at `study2/ok.R` (same as `ok.R` at `study1/ok.R`)", fixed = TRUE)
+  expect_false(grepl(dirname(repro_fixture("ok.R")), txt, fixed = TRUE))
 })

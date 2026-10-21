@@ -1167,3 +1167,21 @@ test_that("code_*() functions handle an empty file without warnings or errors", 
   expect_no_error(pr <- code_parse_r(text = x))
   expect_false(pr$error)
 })
+
+test_that("code_lang falls back on odd Quarto front matter and notebooks (U68)", {
+  # a front matter that is one value or a list, or a notebook that is not a
+  # JSON object, stopped code_check ("$ operator is invalid")
+  d <- withr::local_tempdir()
+  w <- function(name, lines) { f <- file.path(d, name); writeLines(lines, f); f }
+  expect_equal(code_lang(w("b.qmd", c("---", "just a title", "---", "```{python}", "x = 1", "```"))), "Python")
+  expect_equal(code_lang(w("c.qmd", c("---", "- a", "- b", "---", "```{r}", "x <- 1", "```"))), "R")
+  expect_true(is.na(code_lang(w("e.ipynb", "\"text\""))))
+  expect_true(is.na(code_lang(w("f.ipynb", '{"metadata": "x", "cells": []}'))))
+})
+
+test_that("code_extract_r reads an .Rmd with a numeric YAML chunk label (U153)", {
+  # knitr used the label 3 as a position: "subscript out of bounds", so the
+  # file was skipped
+  txt <- c("# Title", "", "```{r}", "#| label: 3", "x <- 1", "```")
+  expect_true("x <- 1" %in% code_extract_r(text = txt))
+})

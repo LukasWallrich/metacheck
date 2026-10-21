@@ -666,3 +666,66 @@ test_that("codebook_check still uses a tabset in full mode", {
   expect_match(rpt, "## s1.csv", fixed = TRUE)
   expect_match(rpt, "## s2.csv", fixed = TRUE)
 })
+
+test_that(".scale_text_report leaves out NA fields and matches acronyms literally (U93)", {
+  ts <- data.frame(scale_name = c("Big Five Inventory", NA, "Grit Scale", "Need for Cognition"),
+                   acronym = c("BFI", "X", NA, "C++"), n_items = c("44", NA, NA, "18"),
+                   administered = c("yes", NA, "unclear", "yes"), stringsAsFactors = FALSE)
+  # NA fields were printed as "NA" / "NA items"
+  r <- .cbc$.scale_text_report(ts)
+  expect_false(any(grepl("NA", r, fixed = TRUE)))
+  expect_true(any(grepl("**Grit Scale** (possibly not administered here)", r, fixed = TRUE)))
+  # "C++" or "(X" went into a regex unescaped and stopped the module
+  ts$acronym[1] <- "(X"
+  expect_no_error(.cbc$.scale_text_report(ts, matched = "Need for Cognition (C++)"))
+  r <- .cbc$.scale_text_report(ts, matched = "Need for Cognition (C++)")
+  expect_false(any(grepl("Need for Cognition", r, fixed = TRUE)))   # matched by C++
+})
+
+# ── Scale inventory fixes (U91, U92) ──────────────────────────────────────────
+
+test_that("capitalised scale synonyms merge (U92)", {
+  # capitals were stripped before lower-casing: "Emotion Recognition" became
+  # "motion ecognition" and did not merge with "emotion recognition task"
+  res <- data.frame(source_file = "f.csv", column_name = c("a1", "a2", "b1"),
+                    scale = c("Emotion Recognition", "emotion recognition task", "Anxiety"),
+                    confidence = "high", scale_source = "self_generated")
+  expect_equal(.cbc$.selfgen_merge_synonyms(res)$scale,
+               c("Emotion Recognition", "Emotion Recognition", "Anxiety"))
+})
+
+test_that("the scale inventory lists every file's groups at max_calls = 0 (U92)", {
+  # the call cap also stopped the listing after the first file with groups
+  llm_use(FALSE)
+  mk <- function(prefix) {
+    d <- as.data.frame(matrix(1:5, 3, 5)); names(d) <- paste0(prefix, "_", 1:5); d
+  }
+  labels_df <- data.frame(source_file = character(0), column_name = character(0),
+                          label = character(0))
+  r <- .cbc$.identify_scales_prefix_llm(list(a.csv = mk("PANAS"), b.csv = mk("BFI")),
+                                        labels_df, test_paper(), model = NULL,
+                                        params = list(), max_calls = 0)
+  expect_setequal(r$source_file, c("a.csv", "b.csv"))
+})
+
+test_that("on a paper list, the scale prefix stage sends each file's own paper's sentences (U91)", {
+  # `paper` was a list, so no manuscript sentences were sent at all
+  llm_use(TRUE)
+  on.exit(llm_use(FALSE), add = TRUE)
+  sent <- character(0)
+  testthat::local_mocked_bindings(llm = function(text, ...) {
+    sent <<- c(sent, text$text)
+    data.frame(scales = I(list(data.frame(prefix = character(0), scale_name = character(0),
+                                          confidence = character(0)))))
+  })
+  p1 <- test_paper("We measured affect with the PANAS questionnaire.")
+  p2 <- test_paper("Nothing about scales here.")
+  p1$paper_id <- "p1"; p2$paper_id <- "p2"
+  pl <- paperlist(p1, p2)
+  d <- as.data.frame(matrix(1:5, 3, 5)); names(d) <- paste0("PANAS_", 1:5)
+  labels_df <- data.frame(source_file = "a.csv", column_name = names(d),
+                          label = NA_character_, paper_id = "p1")
+  .cbc$.identify_scales_prefix_llm(list(a.csv = d), labels_df, pl, model = NULL,
+                                   params = list(), max_calls = 5)
+  expect_match(paste(sent, collapse = "\n"), "PANAS questionnaire", fixed = TRUE)
+})

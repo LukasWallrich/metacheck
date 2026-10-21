@@ -551,27 +551,28 @@ dataverse_links <- function(paper) {
   has_url <- !is.na(url) & nzchar(url)
   if (!any(has_url)) return(data.frame(host = host, doi = doi))
 
-  host_m <- regmatches(url, regexpr(.dataverse_host_regex(), url,
-                                    ignore.case = TRUE, perl = TRUE))
-  host[has_url] <- tolower(host_m)[seq_len(sum(has_url))]
-  # regexpr/regmatches on a non-match returns character(0) for that element,
-  # which the assignment above silently drops -- realign by re-matching per
-  # element instead when any host is missing after a bulk match.
-  missing <- has_url & (is.na(host) | !nzchar(host %||% ""))
-  if (any(missing)) {
-    host[missing] <- vapply(url[missing], function(u) {
-      m <- regmatches(u, regexpr(.dataverse_host_regex(), u,
-                                 ignore.case = TRUE, perl = TRUE))
-      if (length(m) == 0) NA_character_ else tolower(m)
-    }, character(1))
-  }
+  # Each match goes back to its own URL: regmatches() drops the URLs without
+  # a match, and putting its output back by position gave a URL without a
+  # host the next URL's host (U31). The host must not continue into a longer
+  # host name: dataverse.no is not dataverse.northwestern.edu (U155).
+  host_pat <- paste0("(?:", .dataverse_host_regex(), ")(?![A-Za-z0-9-])")
+  m <- regexpr(host_pat, url, ignore.case = TRUE, perl = TRUE)
+  len <- attr(m, "match.length")
+  hit <- has_url & !is.na(m) & m > 0
+  host[hit] <- tolower(substring(url[hit], m[hit], m[hit] + len[hit] - 1L))
 
   # The label's ":" may be percent-encoded ("persistentId=doi%3A10.7910..."),
   # as a copied link often has it; the value is decoded below.
+  # A value whose %-escapes decode to invalid UTF-8 ("%FF") is no DOI: kept,
+  # it stopped the later string functions for every URL in the call (U39).
+  decode <- function(x) {
+    d <- utils::URLdecode(x)
+    if (validUTF8(d)) d else NA_character_
+  }
   doi_pattern <- "persistentId=doi(?::|%3A)([^&\\s\"']+)"
   doi_m <- regmatches(url, regexec(doi_pattern, url, ignore.case = TRUE, perl = TRUE))
   doi <- vapply(doi_m, function(m) {
-    if (length(m) < 2) NA_character_ else utils::URLdecode(m[[2]])
+    if (length(m) < 2) NA_character_ else decode(m[[2]])
   }, character(1))
 
   # A dataset with a Handle instead of a DOI ("?persistentId=hdl:10411/B2VWDH"
@@ -582,7 +583,8 @@ dataverse_links <- function(paper) {
   hdl_m <- regmatches(url, regexec("persistentId=hdl(?::|%3A)([^&\\s\"']+)", url,
                                    ignore.case = TRUE, perl = TRUE))
   hdl <- vapply(hdl_m, function(m) {
-    if (length(m) < 2) NA_character_ else paste0("hdl:", utils::URLdecode(m[[2]]))
+    h <- if (length(m) < 2) NA_character_ else decode(m[[2]])
+    if (is.na(h)) NA_character_ else paste0("hdl:", h)
   }, character(1))
   doi[is.na(doi)] <- hdl[is.na(doi)]
 
@@ -593,7 +595,11 @@ dataverse_links <- function(paper) {
   # host-resolved (a real dataset.xhtml page can incidentally contain a
   # 10.xxxx-shaped substring elsewhere that isn't the dataset's own DOI, so
   # this fallback is deliberately host-scoped, not a blanket second attempt).
-  bare_doi_needed <- is.na(doi) & has_url
+  # Not for a URL WITH a persistentId that could not be decoded (U39): the
+  # bare pattern stopped at its "%" and gave a cut-off DOI ("10.7910/DVN/AB"
+  # for "...DVN/AB%FFCD"), possibly another dataset's.
+  has_pid <- grepl("persistentId=(doi|hdl)(:|%3A)", url, ignore.case = TRUE)
+  bare_doi_needed <- is.na(doi) & has_url & !has_pid
   if (any(bare_doi_needed)) {
     bare_m <- regmatches(url, regexec("(10\\.\\d+/[A-Za-z0-9/._-]+)", url, perl = TRUE))
     bare_doi <- vapply(bare_m, function(m) if (length(m) < 2) NA_character_ else m[[2]], character(1))
@@ -769,7 +775,9 @@ dataverse_info <- function(dataverse_url, id_col = 1, pb = NULL, cache = FALSE) 
   }
 
   rec <- tryCatch(httr2::resp_body_json(resp), error = \(e) NULL)
-  if (is.null(rec) || is.null(rec$data)) {
+  # data given as a plain string is not a dataset record: data$latestVersion
+  # stopped on it (U34)
+  if (is.null(rec) || !is.list(rec$data)) {
     obj$error <- "parse_error"
     return(obj)
   }
@@ -809,7 +817,7 @@ dataverse_info <- function(dataverse_url, id_col = 1, pb = NULL, cache = FALSE) 
   obj$publication_date <- version$releaseTime %empty_or% data$publicationDate %empty_or% NA_character_
   obj$updated_date <-     version$lastUpdateTime %empty_or% NA_character_
   obj$authors <-          list(authors)
-  obj$license <-          version$license$name %empty_or% NA_character_
+  obj$license <-          .field_or_value(version$license, "name") %empty_or% NA_character_
   obj$files <-            list(version$files %||% list())
 
   return(obj)
@@ -1037,43 +1045,16 @@ dataverse_file_download <- function(host, doi,
     unzippable <- .is_zip(files$key) & !is.na(files$self) & nzchar(files$self %||% "")
 
   # --- size filters (MB) ----
-  if (!is.null(max_file_size) && is.finite(max_file_size) && max_file_size > 0) {
-    too_big_files <- which(files$size > max_file_size * 1024 * 1024 & !unzippable)
-    if (length(too_big_files) > 0) {
-      for (i in too_big_files) {
-        paste0(
-          "- omitting ", files$key[[i]],
-          " (", round(files$size[[i]] / 1024 / 1024, 1), "MB)"
-        ) |>
-          list(what = _) |>
-          pb$tick(0, tokens = _)
-      }
-      files <- files[-too_big_files, , drop = FALSE]
-      unzippable <- unzippable[-too_big_files]
-    }
-  }
+  # Omitted files stay in the table with downloaded = FALSE, as documented;
+  # they were dropped from it (U36).
+  omit <- .omit_for_size(files$size, files$key, unzippable,
+                         max_file_size, max_download_size, pb)
 
-  if (!is.null(max_download_size) && is.finite(max_download_size) && max_download_size > 0) {
-    while (any(!unzippable) &&
-           sum(files$size[!unzippable], na.rm = TRUE) > max_download_size * 1024 * 1024) {
-      capped <- which(!unzippable)
-      max_file <- capped[which.max(files$size[capped])]
-      paste0(
-        "- omitting ", files$key[[max_file]],
-        " (", round(files$size[[max_file]] / 1024 / 1024, 1), "MB)"
-      ) |>
-        list(what = _) |>
-        pb$tick(0, tokens = _)
-      files <- files[-max_file, , drop = FALSE]
-      unzippable <- unzippable[-max_file]
-    }
-  }
-
-  if (nrow(files) == 0) {
+  if (all(omit)) {
     paste0("- All files omitted due to size constraints") |>
       list(what = _) |>
       pb$tick(0, tokens = _)
-    return(NULL)
+    return(invisible(.all_omitted_table(files, list(dataverse_host = host, dataverse_doi = doi))))
   }
 
   # --- target directory (avoid overwrite) ----
@@ -1082,10 +1063,13 @@ dataverse_file_download <- function(host, doi,
   if (dir.exists(download_to)) {
     download_to <- file.path(download_to, folder_name)
   }
+  # the base name is kept as it is: stripping "_<digits>" on each pass also
+  # stripped the deposit id of "figshare_<id>", so the next download went to
+  # "figshare_1" instead of "figshare_<id>_1" (U37)
   i <- 0L
+  base <- download_to
   while (dir.exists(download_to)) {
     i <- i + 1L
-    base <- sub("_\\d+$", "", download_to)
     download_to <- paste0(base, "_", i)
   }
   dir.create(download_to, showWarnings = FALSE, recursive = FALSE)
@@ -1095,7 +1079,7 @@ dataverse_file_download <- function(host, doi,
 
   # --- download into temp, then copy to target ----
   temppath <- tempfile()
-  on.exit(unlink(temppath, recursive = TRUE))
+  on.exit(unlink(temppath, recursive = TRUE), add = TRUE)
   dir.create(temppath)
 
   n <- nrow(files)
@@ -1113,6 +1097,7 @@ dataverse_file_download <- function(host, doi,
   # this per-record download always goes file by file (or member by member,
   # for a zip named in unzip_types).
   for (i in seq_len(n)) {
+    if (omit[i]) next   # left out for its size (U36)
     # --- selected members out of a zip, instead of the whole zip ----
     if (unzippable[i]) {
       paste0("Reading zip contents of ", files$key[[i]]) |>
@@ -1167,7 +1152,7 @@ dataverse_file_download <- function(host, doi,
         error = \(e) NULL
       )
       if (!is.null(resp) && httr2::resp_status(resp) == 200) {
-        writeBin(httr2::resp_body_raw(resp), target_path)
+        writeBin(.resp_bytes(resp), target_path)
         ok <- TRUE
       }
     }
@@ -1194,9 +1179,9 @@ dataverse_file_download <- function(host, doi,
   # --- verify what actually reached the disk ----
   files <- .dataverse_verify_downloads(files, download_to)
 
-  n_missing <- sum(!files$downloaded)
+  n_missing <- sum(!files$downloaded & !omit)   # omitted files were never meant to arrive
   if (n_missing > 0) {
-    worst <- files[!files$downloaded, ]
+    worst <- files[!files$downloaded & !omit, ]
     warning(sprintf(
       "%d of %d file%s from Dataverse dataset %s did not arrive intact (e.g. %s). The returned table marks %s downloaded = FALSE. Run again to retry.",
       n_missing, nrow(files), plural(nrow(files)), doi,

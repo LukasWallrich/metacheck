@@ -18,6 +18,9 @@
 #'
 #' @returns a list
 marginal <- function(paper) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # table ----
   pattern <- "margin\\w* (?:\\w+\\s+){0,5}significan\\w*|trend\\w* (?:\\w+\\s+){0,1}significan\\w*|almost (?:\\w+\\s+){0,2}significan\\w*|approach\\w* (?:\\w+\\s+){0,2}significan\\w*|border\\w* (?:\\w+\\s+){0,2}significan\\w*|close to (?:\\w+\\s+){0,2}significan\\w*"
   table <- text_search(paper, pattern)
@@ -69,7 +72,11 @@ marginal <- function(paper) {
 marg_ref <- bibentry(
   bibtype = "Article",
   title = "The Prevalence of Marginally Significant Results in Psychology Over Time",
-  author = "Olsson-Collentine, A., van Assen, M. A. L. M., & Hartgerink, C. H. J.",
+  # person() objects: as one string, R's formatter re-parsed the names into
+  # "van Assen, M. MAL, Hartgerink &amp;, J. CH" (U3)
+  author = c(person(given = "A.", family = "Olsson-Collentine"),
+             person(given = c("M.", "A.", "L.", "M."), family = "van Assen"),
+             person(given = c("C.", "H.", "J."), family = "Hartgerink")),
   year = "2019",
   journal = "Psychological Science",
   volume = 30,

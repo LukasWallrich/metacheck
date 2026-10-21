@@ -59,7 +59,10 @@
     "\u226A", # <<
     "\u226B" # >>
   ) |> paste(collapse = "")
-  num_pre_op <- sprintf("\\s+([\u00B20-9.]+\\s*[%s])", operators)
+  # without "<": on raw XML a text "<" is "&lt;", so "<" only ever matched
+  # the start of a tag, and a number before a tag lost its space ("Table 1",
+  # "Fig. 1</ref>" -> "Fig.1"; U16)
+  num_pre_op <- sprintf("\\s+([\u00B20-9.]+\\s*[%s])", sub("<", "", operators, fixed = TRUE))
 
   xml_text <- readLines(path, warn = FALSE) |>
     paste(collapse = "\n") |>
@@ -69,8 +72,10 @@
     # fix common mangled stats
     #gsub("\u00B2",  "2", x = _) |> # squared -> 2
     gsub(num_pre_op, "\\1", x = _) |>    # "XX  2 = ?" -> "XX2 = ?"
+    gsub("\\s+(\\.\\s*<)", "\\1", x = _) |> # a stray space before a full stop that ends an element
     gsub("r\\s*p\\s*2",                  "rp\u00B2", x = _) |>
-    gsub("\u03C\\s*p\\s*2",              "\u03Cp\u00B2", x = _) |> # omega
+    # omega is \u03C9: "\u03C" was read as "<", so this rewrote "<p2" (U16)
+    gsub("\u03C9\\s*p\\s*[2\u00B2]",     "\u03C9p\u00B2", x = _) |> # omega
     gsub("\u03B7\\s*p\\s*[2\u00B2]",     "\u03B7p\u00B2", x = _) |> # eta
     gsub("\u03B7\\s*G\\s*[2\u00B2]",     "\u03B7G\u00B2", x = _) |> # eta
     gsub("\u03B7\\s*[2\u00B2]",          "\u03B7\u00B2", x = _) |> # eta
@@ -84,7 +89,8 @@
     gsub("\u03A7[2\u00B2]\\s*\\((\\s*\\d+)\\s*\\)", "\u03A7\u00B2(\\1)", x = _) |> # chi
     gsub("\\br\\s*\\((\\s*\\d+)\\s*\\)", "r(\\1)", x = _) |>
     gsub("\\bd\\s+z\\b",                 "dz", x = _) |> # sz
-    gsub("\\bd\\g+z\\b",                 "gz", x = _) |># gz
+    # "\\g" is a literal g, so this turned "dgz" into "gz" (U16)
+    gsub("\\bg\\s+z\\b",                 "gz", x = _) |> # gz
     gsub("\\bBF\\s+([10]{2})\\b",        "BF\\1", x = _) |> # BF 10; BF 01
 
     gsub("(https?://)\\s+", "\\1", x = _) |> # whitespace in url

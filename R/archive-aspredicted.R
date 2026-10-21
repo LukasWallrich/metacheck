@@ -117,7 +117,15 @@ aspredicted_info <- function(ap_url, id_col = 1, wait = 1) {
         "scienceverse/metacheck"
       )
     ) |>
-    httr2::req_perform()
+    # without req_error(), an HTTP error status raised before the status check
+    # below and stopped prereg_check (U54); a failed connection did too
+    httr2::req_error(is_error = \(resp) FALSE)
+  resp <- tryCatch(httr2::req_perform(resp), error = \(e) NULL)
+  if (is.null(resp)) {
+    obj$error <- "the connection failed"
+    warning(ap_url, " error: ", obj$error, call. = FALSE)
+    return(obj)
+  }
 
   # handle missing file
   if (httr2::resp_status(resp) != 200) {

@@ -69,7 +69,7 @@ test_that("ref_accuracy", {
   paper <- demopaper()
   paper$bib_match <- NULL
   mod_output <- module_run(paper, module)
-  expect_equal(mod_output$traffic_light, "error")
+  expect_equal(mod_output$traffic_light, "fail")   # "error" is not a light (U30)
   expect_null(mod_output$table)
   expect_match(mod_output$summary_text, "add_bib_match")
 
@@ -241,4 +241,110 @@ test_that("ref_summary", {
     module_run(module)
   expect_in("accuracy_mismatch", names(mod_output$table))
   expect_disjoint("retractionwatch", names(mod_output$table))
+})
+
+test_that("ref_pubpeer reports a failed PubPeer request instead of stopping (U23)", {
+  # pubpeer_comments() gives NULL for an error answer; the join stopped on it
+  local_mocked_bindings(pubpeer_comments = function(doi) NULL)
+  mo <- module_run(demopaper(), "ref_pubpeer")
+  expect_equal(mo$traffic_light, "fail")
+  expect_match(mo$summary_text, "PubPeer could not be reached", fixed = TRUE)
+})
+
+test_that("ref_consistency reports a citation to a missing reference, and reads 'bib' xrefs (U115, U207)", {
+  # a citation with a bib_id that is not in the bibliography was never
+  # reported, and an older bibr export ("bib" xrefs) had no citations at all
+  p <- demopaper()
+  x <- p$xref[p$xref$xref_type == "bibr", ][1, ]
+  x$xref_id <- 99L; x$contents <- "(Nobody, 1900)"
+  p$xref <- rbind(p$xref, x)
+  mo <- module_run(p, "ref_consistency")
+  expect_equal(mo$summary_table$n_missing, 1)
+  expect_true(99L %in% mo$table$bib_id)
+
+  p2 <- demopaper()
+  n_cited <- module_run(p2, "ref_consistency")$summary_table$n_xrefs
+  p2$xref$xref_type[p2$xref$xref_type == "bibr"] <- "bib"
+  expect_equal(module_run(p2, "ref_consistency")$summary_table$n_xrefs, n_cited)
+})
+
+test_that("ref_accuracy counts a reference with several bib_match rows once, and ignores footnote markers in titles (U114)", {
+  # three joins multiplied duplicate bib_match rows (3 copies: 31 rows for 5
+  # references); <sup> markers were compared as part of the title
+  p <- demopaper()
+  n <- nrow(module_run(p, "ref_accuracy")$table)
+  p$bib_match <- rbind(p$bib_match, p$bib_match[1, ], p$bib_match[1, ])
+  expect_equal(nrow(module_run(p, "ref_accuracy")$table), n)
+
+  p <- demopaper()
+  i <- match(p$bib_match$bib_id[1], p$bib$bib_id)
+  before <- module_run(p, "ref_accuracy")$table
+  p$bib$title[i] <- paste0(p$bib$title[i], "<sup>1</sup>")
+  after <- module_run(p, "ref_accuracy")$table
+  expect_equal(after$title_mismatch, before$title_mismatch)
+})
+
+test_that("ref_pubpeer counts a DOI cited three times once, and runs without url fields (U118)", {
+  # 3 citations x 3 lookups gave 9 rows ("You cited 9 references", 18
+  # comments); without a url the module stopped
+  p <- test_paper("x")
+  local_mocked_bindings(
+    ref_table = function(paper) data.frame(paper_id = paper$paper_id, bib_id = 1:3,
+                                           doi = "10.1/x", text = c("A", "A2", "A3")),
+    pubpeer_comments = function(doi) data.frame(doi = doi, total_comments = 2, users = "someone"))
+  mo <- module_run(p, "ref_pubpeer")
+  expect_match(mo$summary_text, "You cited 1 reference", fixed = TRUE)
+  expect_equal(mo$summary_table$pubpeer_comments, 2)
+})
+
+test_that("ref_retraction compares DOIs without case (U157)", {
+  # a lower-case citation of a RetractionWatch DOI with capitals was missed
+  p <- test_paper("x")
+  local_mocked_bindings(ref_table = function(paper)
+    data.frame(paper_id = paper$paper_id, bib_id = 1, doi = "10.1016/s0140-6736(97)11096-0",
+               text = "Wakefield"))
+  mo <- module_run(p, "ref_retraction")
+  expect_equal(mo$table$doi, "10.1016/s0140-6736(97)11096-0")
+  expect_match(mo$table$retractionwatch, "Retraction", fixed = TRUE)
+})
+
+test_that("ref_miscitation matches DOIs without case, and a missing DOI matches nothing (U117, U157)", {
+  paper <- demopaper()
+  test_doi <- "10.1037/0003-066x.54.6.408"
+  db <- data.frame(doi = c(toupper(test_doi), NA), reftext = c("Ref", "None"),
+                   warning = c("Warn", "No DOI"))
+  mo <- module_run(paper, "ref_miscitation", db = db)
+  expect_equal(unique(mo$table$doi), test_doi)
+  expect_false("No DOI" %in% mo$table$warning)
+})
+
+test_that("ref_replication drops a citation of the original only when the same paper cites the replication (U116)", {
+  # paper B citing a replication hid paper A's citation of the original
+  fl <- FLoRA()
+  row <- fl[!is.na(fl$doi_r) & nzchar(fl$doi_r) & !is.na(fl$doi_o) & nzchar(fl$doi_o), ][1, ]
+  pa <- test_paper("x"); pa$paper_id <- "A"
+  pb <- test_paper("y"); pb$paper_id <- "B"
+  local_mocked_bindings(ref_table = function(paper)
+    data.frame(paper_id = c("A", "B"), bib_id = 1L, doi = c(row$doi_o, row$doi_r),
+               text = c("original", "replication")))
+  mo <- module_run(paperlist(pa, pb), "ref_replication")
+  # the replication paper B cites is still listed for paper A
+  expect_true(tolower(row$doi_r) %in% tolower(mo$table$replication_doi[mo$table$paper_id == "A"]))
+})
+
+test_that("ref_summary labels unmatched references and keeps one row per reference (U119)", {
+  # no_match with every *_mismatch FALSE gave NA; two replications repeated
+  # the reference
+  p <- demopaper()
+  pid <- p$paper_id; b <- unique(ref_table(p)$bib_id)
+  acc <- data.frame(paper_id = pid, bib_id = b[1:2], no_match = c(TRUE, FALSE),
+                    title_mismatch = c(FALSE, TRUE), doi_mismatch = FALSE)
+  rep_tbl <- data.frame(paper_id = pid, bib_id = b[3], replication_type = c("direct", "conceptual"))
+  fake <- structure(list(module = "ref_replication", table = rep_tbl, paper = p,
+                         summary_table = data.frame(paper_id = pid),
+                         prev_outputs = list(ref_accuracy = list(table = acc))),
+                    class = "metacheck_module_output")
+  mo <- module_run(fake, "ref_summary")
+  expect_equal(nrow(mo$table), length(b))
+  expect_equal(mo$table$accuracy_mismatch[mo$table$bib_id == b[1]], "no match")
 })

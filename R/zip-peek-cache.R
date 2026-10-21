@@ -67,19 +67,30 @@ zip_peek_cache_clear <- function() {
 }
 
 # Write a zip_peek() result (a data.frame listing, or NULL) for one archive
-# URL. A NULL result (host does not support ranges, or the central directory
-# could not be read) is deliberately cached too, matching the in-memory cache
-# in R/zip-peek.R -- see that file's own comment: a zip's support for range
-# requests, like its contents, cannot change, so a cached refusal is not a
-# transient failure worth re-trying on the next restart. Write failures are
-# swallowed (a caching miss is never worse than the uncached behaviour).
+# URL. A NULL result is cached only when the archive itself was read and is
+# not a readable zip; zip_peek() does not write a failed download here, since
+# a connection failure, a rate limit or a server error passes, and the file
+# outlives the session (U210). The entry is written to a temporary file and
+# renamed into place, so an interrupted write leaves no partial entry. Write
+# failures are swallowed (a caching miss is never worse than the uncached
+# behaviour).
 .zip_peek_cache_put <- function(url, value) {
-  tryCatch(saveRDS(value, .zip_peek_cache_path(url)), error = function(e) NULL)
+  path <- .zip_peek_cache_path(url)
+  tmp <- sub("\\.rds$", paste0(".tmp", Sys.getpid(), ".rds"), path)
+  tryCatch({
+    saveRDS(value, tmp)
+    if (!file.rename(tmp, path)) unlink(tmp)
+  }, error = function(e) unlink(tmp))
   invisible(value)
 }
 
 # Whether a cache entry exists on disk for this URL -- distinguishes "cached
 # NULL" (a real result: the peek failed) from "never attempted", the same
 # distinction zip_peek()'s in-memory check makes with exists()/get() rather
-# than a NULL-returning lookup.
-.zip_peek_cache_has <- function(url) file.exists(.zip_peek_cache_path(url))
+# than a NULL-returning lookup. An entry that cannot be read is not one: it
+# was returned as a cached failure (U210).
+.zip_peek_cache_has <- function(url) {
+  path <- .zip_peek_cache_path(url)
+  file.exists(path) &&
+    !inherits(tryCatch(readRDS(path), error = function(e) e), "error")
+}

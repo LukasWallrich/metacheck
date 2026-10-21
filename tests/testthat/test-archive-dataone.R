@@ -184,3 +184,34 @@ test_that(".dataone_info asks for a DOI in upper case after a 404 (#476)", local
   expect_warning(metacheck:::.dataone_info("urn:uuid:abc", host = "knb.ecoinformatics.org"))
   expect_length(seen, 1)
 }))
+
+test_that("DataONE: creators without a name part, a PID's final full stop, one fetch per dataset (U35, U40)", local({
+  # a surname-only creator was "NA Smith"; "doi:10.5063/PG1Q4B." kept the
+  # full stop; two URLs for one dataset fetched it twice and gave 4 rows
+  eml <- paste0(
+    '<eml:eml xmlns:eml="https://eml.ecoinformatics.org/eml-2.2.0"><dataset>',
+    '<title>T</title>',
+    '<creator><individualName><surName>Smith</surName></individualName></creator>',
+    '<creator><organizationName>Arctic Lab</organizationName></creator>',
+    '<creator><individualName><givenName>Ann</givenName><surName>Lee</surName></individualName></creator>',
+    '</dataset></eml:eml>')
+  testthat::local_mocked_bindings(
+    .batch_query = function(urls, ...) list(httr2::response(status_code = 200, body = charToRaw(eml))),
+    .dataone_package_sizes = function(...) numeric(0))
+  info <- metacheck:::.dataone_info("doi:10.5063/F1TEST", host = "knb.ecoinformatics.org")
+  expect_equal(info$authors[[1]], c("Smith", "Arctic Lab", "Ann Lee"))
+
+  expect_equal(metacheck:::.dataone_pid("doi:10.5063/PG1Q4B."), "doi:10.5063/PG1Q4B")
+
+  calls <- 0
+  testthat::local_mocked_bindings(
+    online = function(...) TRUE,
+    .dataone_info = function(pid, host, pb = NULL) {
+      calls <<- calls + 1
+      data.frame(dataone_host = host, dataone_pid = pid, title = "T")
+    })
+  res <- dataone_info(c("https://knb.ecoinformatics.org/view/doi:10.5063/PG1Q4B",
+                        "https://knb.ecoinformatics.org/view/doi:10.5063/PG1Q4B."))
+  expect_equal(calls, 1)
+  expect_equal(nrow(res), 2)
+}))

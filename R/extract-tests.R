@@ -312,6 +312,12 @@
 #'   (the test rendered back as text, e.g. `"t(23) = 3.77, p = .001, d = 0.77"`).
 #' @export
 extract_tests <- function(paper) {
+  # each paper of a list on its own: paper_id() gave every id, so every test
+  # was repeated for every paper (U10)
+  if (.is_paper_list(paper)) {
+    out <- dplyr::bind_rows(lapply(paper, extract_tests))
+    return(if (nrow(out)) out else .empty_tests())
+  }
   eq <- paper$eq
   if (is.null(eq) || !nrow(eq)) eq <- tryCatch(extract_eq(paper),
                                                error = function(e) NULL)

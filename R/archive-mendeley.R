@@ -89,7 +89,7 @@ mendeley_links <- function(paper) {
   }
 
   if (length(mendeley_url) > 1) {
-    return(vapply(mendeley_url, .mendeley_id, character(1)))
+    return(vapply(mendeley_url, .mendeley_id, character(1), USE.NAMES = FALSE))
   }
 
   # handle single mendeley_url ----
@@ -289,13 +289,13 @@ mendeley_info <- function(mendeley_url, id_col = 1, pb = NULL, cache = FALSE) {
   # "replacement has 0 rows". List-wrapped fields (authors, files) don't
   # need it: wrapping in list() always yields length 1.
   obj$title <-            rec$name %empty_or% NA_character_
-  obj$doi <-              rec$doi$id %empty_or% NA_character_
+  obj$doi <-              .field_or_value(rec$doi, "id") %empty_or% NA_character_
   obj$description <-      rec$description %empty_or% NA_character_
   obj$publication_date <- rec$publish_date %empty_or% NA_character_
   obj$updated_date <-     rec$modified_on %empty_or% NA_character_
   obj$authors <-          list(authors)
-  obj$license <-          rec$data_licence$short_name %empty_or%
-                          rec$data_licence$full_name %empty_or%
+  obj$license <-          .field_or_value(rec$data_licence, "short_name") %empty_or%
+                          .field_or_value(rec$data_licence, "full_name") %empty_or%
                           NA_character_
   obj$files <-            list(rec$files %||% list())
 

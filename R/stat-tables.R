@@ -68,6 +68,9 @@ read_stat_tables <- function(path) {
   on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
   files <- tryCatch(suppressWarnings(utils::unzip(path, exdir = tmp)),
                     error = function(e) character(0))
+  # not a zip (another file, an empty zip, a folder): unzip() gives NULL, and
+  # basename(NULL) below stopped (U137); such a path has no tables
+  if (!length(files)) return(list())
 
   # PREFERRED for .jasp: the archive's own analyses.json carries the STRUCTURED
   # results (machine column names, native numeric values), which beats scraping
@@ -614,7 +617,10 @@ read_stat_tables <- function(path) {
 
   mat <- do.call(rbind, lapply(data_rows, function(k) {
     v <- grid_of(row_cells[[k]])
-    length(v) <- gw                          # align to the header grid width
+    # align to the header grid width; a short row is padded with empty
+    # cells, not NA, so a row without content is dropped as empty below
+    # (NA padding made it an NA row; U141)
+    if (length(v) < gw) v <- c(v, rep("", gw - length(v))) else length(v) <- gw
     v
   }))
 
@@ -790,7 +796,9 @@ read_stat_tables <- function(path) {
 # text column instead of losing the output.
 .ipynb_stat_line <- function(lines) {
   out <- lapply(lines, function(ln) {
-    cls <- .ipynb_result_class(ln) %||% ""
+    # NA when the line names no *Result class, which %||% does not replace (U139)
+    cls <- .ipynb_result_class(ln)
+    if (is.null(cls) || is.na(cls)) cls <- ""
     ln <- .ipynb_strip_numpy_scalars(ln)
     parsed <- .r_output_oneline(ln, source_label = NA_character_)
     if (!length(parsed)) return(NULL)
@@ -831,7 +839,7 @@ read_stat_tables <- function(path) {
   # recognisably the coefficient-table shape (has "coef" and at least one of
   # the columns that always accompanies it).
   is_coef_table <- function(tb) {
-    hdr <- tolower(trimws(names(tb$data)))
+    hdr <- tolower(trimws(names(tb[["data"]])))
     "coef" %in% hdr && any(c("std err", "t", "p>|t|", "p>|z|") %in% hdr)
   }
   tabs <- Filter(is_coef_table, tabs)
@@ -964,7 +972,7 @@ read_stat_tables <- function(path) {
         for (tb in tabs) {
           ti <<- ti + 1L
           out[[length(out) + 1L]] <<- list(
-            analysis = analysis, title = title, data = tb$data,
+            analysis = analysis, title = title, data = tb[["data"]],
             table_index = ti)
         }
         return(invisible())

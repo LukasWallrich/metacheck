@@ -7,7 +7,8 @@
 module_run(paper, module, ...)
 }
 \arguments{
-\item{paper}{a paper object or a list of paper objects}
+\item{paper}{a paper object or a list of paper objects, or NULL to check
+only local files (a module's \code{local_path} argument)}
 
 \item{module}{the name of a module or path to a module to run on this object}
 

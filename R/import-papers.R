@@ -22,7 +22,8 @@ papers_available <- function(repo = "scienceverse/papers") {
     name    = corpus_name,
     tag     = assets$tag,
     size_mb = round(assets$size / 1e6, 1),
-    cached  = file.exists(file.path(cache_dir, paste0(corpus_name, ".rds")))
+    # paste0(character(0), ".rds") is ".rds": one value for no corpora (U18)
+    cached  = if (length(corpus_name)) file.exists(file.path(cache_dir, paste0(corpus_name, ".rds"))) else logical(0)
   )
 }
 
@@ -247,5 +248,10 @@ papers_metadata <- function(name, repo = "scienceverse/papers") {
     )
   })
 
-  do.call(rbind, Filter(Negate(is.null), rows))
+  out <- do.call(rbind, Filter(Negate(is.null), rows))
+  # no release with an .rds file: an empty table, as for no releases; NULL here
+  # stopped papers_available() and then papers_load() (U18)
+  if (is.null(out)) out <- data.frame(name = character(0), tag = character(0),
+                                      size = numeric(0), download_url = character(0))
+  out
 }

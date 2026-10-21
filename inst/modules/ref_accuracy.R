@@ -79,7 +79,8 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
 
   if (nrow(bib_match) == 0) {
     norefs <- list(
-      traffic_light = "error",
+      # "fail": "error" is not one of metacheck's lights (U30)
+      traffic_light = "fail",
       summary_text = "We found no bib_match entries. You may need to add them with `add_bib_match()`."
     )
     return(norefs)
@@ -89,6 +90,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
             "container")
   ref_table <- ref_table(paper)
   ref_table$doi <- NULL
+  # one row per reference: with several bib_match rows for a bib_id the three
+  # joins below gave k^3 rows, and ref_table() repeats the reference too
+  # (U114); the match with the highest score is kept
+  bib_match <- bib_match[order(-(bib_match$score %||% 0)), , drop = FALSE]
+  bib_match <- bib_match[!duplicated(bib_match[, c("paper_id", "bib_id")]), , drop = FALSE]
+  ref_table <- ref_table[!duplicated(ref_table[, c("paper_id", "bib_id")]), , drop = FALSE]
   # left join so every reference is kept, including those with no CrossRef
   # record. A reference that printed a DOI which does not resolve produces no
   # bib_match row; an inner join would silently drop it (and lose its cited
@@ -150,7 +157,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     tolower(x) |>
       gsub("</?[a-z]+>", "", x = _) |>
       deaccent() |>                              # fold diacritics
-      gsub("\\p{Pd}", "", x = _, perl = TRUE) |> # remove dashes
+      gsub("\\p{Pd}", " ", x = _, perl = TRUE) |> # dashes fold to spaces (they were removed: "retractedevil"; U114)
       gsub("\\s+", " ", x = _) |>
       gsub("[\u2018\u2019\u201A\u201B\u0060]", "'", x = _) |>
       # make all single quotes, even doubles
@@ -204,8 +211,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # title, while a genuinely different title still does. norm_title strips tags,
   # footnote markers and punctuation, folds dashes to spaces and diacritics.
   norm_title <- \(x) {
+    # footnote superscripts first: clean() removes the tags but keeps their
+    # text, so this never matched after it and the markers stayed (U114)
+    x <- gsub("<sup>.*?</sup>", "", x, ignore.case = TRUE, perl = TRUE)
     x <- clean(x)                                 # lowercases, folds diacritics
-    x <- gsub("<sup>.*?</sup>", "", x)            # footnote superscripts
     x <- gsub("</?[a-z]+>", "", x)                # any other tags
     x <- gsub("[^a-z0-9]", "", x)                 # keep only alphanumerics
     x
@@ -327,7 +336,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     if (n_nodoi > 0) " Adding a DOI to every reference that has one lets the other reference checks (retraction, PubPeer, and replication) run on them too." else ""
   )
 
-  guidance <- "The references below supplied a DOI, but one or more of the cited details (title, authors, journal, or year) does not match the record that DOI points to. Such an incoherent is most often an error in reading the reference from the PDF, but it could be a mistake, ar an AI generated reference. Check each against the original source. Incoherent references are mostly PDF parsing errors (we are working on improving reference parsing)."
+  guidance <- "The references below supplied a DOI, but one or more of the cited details (title, authors, journal, or year) does not match the record that DOI points to. Such an incoherence is most often an error in reading the reference from the PDF, but it could be a mistake, or an AI-generated reference. Check each against the original source. Incoherent references are mostly PDF parsing errors (we are working on improving reference parsing)."
 
   if (n_inc == 0) guidance <- ""
 

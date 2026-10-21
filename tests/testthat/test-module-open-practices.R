@@ -84,3 +84,15 @@ test_that("error: argument is of length zero", {
   expect_equal(nrow(mo$table), 0)
   expect_equal(mo$summary_table$data_open, FALSE)
 })
+
+test_that("open_practices: a list counts papers without a statement, on-request ignores case (U106, U107)", {
+  # a list with one flagged paper got the single-paper light and summary;
+  # "ON REQUEST" was not flagged
+  p1 <- test_paper("All data are available at https://osf.io/abcde."); p1$paper_id <- "p1"
+  p2 <- test_paper("We report r(68) = .58."); p2$paper_id <- "p2"
+  mo <- module_run(paperlist(p1, p2), "open_practices")
+  expect_equal(mo$traffic_light, "info")
+  expect_match(mo$summary_text, "1 only data, 0 only code, and 1 neither", fixed = TRUE)
+  mo3 <- module_run(test_paper("Data are available ON REQUEST from the authors."), "open_practices")
+  expect_match(mo3$summary_text, "only on request", fixed = TRUE)
+})

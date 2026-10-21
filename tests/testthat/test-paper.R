@@ -149,9 +149,11 @@ test_that("paperlist", {
                       merge_duplicates = TRUE)
   expect_equal(names(merged), names(psychsci[1:3]))
 
-  # don't merge duplicate papers
+  # don't merge duplicate papers; the second copy is renamed "~2" (U208)
   merged <- paperlist(psychsci[1:2], psychsci[2:3])
-  expect_equal(names(merged), names(psychsci)[c(1:2,2:3)])
+  expect_equal(names(merged), c(names(psychsci)[1:2],
+                                paste0(names(psychsci)[2], "~2"),
+                                names(psychsci)[3]))
 })
 
 
@@ -334,4 +336,39 @@ test_that("paper_write", {
   expect_true(file.exists(json_path))
   paper2 <- read(json_path)
   expect_setequal(names(paper), names(paper2))
+})
+
+test_that("paper_table() of an empty paper list has typed columns (U79)", {
+  tb <- paper_table(paperlist(), "text")
+  expect_equal(nrow(tb), 0)
+  expect_type(tb$text, "character")
+  expect_type(tb$paper_id, "character")
+  expect_equal(names(paper_table(paperlist(), "bib", c("bib_id", "doi"))),
+               c("bib_id", "doi", "paper_id"))
+})
+
+test_that(".per_paper_table() has one row per paper, none for no papers (U79)", {
+  st <- metacheck:::.per_paper_table(paperlist(), repo_n = 0, files_n = NA)
+  expect_equal(nrow(st), 0)
+  expect_named(st, c("paper_id", "repo_n", "files_n"))
+  p <- demopaper()
+  st <- metacheck:::.per_paper_table(p, repo_n = 0)
+  expect_equal(st, data.frame(paper_id = paper_id(p), repo_n = 0))
+})
+
+test_that("papers sharing a paper_id are renamed where a list comes in (U208, U101)", {
+  # a shared id doubled rows (sentences joined to the other paper's sections)
+  # and stopped ethics_check and open_practices
+  llm_use(FALSE)
+  a <- test_paper(text = c("We found t(28) = 2.4, p = .03.", "And p = .04."))
+  b <- test_paper(text = c("Here F(1, 20) = 5.1, p = .02.", "Finally p = .01."))
+  a$paper_id <- b$paper_id <- "same_id"
+  expect_warning(pl <- paperlist(a, b), "same_id~2")
+  expect_equal(names(pl), c("same_id", "same_id~2"))
+  expect_equal(nrow(module_run(pl, "all_p_values")$table), 4)
+  expect_no_error(suppressMessages(module_run(pl, "ethics_check")))
+  # a list that did not come through paperlist()
+  raw_list <- structure(list(a, b), class = c("scivrs_paperlist", "list"))
+  expect_warning(mo <- module_run(raw_list, "all_p_values"), "renamed")
+  expect_equal(mo$summary_table$paper_id, c("same_id", "same_id~2"))
 })

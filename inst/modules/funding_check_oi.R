@@ -4,7 +4,7 @@
 #' Identify and extract funding statements.
 #'
 #' @details
-#' The Funding Check module uses regular expressions to check sentences for words related to funding statements. It will return the sentences in which the conflict of interest statement was found.
+#' The Funding Check module uses regular expressions to check sentences for words related to funding statements. It will return the sentences in which the funding statement was found.
 #'
 #' The function is based on code from [rtransparent](https://github.com/serghiou/rtransparent), which is no longer maintained. For their validation, see [the paper](https://doi.org/10.1371/journal.pbio.3001107).
 #'
@@ -27,6 +27,9 @@
 #' @returns a list
 #'
 funding_check <- function(paper) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # table ----
 
   # get all sentences with both funding and study terms
@@ -62,7 +65,9 @@ funding_check <- function(paper) {
   )
 
   # if more than 1 per ID, favour those in specific sections
-  likely_section <- c("funding", "annex", "acknowledgement")
+  # metacheck's section type is "acknowledgment"; with only the British
+  # spelling, acknowledgment sections were not favoured (U105)
+  likely_section <- c("funding", "annex", "acknowledgement", "acknowledgment")
 
   table <- paper |>
     text_search(pattern_fund) |>

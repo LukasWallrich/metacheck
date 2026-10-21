@@ -188,7 +188,9 @@ rbox_info <- function(rb_url, id_col = 1, pb = NULL) {
 
   # check if redirect (suppress encodings warning)
   suppressMessages({
-    body_text <- httr2::resp_body_string(resp)
+    # an empty body (a refusal can have none) stopped resp_body_string() before
+    # the status was checked (U45)
+    body_text <- if (httr2::resp_has_body(resp)) httr2::resp_body_string(resp) else ""
     pattern <- "(?<=window\\.location\\.replace\\(')https://researchbox.org/\\d+(?='\\))"
     if (grepl(pattern, body_text, perl = TRUE)) {
       matches <- gregexpr(pattern, body_text, perl = TRUE)
@@ -201,8 +203,25 @@ rbox_info <- function(rb_url, id_col = 1, pb = NULL) {
     }
   })
 
-  # handle missing file
-  if (httr2::resp_status(resp) != 200) {
+  # A box that does not exist still answers 200 (checked 2026-10-20), so any
+  # other status is a refusal or a server error, not a missing box: on
+  # GitHub's test machines ResearchBox did not serve box 4377, which was
+  # reported as "could not be found". The status is now named.
+  status <- httr2::resp_status(resp)
+  if (status != 200) {
+    if (status == 404) {
+      warning(rb_url, " could not be found", call. = FALSE)
+      obj$error <- "unfound"
+    } else {
+      warning("ResearchBox did not serve ", rb_url, " (HTTP ", status, ")",
+              call. = FALSE)
+      obj$error <- paste0("HTTP ", status)
+    }
+    return(obj)
+  }
+
+  # A 200 page without content is no box (U45)
+  if (!httr2::resp_has_body(resp)) {
     warning(rb_url, " could not be found", call. = FALSE)
     obj$error <- "unfound"
     return(obj)
@@ -291,6 +310,9 @@ rbox_file_download <- function(rb_url, pb = NULL) {
 
     file_lists <- lapply(unique_rb, rbox_file_download, pb = pb)
     info <- do.call(dplyr::bind_rows, args = file_lists)
+    # every link failed: NULL, as for one failed link; the join below stopped
+    # on a table without columns ("Join columns in `y` must be present", U43)
+    if (nrow(info) == 0) return(NULL)
     orig <- data.frame(rb_url = rb_url)
     df <- dplyr::left_join(orig, info, by = "rb_url")
 
@@ -362,17 +384,24 @@ rbox_file_download <- function(rb_url, pb = NULL) {
       return(NULL)
     }
 
-    dir.create(out_dir, showWarnings = FALSE)
+    # Unzipped into "unzipped.part" and renamed when done: an unzip that was
+    # stopped left some files in "unzipped", which the next run reused as the
+    # whole box (U203).
+    part_dir <- paste0(out_dir, ".part")
+    unlink(part_dir, recursive = TRUE)
+    dir.create(part_dir, showWarnings = FALSE)
     paste0("Unzipping into: ", out_dir) |>
       list(what = _) |>
       pb$tick(0, tokens = _)
     # a box with one file may get that file itself, not a zip
     is_zip <- identical(readBin(zip_path, "raw", 2), charToRaw("PK"))
     if (!is_zip && length(file_ids) == 1) {
-      file.copy(zip_path, file.path(out_dir, basename(info$files[[1]]$name[[1]])))
+      file.copy(zip_path, file.path(part_dir, basename(info$files[[1]]$name[[1]])))
     } else {
-      utils::unzip(zip_path, exdir = out_dir)
+      utils::unzip(zip_path, exdir = part_dir)
     }
+    unlink(out_dir, recursive = TRUE)   # empty: a box with files is reused above
+    file.rename(part_dir, out_dir)
   }
 
   unzipped_files <- list.files(out_dir, recursive = TRUE, full.names = TRUE)

@@ -67,7 +67,8 @@ test_that("read - recursive", {
   expect_equal(paper_id(paper), paper_id(psychsci[1:3]))
 
   # recursive ----
-  paper <- read(a, recursive = TRUE)
+  # the same paper in two folders: the second copy is renamed "~2" (U208)
+  expect_warning(paper <- read(a, recursive = TRUE), "shared a paper_id")
   expect_equal(length(paper), 5)
   # read(recursive = TRUE) lists files via list.files(..., recursive = TRUE),
   # which returns paths in alphabetical order -- derive the expectation the
@@ -76,6 +77,7 @@ test_that("read - recursive", {
     sort() |>
     basename() |>
     gsub("\\.json$", "", x = _)
+  exp <- ifelse(duplicated(exp), paste0(exp, "~2"), exp)
   expect_equal(paper_id(paper), exp)
 })
 
@@ -147,4 +149,12 @@ test_that("module_run reports the module's own error for a paper without an id (
   # the module's error is the one reported, not paper_id()'s
   err <- tryCatch(module_run(p, "power"), error = function(e) conditionMessage(e))
   expect_match(err, "Running the module 'power' produced errors", fixed = TRUE)
+})
+
+test_that("a legacy bibr file without bib has no references, not its bib_match rows (U25)", {
+  # data$bib matched data$bib_match by its prefix
+  f <- withr::local_tempfile(fileext = ".json")
+  writeLines('{"paper_id": "p1", "info": {"title": "T"}, "bib_match": [{"bib_id": 1, "title": "Matched"}]}', f)
+  p <- suppressWarnings(read(f))
+  expect_equal(nrow(p$bib), 0)
 })

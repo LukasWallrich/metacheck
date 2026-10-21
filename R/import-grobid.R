@@ -348,7 +348,9 @@ grobid_to_bibr <- function(xml_path,
   #abstract <- .xml_find1_text(xml, ".//abstract")
   keywords <- .xml_find_text(xml, ".//textClass/keywords/term")
   if (keywords[[1]] == "") keywords <- c()
-  doi <- .xml_find1_text(xml, ".//idno[@type='DOI']")
+  # the paper's own DOI is in the TEI header; searching the whole document
+  # gave a paper without one its first reference's DOI (U17)
+  doi <- .xml_find1_text(xml, ".//teiHeader//idno[@type='DOI']")
   grobid_version <- xml |>
     xml2::xml_find_first(".//application[@ident='GROBID']") |>
     xml2::xml_attr("version")
@@ -476,10 +478,16 @@ grobid_to_bibr <- function(xml_path,
   paper$url$href <- gsub("\\.$", "", paper$url$href) # fix urls with . at end
   same <- gsub("^https?://", "", paper$url$href) ==
     gsub("^https?://", "", gsub("\\s", "", paper$url$link_text))
-  for (i in seq_along(same)) {
-    paper$text$text <- gsub(paper$url$link_text[[i]],
+  # a link without text is left alone: "" as a pattern stopped gsub(), and NA
+  # made every sentence NA (U17)
+  for (i in which(!is.na(paper$url$link_text) & nzchar(paper$url$link_text %||% "") &
+                    !is.na(paper$url$href))) {
+    # only in the URL's own row, once: replaced in every row, a short link
+    # text ("osf") was also replaced inside other links (U28)
+    row <- which(paper$text$text_id == paper$url$text_id[[i]])
+    paper$text$text[row] <- sub(paper$url$link_text[[i]],
          paper$url$href[[i]],
-         paper$text$text, fixed = TRUE)
+         paper$text$text[row], fixed = TRUE)
   }
   paper$url$link_text[same] <- NA_character_
 
@@ -971,7 +979,10 @@ grobid_to_bibr <- function(xml_path,
       gsub("b", "", x = _) |>
       as.integer()
 
-    bib_table$bib_text <- .xml_find_text(refs, ".//note[@type='raw_reference']") |>
+    # each reference's own note, "" without one: all notes at once shifted
+    # the texts as soon as one reference had none (U17)
+    bib_table$bib_text <- vapply(refs, \(r) .xml_find1_text(r, ".//note[@type='raw_reference']"),
+                                 character(1)) |>
       gsub("\\s+", " ", x = _) |>
       trimws()
 
@@ -1171,11 +1182,14 @@ grobid_to_bibr <- function(xml_path,
   if (!is.na(page_unit)) {
     pages <- xml2::xml_text(page_unit)
     if (pages == "") {
-      pages <- xml2::xml_attrs(page_unit)
-      if (!is.na(pages[[1]])) {
-        b$pages <- paste(pages[["from"]], pages[["to"]], sep = "-")
-        b$first_page <- pages[["from"]]
-        b$last_page <- pages[["to"]]
+      # a range may give only `from` or only `to`; pages[["to"]] stopped the
+      # whole paper when one was missing (U17)
+      from <- xml2::xml_attr(page_unit, "from")
+      to <- xml2::xml_attr(page_unit, "to")
+      if (!is.na(from) || !is.na(to)) {
+        b$pages <- paste(stats::na.omit(c(from, to)), collapse = "-")
+        if (!is.na(from)) b$first_page <- from
+        if (!is.na(to)) b$last_page <- to
       }
     } else {
       b$pages <- pages

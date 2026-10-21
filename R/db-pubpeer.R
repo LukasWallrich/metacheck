@@ -16,7 +16,8 @@
 pubpeer_comments <- function(doi) {
   url <- "https://pubpeer.com/v3/publications?devkey=PubPeerZotero"
   doi_na <- doi[!is.na(doi)]
-  body <- list(dois = tolower(doi_na)) |>
+  # I(): auto_unbox sent a single DOI as a JSON string, not an array (U14)
+  body <- list(dois = I(tolower(doi_na))) |>
     jsonlite::toJSON(auto_unbox = TRUE)
 
   resp <- .mc_request(url) |>
@@ -26,7 +27,10 @@ pubpeer_comments <- function(doi) {
     httr2::req_perform()
   if (httr2::resp_status(resp) == 200) {
     data <- httr2::resp_body_json(resp)
-    pp_fb <- lapply(data$feedbacks, \(fb) {
+    # feedback without an id cannot be matched to a DOI; when none had one,
+    # the table had no doi column and the join below stopped (U14)
+    feedbacks <- Filter(\(fb) length(fb$id) == 1, data$feedbacks)
+    pp_fb <- lapply(feedbacks, \(fb) {
       list(
         doi = fb$id,
         total_comments = fb$total_comments,
@@ -44,6 +48,8 @@ pubpeer_comments <- function(doi) {
         users = NA_character_
       )
     } else {
+      # a DOI reported twice keeps its first feedback (no duplicated rows)
+      pp_fb <- pp_fb[!duplicated(pp_fb$doi), , drop = FALSE]
       all <- data.frame(doi = tolower(doi)) |>
         dplyr::left_join(pp_fb, by = "doi")
       all$doi <- doi

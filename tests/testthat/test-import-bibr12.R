@@ -371,3 +371,14 @@ test_that("paper_write converts bib_match rows from add_bib_match()", {
   codes <- vapply(json$extraction$warnings, \(w) w$code, character(1))
   expect_in("METACHECK_MATCH_SCORE_NOT_0_1", codes)
 })
+
+test_that("paper_write(schema_version = '12.0') keeps long decimals exactly (U22)", {
+  # 15 significant digits changed 0.9411764705882353 into 0.941176470588235
+  p <- suppressWarnings(.grobid_to_bibr(demofile("xml"), schema_version = "12.0"))
+  p$extraction$diagnostics$citation_linking <- 0.9411764705882353
+  d <- withr::local_tempdir()
+  p2 <- read(paper_write(p, "a", d, schema_version = "12.0"))
+  expect_identical(p2$extraction$diagnostics$citation_linking, 0.9411764705882353)
+  expect_equal(.json_exact_doubles(list(a = c(0.1, 0.9411764705882353), b = 0.5)),
+               list(a = list(0.1, structure("0.9411764705882353", class = "json")), b = 0.5))
+})

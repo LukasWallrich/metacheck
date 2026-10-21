@@ -196,3 +196,20 @@ test_that("doi_resolves", {
   # })
 }, "mock")
 
+
+test_that("doi_lookup and openalex_doi keep the other DOIs when one fails (U12)", {
+  # return() inside tryCatch() returned from the function: one 404 gave NULL
+  ok <- list(DOI = "10.1/ok", title = "Fine",
+             author = list(list(family = "Smith", given = "A"), list(name = "The Lab")))
+  local_mocked_bindings(.batch_query = function(urls, ...) {
+    lapply(urls, function(u) if (grepl("bad", u)) httr2::response(404) else
+      httr2::response(200, headers = list(`Content-Type` = "application/json"),
+                      body = charToRaw(jsonlite::toJSON(ok, auto_unbox = TRUE))))
+  })
+  r <- doi_lookup(c("10.1234/bad", "10.1234/ok"))
+  expect_equal(nrow(r), 2)
+  expect_equal(r$author[2], "Smith, A; The Lab")
+  oa <- openalex_doi(c("10.1234/bad", "10.1234/ok"))
+  expect_length(oa, 2)
+  expect_equal(oa[[1]]$error, "not found")
+})

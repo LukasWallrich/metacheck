@@ -530,7 +530,7 @@
   # entry is at least 46 bytes, which bounds the count a corrupt end record
   # could claim.
   n_max <- min(n_entries, floor((cd_end - cd_start) / 46))
-  names <- character(n_max); sizes <- numeric(n_max)
+  names <- character(n_max); name_lens <- numeric(n_max); sizes <- numeric(n_max)
   methods <- numeric(n_max); csizes <- numeric(n_max)
   offsets <- numeric(n_max); crcs <- numeric(n_max)
   ff4 <- 4294967295
@@ -550,6 +550,16 @@
     offset  <- .le_int(raw, p + 42, 4)   # local header offset within the archive
     if (p + 46 + name_len + extra_len - 1 > n) break   # entry runs past the tail
     nm <- if (name_len > 0) rawToChar(raw[(p + 46):(p + 46 + name_len - 1)]) else ""
+    # A name is UTF-8 when general-purpose flag bit 11 says so; without it the
+    # zip standard's default is CP437 (old Windows zip tools). Such a name is
+    # not valid UTF-8 as soon as it has an accent, and every later sub()/gsub()
+    # on it stopped data_check with "invalid multibyte string" (U76). Every
+    # byte is a CP437 character, so the conversion cannot fail; a name marked
+    # UTF-8 that is not gets its bad bytes read as Latin-1 (.utf8_lines()).
+    utf8_flag <- bitwAnd(.le_int(raw, p + 8, 2), 2048L) != 0
+    if (!validUTF8(nm)) {
+      nm <- if (utf8_flag) .utf8_lines(nm) else iconv(nm, "CP437", "UTF-8")
+    }
     Encoding(nm) <- "UTF-8"
     if (extra_len > 0 &&
         (usize == ff4 || csize == ff4 || offset == ff4 || disk == 65535)) {
@@ -562,14 +572,15 @@
       }
     }
     n_read <- n_read + 1
-    names[n_read] <- nm; sizes[n_read] <- usize
+    names[n_read] <- nm; name_lens[n_read] <- name_len; sizes[n_read] <- usize
     methods[n_read] <- method; csizes[n_read] <- csize
     offsets[n_read] <- offset; crcs[n_read] <- crc
     p <- p + 46 + name_len + extra_len + comm_len
   }
   if (n_read == 0) return(NULL)
   keep <- seq_len(n_read)
-  names <- names[keep]; sizes <- sizes[keep]; methods <- methods[keep]
+  names <- names[keep]; name_lens <- name_lens[keep]
+  sizes <- sizes[keep]; methods <- methods[keep]
   csizes <- csizes[keep]; offsets <- offsets[keep]; crcs <- crcs[keep]
   # A placeholder with no Zip64 extra field to resolve it (a malformed entry)
   # must not be read as a real size or byte offset, so it is marked NA and
@@ -578,8 +589,11 @@
   sizes[sizes == ff4] <- NA_real_
   csizes[csizes == ff4] <- NA_real_
   offsets[offsets == ff4] <- NA_real_
+  # name_bytes: the name's length as stored, which a converted (CP437) name no
+  # longer has; .zip_range_plan() and .zip_whole_size() need the stored length
   out <- data.frame(name = names, size = sizes, method = methods, csize = csizes,
-                    offset = offsets, crc = crcs, stringsAsFactors = FALSE)
+                    offset = offsets, crc = crcs, name_bytes = name_lens,
+                    stringsAsFactors = FALSE)
   attr(out, "cd_offset") <- if (cd_offset == ff4) NA_real_ else cd_offset
   out
 }
@@ -646,8 +660,11 @@
 #'   `size` (uncompressed bytes), excluding directory entries; or `NULL` when the
 #'   host does not support range requests or the listing cannot be read (the
 #'   caller should then download-and-inspect). Also returns `method`, `csize`,
-#'   `offset`, and `crc`, which describe where each member's bytes sit in the
-#'   archive so a single member can be fetched without the rest. Zip64 archives
+#'   `offset`, `crc` and `name_bytes`, which describe where each member's bytes
+#'   sit in the archive so a single member can be fetched without the rest.
+#'   Names without the zip's UTF-8 flag are read as CP437 (old Windows zip
+#'   tools) and returned in UTF-8; `name_bytes` is the name's stored length.
+#'   Zip64 archives
 #'   (over 4 GB or over 65,535 entries) are read in full, including the sizes
 #'   and offsets stored only in their Zip64 extra fields; `csize` and `offset`
 #'   are `NA` only for an entry whose listing is malformed.
@@ -735,8 +752,11 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     raw <- .http_range_tail(url, nb, total = total,
                             skip_on_api_limit = skip_on_api_limit)
     if (is.null(raw)) {
+      # kept for this session only: a failed request (a connection failure, a
+      # rate limit, a server error) can pass, and the disk cache outlives the
+      # session, so the archive was not listed again until the cache was
+      # cleared (U210)
       assign(url, NULL, envir = .zip_peek_cache)
-      if (isTRUE(cache)) .zip_peek_cache_put(url, NULL)
       return(NULL)
     }
     if (is.na(total)) total <- attr(raw, "total") %||% NA_real_
@@ -951,7 +971,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 .zip_range_plan <- function(want, cd = want, margin = 1024, max_gap = 65536,
                             max_span = 16 * 1048576) {
   if (is.null(want) || nrow(want) == 0) return(list())
-  name_bytes <- nchar(want$name, type = "bytes")
+  name_bytes <- want$name_bytes %||% nchar(want$name, type = "bytes")
   from <- want$offset
   need_to <- from + 30 + name_bytes + want$csize - 1   # without the extra field
   to <- need_to + margin
@@ -1081,7 +1101,9 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   } else {
     return(NA)
   }
-  isTRUE(all.equal(as.numeric(got), as.numeric(crc)))
+  # an exact comparison: both are whole numbers, and all.equal()'s tolerance
+  # accepted a CRC up to about 60 off for large values (U70)
+  isTRUE(as.numeric(got) == as.numeric(crc))
 }
 
 # Download selected members of a remote zip into `dest`, skipping the rest.
@@ -1272,7 +1294,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
 .zip_whole_size <- function(cd) {
   if (is.null(cd) || nrow(cd) == 0 || anyNA(cd$offset) || anyNA(cd$csize))
     return(NA_real_)
-  name_bytes <- nchar(cd$name, type = "bytes")
+  name_bytes <- cd$name_bytes %||% nchar(cd$name, type = "bytes")
   data_end <- max(cd$offset + 30 + name_bytes + cd$csize)
   zip64 <- if (data_end >= 4294967295 || nrow(cd) >= 65535) 76 else 0
   data_end + sum(46 + name_bytes) + 22 + zip64
@@ -1424,6 +1446,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   if ("data_format" %in% names(extra))
     extra$data_format <- data_format(tolower(tools::file_ext(name)))
   if ("file_url" %in% names(extra))  extra$file_url  <- NA_character_
+  if ("file_type" %in% names(extra)) extra$file_type <- .inner_file_type(name)
   out <- dplyr::bind_rows(rows, extra)
   attr(out, "oversize") <- data.frame(file_name = basename(name),
                                       file_size = as.numeric(file_size))
@@ -1460,7 +1483,50 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   if ("data_format" %in% names(rows)) rows$data_format <- fmt
   # Inner files came from a local extraction, not a remote URL of their own.
   if ("file_url" %in% names(rows))    rows$file_url    <- NA_character_
+  if ("file_type" %in% names(rows))   rows$file_type   <- .inner_file_type(rel)
   rows
+}
+
+# Each file's own type from its extension (`file_types`, as repo_check types a
+# repository's files), NA without a known one. The rows for an archive's files
+# are copies of the archive's row, so every file kept the type "archive" (U213).
+.inner_file_type <- function(name) {
+  ext <- tolower(tools::file_ext(name))
+  metacheck::file_types$type[match(ext, metacheck::file_types$ext)]
+}
+
+# The folder an archive is extracted into. A downloaded archive (in the
+# repository cache or the temporary folder) is extracted beside itself, to
+# "<archive>.contents", which a later run reuses. Any other archive is the
+# user's own (local_path): extracting beside it wrote into the user's folder,
+# and the next run listed the extracted files as files of their own and
+# extracted the archive again, so every file counted twice (U214). It is
+# extracted into the temporary folder instead, under the archive's checksum.
+.archive_dest <- function(path) {
+  beside <- paste0(path, ".contents")
+  repo_cache <- getOption("metacheck.repo_cache.dir")
+  if (is.null(repo_cache) || !nzchar(repo_cache))
+    repo_cache <- file.path(.metacheck_cache_root(), ".metacheck_repo_cache")
+  roots <- normalizePath(c(tempdir(), repo_cache), winslash = "/", mustWork = FALSE)
+  norm <- normalizePath(path, winslash = "/", mustWork = FALSE)
+  if (.Platform$OS.type == "windows") { roots <- tolower(roots); norm <- tolower(norm) }
+  if (any(startsWith(norm, paste0(roots, "/")))) return(beside)
+  file.path(tempdir(), "metacheck-archives", unname(tools::md5sum(path)))
+}
+
+# Move the members extracted into `part` (a folder beside `dest`) into `dest`,
+# then remove `part`. Extracting straight into `dest` left a half-written file
+# there when the run was stopped, which the next run reused as complete
+# (U203); a member that was not extracted is simply not moved.
+.move_extracted <- function(part, dest, members) {
+  for (m in members) {
+    from <- file.path(part, m)
+    if (!file.exists(from)) next
+    to <- file.path(dest, m)
+    dir.create(dirname(to), recursive = TRUE, showWarnings = FALSE)
+    file.rename(from, to)
+  }
+  unlink(part, recursive = TRUE)
 }
 
 # Expand a downloaded zip and return rows for its DATA-type inner files, ready to
@@ -1484,8 +1550,9 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   empty <- zip_row[0, , drop = FALSE]
   if (is.null(zip_path) || is.na(zip_path) || !file.exists(zip_path)) return(empty)
 
-  # Extract into "<zip>.contents/" beside the cached zip (idempotent: reuse).
-  dest <- paste0(zip_path, ".contents")
+  # Extract into "<zip>.contents/" beside the cached zip (idempotent: reuse);
+  # a zip of the user's own is extracted elsewhere (.archive_dest()).
+  dest <- .archive_dest(zip_path)
   entries <- tryCatch(utils::unzip(zip_path, list = TRUE), error = function(e) NULL)
   if (is.null(entries) || nrow(entries) == 0) return(empty)
   entries <- entries[!grepl("/$", entries$Name), , drop = FALSE]
@@ -1494,9 +1561,12 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   unlink(file.path(dest, entries$Name[over]))
   want <- entries$Name[keep & !over]
   missing <- want[!file.exists(file.path(dest, want))]
-  if (length(missing) > 0)
-    tryCatch(utils::unzip(zip_path, files = missing, exdir = dest),
+  if (length(missing) > 0) {
+    part <- paste0(dest, ".part")
+    tryCatch(utils::unzip(zip_path, files = missing, exdir = part),
              error = function(e) NULL, warning = function(w) NULL)
+    .move_extracted(part, dest, missing)
+  }
 
   rows <- if (length(want) > 0) .archive_rows(dest, zip_row, basename(zip_path), skip_types)
           else empty
@@ -1519,7 +1589,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   empty <- tar_row[0, , drop = FALSE]
   if (is.null(tar_path) || is.na(tar_path) || !file.exists(tar_path)) return(empty)
 
-  dest <- paste0(tar_path, ".contents")
+  dest <- .archive_dest(tar_path)
   entries <- tryCatch(utils::untar(tar_path, list = TRUE), error = function(e) NULL,
                       warning = function(w) NULL)
   if (is.null(entries) || length(entries) == 0) return(empty)
@@ -1533,9 +1603,12 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   unlink(file.path(dest, entries[over]))
   want <- entries[keep & !over]
   missing <- want[!file.exists(file.path(dest, want))]
-  if (length(missing) > 0)
-    tryCatch(utils::untar(tar_path, files = missing, exdir = dest),
+  if (length(missing) > 0) {
+    part <- paste0(dest, ".part")
+    tryCatch(utils::untar(tar_path, files = missing, exdir = part),
              error = function(e) NULL, warning = function(w) NULL)
+    .move_extracted(part, dest, missing)
+  }
   # sizes only known once unpacked (compressed tar)
   got <- file.path(dest, want)
   big <- file.exists(got) & file.size(got) > max_bytes
@@ -1571,7 +1644,7 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     gz  = gzfile, bz2 = bzfile, xz = xzfile, NULL)
   if (is.null(open_con)) return(empty)
 
-  dest <- paste0(gz_path, ".contents")
+  dest <- .archive_dest(gz_path)
   inner_name <- sub("[.](gz|bz2|xz)$", "", basename(gz_path), ignore.case = TRUE)
   if (!.archive_keep(inner_name, skip_types)) return(empty)
   out <- file.path(dest, inner_name)
@@ -1579,10 +1652,13 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
   if (!file.exists(out)) {
     # In a function of its own, so both connections are closed before a
     # partial copy is deleted (an open file cannot be deleted on Windows).
+    # written beside `dest` and moved in when complete: a decompression
+    # that was stopped left a partial file, reused as complete (U203)
+    part <- file.path(paste0(dest, ".part"), inner_name)
     decompress <- function() {
-      if (!dir.exists(dest)) dir.create(dest, recursive = TRUE, showWarnings = FALSE)
+      dir.create(dirname(part), recursive = TRUE, showWarnings = FALSE)
       con <- open_con(gz_path, "rb"); on.exit(close(con), add = TRUE)
-      oc  <- file(out, "wb"); on.exit(close(oc), add = TRUE)
+      oc  <- file(part, "wb"); on.exit(close(oc), add = TRUE)
       written <- 0
       repeat {
         chunk <- readBin(con, "raw", n = 1048576L)
@@ -1595,10 +1671,11 @@ zip_peek <- function(url, tail_bytes = 131072, cache = FALSE,
     status <- tryCatch(decompress(), error = function(e) "failed",
                        warning = function(w) "failed")
     if (!identical(status, "ok")) {
-      unlink(out)
+      unlink(dirname(part), recursive = TRUE)
       return(if (identical(status, "over"))
         .with_oversize(empty, gz_row, basename(gz_path), inner_name, NA) else empty)
     }
+    .move_extracted(dirname(part), dest, inner_name)
   }
 
   .archive_rows(dest, gz_row, basename(gz_path), skip_types)

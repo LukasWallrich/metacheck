@@ -59,6 +59,8 @@ test_that(".zip_crc_ok distinguishes a match, a mismatch, and no check", {
   b <- charToRaw("123456789")
   expect_true(metacheck:::.zip_crc_ok(b, 3421780262))
   expect_false(metacheck:::.zip_crc_ok(b, 12345))
+  # a near miss is a mismatch: all.equal() accepted it (U70)
+  expect_false(metacheck:::.zip_crc_ok(b, 3421780262 + 20))
   # An absent CRC is "not checked", not "failed" -- .zip_member_fetch() rejects
   # only on FALSE, so returning NA here must not discard a good download.
   expect_true(is.na(metacheck:::.zip_crc_ok(b, NA_real_)))
@@ -313,6 +315,9 @@ test_that(".expand_zip keeps inner data files and drops inner materials", {
   # inner rows inherit the zip's repo/paper, lose their own URL
   expect_true(all(rows$paper_id == "p.1"))
   expect_true(all(is.na(rows$file_url)))
+  # each file takes its own type, not the zip's "archive" (U213)
+  expect_equal(rows$file_type[rows$file_name == "study.csv"], "data")
+  expect_equal(rows$file_type[rows$file_name == "README.txt"], "text")
 })
 
 # ── Hosts that refuse HEAD (issue #424) ─────────────────────────────────────
@@ -508,6 +513,32 @@ test_that("zip_peek(cache = FALSE) never reads or writes the on-disk cache", {
   httr2::local_mocked_responses(.s3_like_host(bytes))
   metacheck:::zip_peek(url)   # cache defaults to FALSE
   expect_false(metacheck:::.zip_peek_cache_has(url))
+})
+
+test_that("a failed zip_peek() download is kept for the session only, not on disk (U210)", {
+  # a connection failure, rate limit or server error passes, but the disk
+  # entry outlived the session, so the zip was not listed again
+  d <- withr::local_tempdir()
+  withr::local_options(metacheck.zip_peek_cache.dir = d)
+  url <- "https://down.example/failed.zip"
+  withr::defer(suppressWarnings(rm(list = url, envir = metacheck:::.zip_peek_cache)))
+  local_mocked_bindings(.http_range_tail = function(...) NULL, .head_size = function(...) 100)
+  expect_null(metacheck:::zip_peek(url, cache = TRUE))
+  expect_true(exists(url, envir = metacheck:::.zip_peek_cache, inherits = FALSE))
+  expect_false(metacheck:::.zip_peek_cache_has(url))
+})
+
+test_that("an unreadable zip-peek cache entry is a miss, and a new entry replaces it (U210)", {
+  # an interrupted write left a file that was returned as a cached failure
+  d <- withr::local_tempdir()
+  withr::local_options(metacheck.zip_peek_cache.dir = d)
+  url <- "https://x.example/broken.zip"
+  writeBin(as.raw(1:10), metacheck:::.zip_peek_cache_path(url))
+  expect_false(metacheck:::.zip_peek_cache_has(url))
+  metacheck:::.zip_peek_cache_put(url, data.frame(name = "a", size = 1))
+  expect_true(metacheck:::.zip_peek_cache_has(url))
+  expect_equal(metacheck:::.zip_peek_cache_get(url)$name, "a")
+  expect_equal(length(list.files(d)), 1)   # no temporary file left behind
 })
 
 test_that("zip_peek_cache_clear() removes every cached entry", {
@@ -974,6 +1005,45 @@ test_that(".expand_compressed decompresses only a kept file, and only up to the 
   expect_equal(attr(rows, "oversize")$file_name, "results.csv")
 })
 
+test_that("a stopped extraction is not reused as complete (U203)", {
+  # extraction went straight into "<archive>.contents", so a half-written file
+  # there was reused by the next run; a stopped run now leaves it in ".part"
+  d <- withr::local_tempdir()
+  writeLines(c("id,x", "1,2", "2,3"), file.path(d, "study.csv"))
+  z <- file.path(d, "a.zip")
+  withr::with_dir(d, utils::zip("a.zip", "study.csv", flags = "-q"))
+  skip_if_not(file.exists(z), "zip utility unavailable")
+  row <- .archive_row_472()
+  dest <- metacheck:::.archive_dest(z)
+  dir.create(paste0(dest, ".part"))
+  writeLines("id,x", file.path(paste0(dest, ".part"), "study.csv"))   # cut short
+  rows <- metacheck:::.expand_zip(z, row)
+  expect_equal(readLines(rows$file_location), c("id,x", "1,2", "2,3"))
+  expect_false(dir.exists(paste0(dest, ".part")))
+
+  gz <- file.path(d, "notes.csv.gz")
+  con <- gzfile(gz, "w"); writeLines(c("a", "b"), con); close(con)
+  gdest <- metacheck:::.archive_dest(gz)
+  rows <- metacheck:::.expand_compressed(gz, row)
+  expect_equal(readLines(rows$file_location), c("a", "b"))
+  expect_false(dir.exists(paste0(gdest, ".part")))
+})
+
+test_that("an archive of the user's own is extracted into the temporary folder (U214)", {
+  # extracting beside it wrote into the user's folder, and the next run
+  # counted every extracted file twice
+  own <- withr::local_tempfile(tmpdir = test_path(), fileext = ".zip")
+  writeBin(as.raw(1:10), own)
+  dest <- metacheck:::.archive_dest(own)
+  expect_false(startsWith(dest, normalizePath(test_path(), winslash = "/")))
+  expect_true(startsWith(normalizePath(dest, winslash = "/", mustWork = FALSE),
+                         normalizePath(tempdir(), winslash = "/")))
+  # a downloaded archive (here: in the temporary folder) is extracted beside itself
+  dl <- withr::local_tempfile(fileext = ".zip")
+  writeBin(as.raw(1:10), dl)
+  expect_equal(metacheck:::.archive_dest(dl), paste0(dl, ".contents"))
+})
+
 test_that(".expand_zip and .expand_tar unpack only kept members within the limit (#472)", {
   d <- withr::local_tempdir()
   src <- file.path(d, "src"); dir.create(src)
@@ -983,6 +1053,7 @@ test_that(".expand_zip and .expand_tar unpack only kept members within the limit
   writeLines("# Read me", file.path(src, "README.md"))
   members <- c("big.csv", "small.csv", "notes.txt", "README.md")
   row <- .archive_row_472()
+  row$file_type <- "archive"
 
   z <- file.path(d, "data.zip")
   withr::with_dir(src, utils::zip(z, members, flags = "-q"))
@@ -1003,6 +1074,8 @@ test_that(".expand_zip and .expand_tar unpack only kept members within the limit
     expect_setequal(rows$file_name, c("small.csv", "README.md", "big.csv"))
     expect_true(is.na(rows$file_location[rows$file_name == "big.csv"]))
     expect_equal(attr(rows, "oversize")$file_name, "big.csv")
+    # a file over the limit takes its own type too (U213)
+    expect_equal(rows$file_type[rows$file_name == "big.csv"], "data")
     if (!grepl("tar.gz$", a))   # a compressed tar gives no size before unpacking
       expect_equal(attr(rows, "oversize")$file_size, file.size(file.path(src, "big.csv")))
   }
@@ -1060,4 +1133,17 @@ test_that("repository requests give up on a stalled connection (#473)", {
     error = function(e) e)
   expect_s3_class(err, "error")
   expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 30)
+})
+
+test_that("zip member names without the UTF-8 flag are read as CP437 (U76)", {
+  # old Windows zip tools store "café.csv" as CP437 bytes (0x82 = é) without
+  # the UTF-8 flag; the name was kept as invalid UTF-8 and every later
+  # sub()/gsub() stopped data_check with "invalid multibyte string"
+  members <- list(charToRaw("a,b\n1,2\n"))
+  names(members) <- rawToChar(as.raw(c(0x63, 0x61, 0x66, 0x82, 0x2e, 0x63, 0x73, 0x76)))
+  cd <- metacheck:::.parse_zip_central_dir(.test_zip64_bytes(members, zip64 = character(0)))
+  expect_equal(cd$name, "caf\u00e9.csv")
+  expect_true(validUTF8(cd$name))
+  # the stored length, which the UTF-8 name (9 bytes) no longer has
+  expect_equal(cd$name_bytes, 8)
 })

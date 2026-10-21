@@ -84,8 +84,14 @@
   # {c NAME} -- resolved FIRST, since its payload can itself contain
   # characters ("|", "+", "-", "(", ")") that would otherwise confuse the
   # generic directive regex below.
-  for (code in names(.SMCL_C_CODES))
-    out <- gsub(paste0("{c ", code, "}"), .SMCL_C_CODES[[code]], out, fixed = TRUE)
+  # The literal braces ({c -(} and {c )-}) become placeholders until the end:
+  # substituted as "{" and "}", the walk below read them as directives and
+  # dropped them (U146)
+  brace_codes <- c("-(" = "\001", ")-" = "\002")
+  for (code in names(.SMCL_C_CODES)) {
+    rep_by <- if (code %in% names(brace_codes)) brace_codes[[code]] else .SMCL_C_CODES[[code]]
+    out <- gsub(paste0("{c ", code, "}"), rep_by, out, fixed = TRUE)
+  }
 
   # Walk the line left to right, expanding directives in order (so {col N}'s
   # column count reflects the ALREADY-rendered text before it, matching how
@@ -125,15 +131,20 @@
     }
     if (grepl("^dup ", directive)) {
       m <- regmatches(directive, regexec("^dup ([0-9]+):(.*)$", directive))[[1]]
-      if (length(m) == 3) {
-        k <- as.integer(m[[2]])
+      # a count outside the integer range is left out: NA made the column
+      # NA, and a later {col}/{hline} stopped (U146)
+      k <- if (length(m) == 3) suppressWarnings(as.integer(m[[2]])) else NA_integer_
+      if (!is.na(k)) {
         txt <- strrep(m[[3]], k)
         result <- c(result, txt); pos <- pos + nchar(txt)
       }
       next
     }
     if (grepl("^char |^c 0x", directive)) {
-      code <- suppressWarnings(as.integer(sub("^char |^c 0x", "", directive)))
+      # {c 0xNN} is hexadecimal: read as decimal, {c 0x41} gave ")" (U146)
+      code <- if (grepl("^c 0x", directive))
+        suppressWarnings(strtoi(sub("^c 0x", "", directive), 16L))
+      else suppressWarnings(as.integer(sub("^char ", "", directive)))
       if (!is.na(code) && code >= 0 && code <= 255) {
         ch2 <- intToUtf8(code)
         result <- c(result, ch2); pos <- pos + 1L
@@ -172,7 +183,9 @@
     # A bare directive with no payload (a style/mode marker, {smcl}, a
     # comment "{* ...}", an unrecognised directive): zero-width, dropped.
   }
-  paste(result, collapse = "")
+  out <- paste(result, collapse = "")
+  out <- gsub("\001", "{", out, fixed = TRUE)
+  gsub("\002", "}", out, fixed = TRUE)
 }
 
 #' Render a full .smcl file's lines as plain text

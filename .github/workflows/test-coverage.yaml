@@ -32,6 +32,7 @@ jobs:
           cache-version: 1
 
       - name: Test coverage
+        id: test
         run: |
           result <- tryCatch({
             cov <- covr::package_coverage(
@@ -54,8 +55,11 @@ jobs:
         shell: Rscript {0}
         continue-on-error: true
 
+      # covr writes no coverage file when a test fails (package_coverage()
+      # stops before returning), so only upload when there is one; the last
+      # step reports the failed tests instead of a Codecov error
       - name: Upload coverage to Codecov
-        if: always()
+        if: always() && hashFiles('cobertura.xml') != ''
         uses: codecov/codecov-action@v5
         with:
           fail_ci_if_error: true
@@ -69,8 +73,15 @@ jobs:
         shell: bash
 
       - name: Upload test results
-        if: failure()
+        if: failure() || steps.test.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-test-failures
           path: ${{ runner.temp }}/package
+
+      - name: Fail when tests failed
+        if: steps.test.outcome == 'failure'
+        run: |
+          echo "::error::Tests failed; see 'Show testthat output' above for the failures"
+          exit 1
+        shell: bash

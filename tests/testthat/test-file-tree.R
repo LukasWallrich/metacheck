@@ -123,3 +123,15 @@ test_that(".file_tree_from_report and .file_tree", {
 
   expect_null(.file_tree(list()))
 })
+
+test_that(".file_tree_block names a local folder by its own name (Lakens/tue_datamanager_check#5, item 2)", {
+  files <- data.frame(
+    repo_url = "/data/metacheck_storage/metacheck-api-jobs/1a2b3c/repo/my_study",
+    file_name = "raw.csv", file_path = "data/raw.csv", data_type = "data", doc_role = NA)
+  block <- .file_tree_block(files)
+  expect_equal(block[[3]], "**Repository: my_study**")
+  expect_false(any(grepl("metacheck_storage", block, fixed = TRUE)))
+  # a link stays a link
+  files$repo_url <- "https://osf.io/abcde/"
+  expect_equal(.file_tree_block(files)[[3]], "**Repository: https://osf.io/abcde/**")
+})

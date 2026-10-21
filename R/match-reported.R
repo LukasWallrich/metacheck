@@ -683,6 +683,11 @@ match_reported_output <- function(paper, output, include_tables = FALSE,
   # extract_tests() is preferred because eq's grp_id is the SENTENCE number: a
   # sentence reporting two t-tests becomes one un-matchable ten-component
   # "test". See R/extract-tests.R.
+  # one paper at a time: a list's $eq is NULL, and nrow(NULL) inside || stopped
+  # with "missing value where TRUE/FALSE needed" (U142)
+  if (.is_paper_list(paper))
+    stop("match_reported_output() takes one paper; call it for each paper of a list",
+         call. = FALSE)
   tests <- NULL
   if (is.data.frame(paper) && all(c("test_no", "components") %in% names(paper))) {
     tests <- .tests_from_extract(paper)
@@ -766,6 +771,8 @@ match_reported_output <- function(paper, output, include_tables = FALSE,
   tid   <- out_long$test_id
   site  <- if (!is.null(tid)) as.character(tid)[keep] else
     paste(sf[keep], an[keep], sep = "")
+  # a site named "" cannot be looked up (by_site[[""]] stopped, U142)
+  site[!is.na(site) & site == ""] <- "\x01empty"
   by_site <- split(data.frame(val = ovals[keep], fam = ofam[keep],
                               sf = sf[keep], an = an[keep], rl = rl[keep],
                               stringsAsFactors = FALSE), site)
@@ -835,7 +842,9 @@ match_reported_output <- function(paper, output, include_tables = FALSE,
       # single-token "_residuals" suffix removed).
       for (pfx in unique(resid_prefix)) {
         resid_rows <- which(is_resid)[resid_prefix == pfx]
-        sib_rows <- which(!is_resid)[startsWith(tid_keep[!is_resid], paste0(pfx, "_"))]
+        # %in% TRUE: a row without a test_id is no sibling (startsWith(NA)
+        # made a site named NA, U142)
+        sib_rows <- which(!is_resid)[startsWith(tid_keep[!is_resid], paste0(pfx, "_")) %in% TRUE]
         if (!length(sib_rows)) next
         for (sib_tid in unique(tid_keep[sib_rows])) {
           rows <- c(which(tid_keep == sib_tid), resid_rows)
@@ -868,7 +877,10 @@ match_reported_output <- function(paper, output, include_tables = FALSE,
       # recognised family, same as the exact-match branch.
       cell_vals <- if (!is.na(comp$family))
         cell$val[!is.na(cell$fam) & cell$fam == comp$family] else cell$val
-      if (comp$censored == "<") any(cell_vals < comp$value) else any(cell_vals > comp$value)
+      # na.rm: Inf - Inf and NA compare as NA, and if (NA) stopped the call
+      # (U142); an infinite value simply does not match
+      if (comp$censored == "<") any(cell_vals < comp$value, na.rm = TRUE) else
+        any(cell_vals > comp$value, na.rm = TRUE)
     } else if (!is.na(comp$family)) {
       # A component with a KNOWN type must match an output cell of that SAME
       # type -- no fallback to "any value in the site" for a typed statistic.
@@ -881,7 +893,7 @@ match_reported_output <- function(paper, output, include_tables = FALSE,
       # then failed to match at the site actually chosen -- a false positive
       # elsewhere silently causing a false negative on the correct evidence.
       fam_cells <- cell$val[!is.na(cell$fam) & cell$fam == comp$family]
-      if (any(abs(round(fam_cells, comp$dec) - comp$value) < tol)) return(TRUE)
+      if (any(abs(round(fam_cells, comp$dec) - comp$value) < tol, na.rm = TRUE)) return(TRUE)
       # SAME-SITE fallback to "b" (a generic model "Estimate"/coefficient
       # column) for certain reported families whose PROSE label is more
       # specific than what generic model-fitting software actually prints.

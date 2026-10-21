@@ -13,8 +13,8 @@
 names matched, and (for the path-like-variable scan) the assignment
 operator recognised: R's \verb{<-}/\verb{<<-}/\code{=} vs. Python's \code{=} only. Python's
 \code{open(path, "w")} is deliberately NOT included in \code{write_fns} here even
-though it is a write call (see \code{\link[=repro_file_io]{repro_file_io()}}'s own \code{open_write_mode}
-handling): \code{open()} returns a file HANDLE, not the path itself — the
+though it is a write call (see \code{\link[=.py_open_writes]{.py_open_writes()}}, which \code{\link[=repro_file_io]{repro_file_io()}}
+uses): \code{open()} returns a file HANDLE, not the path itself — the
 call that actually names the path to redirect — so this function instead
 matches the handle variable's own \code{.write(...)}/\code{.writelines(...)} calls
 is out of scope for a text-level, no-interpreter rewrite (which handle

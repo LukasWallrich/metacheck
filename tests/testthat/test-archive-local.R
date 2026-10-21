@@ -153,3 +153,20 @@ test_that("local_files file without extension gets NA type", {
   expect_true(is.na(make_row$file_type))
 })
 
+
+test_that("a local file file_category() cannot place takes its extension's type (U123)", {
+  # a local .zip or .tar.gz had file_type NA, so it was not counted as an archive
+  d <- withr::local_tempdir()
+  file.create(file.path(d, c("a.zip", "b.tar.gz", "c.png")))
+  lf <- local_files(d)
+  expect_equal(lf$file_type[match(c("a.zip", "b.tar.gz", "c.png"), lf$file_name)],
+               c("archive", "archive", "image"))
+})
+
+test_that("local_files lists several paths recursively when asked (U49)", {
+  # recursive was not passed on for several paths
+  d1 <- withr::local_tempdir(); d2 <- withr::local_tempdir()
+  dir.create(file.path(d1, "sub")); file.create(file.path(d1, "sub", "a.csv"))
+  file.create(file.path(d2, "b.csv"))
+  expect_setequal(local_files(c(d1, d2), recursive = TRUE)$file_name, c("a.csv", "b.csv"))
+})

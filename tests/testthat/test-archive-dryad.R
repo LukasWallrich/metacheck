@@ -268,3 +268,29 @@ test_that("a Dryad sharing link is followed to its DOI (#484)", local({
   paper <- test_paper(paste("Data are available at", share))
   expect_equal(dryad_links(paper)$dryad_url, share)
 }))
+
+test_that("*_info() takes a table or vector with an NA, and a failed connection (U33)", {
+  # the id helpers named their result by the URLs, and data.frame() made an
+  # NA name an NA row name: "row names contain missing values"; a connection
+  # failure (NULL from .batch_query()) also stopped zenodo_info()
+  local_mocked_bindings(.batch_query = function(urls, ...) rep(list(NULL), length(urls)),
+                        online = function(...) TRUE)
+  tables <- list(
+    dryad_info = "https://doi.org/10.5061/dryad.abc123",
+    figshare_info = "https://figshare.com/articles/dataset/x/123456",
+    zenodo_info = "https://zenodo.org/records/123456",
+    dataone_info = "https://search.dataone.org/view/doi:10.5063/F1",
+    reshare_info = "https://reshare.ukdataservice.ac.uk/854321/",
+    mendeley_info = "https://data.mendeley.com/datasets/abcdefgh12")
+  for (f in names(tables)) {
+    tb <- data.frame(u = c(tables[[f]], NA), extra = 1:2)
+    info <- suppressWarnings(suppressMessages(get(f)(tb)))
+    expect_equal(nrow(info), 2, label = f)
+  }
+  # 4TU kept only the id column of a table, and stopped on c(id, NA)
+  info <- suppressWarnings(suppressMessages(researchdata4tu_info(c("16766929", NA))))
+  expect_equal(nrow(info), 1)
+  info <- suppressWarnings(suppressMessages(
+    researchdata4tu_info(data.frame(href = c("16766929", NA), extra = 1:2))))
+  expect_true(all(c("href", "extra") %in% names(info)))
+})

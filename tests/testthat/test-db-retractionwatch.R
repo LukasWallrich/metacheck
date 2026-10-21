@@ -25,3 +25,9 @@ test_that("rw_update", {
   expect_true(grepl("retractionwatch\\.Rds$", path))
   expect_true(file.exists(path))
 }, "mock")
+
+test_that("retractionwatch has no blank DOIs (U15)", {
+  # a blank DOI matched every reference without a DOI in a join on doi
+  r <- retractionwatch()
+  expect_false(any(is.na(r$doi) | !nzchar(r$doi)))
+})

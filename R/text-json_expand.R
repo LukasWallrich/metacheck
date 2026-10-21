@@ -26,6 +26,9 @@
 json_expand <- function(table, col = "answer", suffix = c("", ".json")) {
   # handle non-table input
   if (is.vector(table)) table <- data.frame(json = table)
+  # nothing to expand: the join below stopped on the empty expansion
+  # ("Join columns in `y` must be present in the data", U151)
+  if (nrow(table) == 0) return(table)
   if (is.null(table[[col]])) col <- 1
 
   table$.temp_id. <- seq_along(table[[1]])
@@ -38,7 +41,22 @@ json_expand <- function(table, col = "answer", suffix = c("", ".json")) {
         json <- gsub('"null"', "null", to_expand[[i]])
         json <- gsub(".*```json\\s*\\n", "", json)
         json <- gsub("\\n\\s*```.*", "", json)
+        # jsonlite reads a "_row" key as row names, so that column was lost
+        # and nested values next to it were mangled; read it as an ordinary
+        # column under another name, then give it its name back (U9)
+        json <- gsub('"_row"(\\s*:)', '".json_expand_row."\\1', json)
         j <- jsonlite::fromJSON(json)
+        restore_row <- function(x) {
+          if (is.list(x)) {
+            names(x)[names(x) %in% ".json_expand_row."] <- "_row"
+            x[] <- lapply(x, restore_row)
+          }
+          x
+        }
+        j <- restore_row(j)
+        # nested objects as columns of their own ("v.k"): turned into text
+        # whole, each row read "c(1, NA)" (U9)
+        if (is.data.frame(j)) j <- jsonlite::flatten(j)
         if (length(j) == 0) {
           j <- data.frame(error = NA_character_)
         }

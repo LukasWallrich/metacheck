@@ -4,7 +4,7 @@
 #' Identify and extract funding statements.
 #'
 #' @details
-#' The Funding Check module uses regular expressions to check sentences for words related to funding statements. It will return the sentences in which the conflict of interest statement was found.
+#' The Funding Check module uses regular expressions to check sentences for words related to funding statements. It will return the sentences in which the funding statement was found.
 #'
 #' The function incorporates code from [rtransparent](https://github.com/serghiou/rtransparent), which is no longer maintained. For their validation, see [the paper](https://doi.org/10.1371/journal.pbio.3001107).
 #'
@@ -24,6 +24,9 @@
 #' @returns a list
 #'
 funding_check <- function(paper) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # table ----
   #
   # # get all sentences with both funding and study terms
@@ -264,7 +267,7 @@ rtransparent_funding <- function(text) {
   )
   synonyms[["researches"]] <- c(
     "[Ww]orks", "[Ss]tudies", "[Pp]rojects", "[Tt]rials", "[Pp]ublications",
-    "[Rr]eports", "[Pp]rograms", "[Pp]papers", "[Mm]anuscripts",
+    "[Rr]eports", "[Pp]rograms", "[Pp]apers", "[Mm]anuscripts",
     "[Aa]nalyses", "[Ii]nvestigations"
   )
 
@@ -361,8 +364,11 @@ rtransparent_funding <- function(text) {
   synonyms[["acknowledge"]] <- c("acknowledge", "recognize", "disclose", "declare", "report", "appreciate")
   synonyms[["acknowledged"]] <- c("acknowledged", "recognized", "disclosed", "declared", "reported", "appreciated")
 
+  # typos fixed: "Ffoundation", "[Pp]papers" (above), "L(?i)terature",
+  # "B(?i)ibliograpy" never matched, and "Conflicting financial intere" left
+  # caseless matching on for the later patterns (U104)
   synonyms[["foundation"]] <- c(
-    "Ffoundation(|s)", "Institut(e|es|ution)", "Universit", "Universit(y|ies)",
+    "Foundation(|s)", "Institut(e|es|ution)", "Universit", "Universit(y|ies)",
     "Academ(y|ies)", "Ministr(y|ies)", "[Gg]overnment(|s)", "Council(|s)",
     "National", "NIH", "NSF", "HHMI", "Trust(|s)", "Association(|s)",
     "Societ(y|ies)", "College(|s)", "Commission(|s)", "Center(|s)",
@@ -371,9 +377,9 @@ rtransparent_funding <- function(text) {
   synonyms[["foundation_award"]] <- c(synonyms[["foundation"]], synonyms[["award"]])
 
   synonyms[["References"]] <- c(
-    "R(?i)eferences(?-i)", "L(?i)terature(?-i)", "L(?i)iterature Cited(?-i)",
+    "R(?i)eferences(?-i)", "L(?i)iterature(?-i)", "L(?i)iterature Cited(?-i)",
     "N(?i)otes and References(?-i)", "W(?i)orks Cited(?-i)", "^C(?i)itations(?-i)",
-    "B(?i)ibliograpy(?-i)", "B(?i)ibliographic references(?-i)", "R(?i)eferences and recommended reading(?-i)"
+    "B(?i)ibliography(?-i)", "B(?i)ibliographic references(?-i)", "R(?i)eferences and recommended reading(?-i)"
   )
 
   synonyms[["Methods"]] <- c(
@@ -402,7 +408,7 @@ rtransparent_funding <- function(text) {
     "C(?i)onflict(|s) of interest(|s) declaration(?-i)",
     "C(?i)onflicting interest(|s)(?-i)",
     "C(?i)onflicting interest(|s) declaration(?-i)",
-    "C(?i)onflicting financial intere",
+    "C(?i)onflicting financial interest(|s)(?-i)",
     "C(?i)onflicting of interest(|s)(?-i)",
     "C(?i)onflits d'int(?-i)",
     "C(?i)onflictos de Inter(?-i)",
@@ -630,7 +636,9 @@ obliterate_disclosure_1 <- function(article) {
   words <- c("References")
   next_sentence <- "((|:|\\.)|(|:|\\.) [A-Z0-9]+.*)$"
 
-  pats <- lapply(synonyms[words], function(x) paste0(x, next_sentence))
+  # at the start of the sentence: any sentence with "References" near its
+  # end was taken as the start of the reference list (U104)
+  pats <- lapply(synonyms[words], function(x) paste0("^\\s*", sub("^\\^", "", x), next_sentence))
   pats <- lapply(pats, .encase)
   pattern <- paste(unlist(pats), collapse = "|")
   ref_index <- grep(pattern, article, perl = TRUE)
@@ -965,6 +973,23 @@ get_fund_1 <- function(article) {
   return(grep(pattern, article, perl = TRUE))
 }
 
+# Each title line in `a` with the line after it (or the one after that, when
+# the next is empty), only lines that exist. With two title lines ("Funding"
+# and "Funding:") the if() on a vector stopped funding_check for the whole
+# paper list, and a line past the end pasted "NA" into the statement (U103).
+.title_lines_with_next <- function(a, article) {
+  n <- length(article)
+  nxt <- vapply(a, function(i) {
+    if (i + 1 > n) return(NA_integer_)
+    if (nchar(article[i + 1]) == 0) {
+      if (i + 2 <= n) as.integer(i + 2) else NA_integer_
+    } else {
+      as.integer(i + 1)
+    }
+  }, integer(1))
+  sort(unique(c(a, nxt[!is.na(nxt)])))
+}
+
 get_fund_2 <- function(article) {
   stopifnot(is.character(article))
   synonyms <- .create_synonyms()
@@ -976,15 +1001,7 @@ get_fund_2 <- function(article) {
   a <- grep(pattern, article, perl = TRUE)
 
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     p2 <- lapply(synonyms[words], .title, within_text = TRUE)
     p2 <- lapply(p2, .encase)
@@ -1046,15 +1063,7 @@ get_financial_1 <- function(article) {
   a <- grep(pattern, article, perl = TRUE)
 
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     p2 <- lapply(synonyms[words], .title, within_text = TRUE)
     p2 <- lapply(p2, .encase)
@@ -1128,15 +1137,7 @@ get_grant_1 <- function(article) {
   a <- grep(pattern, article, perl = TRUE)
 
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     grant <- c("G(?i)rant ", "^[A-Z](?i)\\w+ grant ", "Contract grant ")
 
@@ -1311,15 +1312,7 @@ get_acknow_1 <- function(article) {
   indicator_regex <- paste0(total_txt, collapse = " ")
   a <- grep(indicator_regex, article, perl = TRUE, ignore.case = TRUE)
   if (length(a) > 0) {
-    if (!is.na(article[a + 1])) {
-      if (nchar(article[a + 1]) == 0) {
-        return(c(a, a + 2))
-      } else {
-        return(c(a, a + 1))
-      }
-    } else {
-      return(a)
-    }
+    return(.title_lines_with_next(a, article))
   } else {
     return(a)
   }

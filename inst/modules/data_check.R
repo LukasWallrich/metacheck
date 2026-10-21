@@ -410,7 +410,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     all_files$group[!is_root_readme] <- grp$group
     all_files$referenced_by[!is_root_readme] <- grp$referenced_by
     llm_group_updates <- sum(!is.na(grp$group))
-    if (is.na(llm_model_used)) llm_model_used <- grp$model %||% NA_character_
+    # an attribute, not a column: grp$model was always NULL, so the
+    # study-group model was never reported (U99)
+    if (is.na(llm_model_used)) llm_model_used <- attr(grp, "model") %||% NA_character_
     roster_check <- attr(grp, "roster_check")
     group_unresolved <- attr(grp, "unresolved") %||% character(0)
     group_no_evidence <- isTRUE(attr(grp, "no_evidence"))
@@ -619,12 +621,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # aligned by dropping the same positions.
       all_files <- all_files[-da, , drop = FALSE]
       want <- want[-da]
+      # the zip-peek reasons follow the rows too: left as they were, the
+      # manifest gave reasons to the wrong files (U99)
+      zip_peek_reason <- zip_peek_reason[-da]
       if (length(extracted) > 0) {
         added <- dplyr::bind_rows(extracted)
         all_files <- dplyr::bind_rows(all_files, added)
         # Keep `want` aligned with `all_files`: inner files from accepted archives
         # are part of the mirrored data/documentation payload.
         want <- c(want, rep(TRUE, nrow(added)))
+        zip_peek_reason <- c(zip_peek_reason, rep(NA_character_, nrow(added)))
       }
       # Files that do not belong in a repository (__MACOSX/, "._" files,
       # .DS_Store, .Rproj.user/, ...; see .useless_file_kind()) are left out,
@@ -635,6 +641,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       if (any(sys)) {
         all_files <- all_files[!sys, , drop = FALSE]
         want <- want[!sys]
+        zip_peek_reason <- zip_peek_reason[!sys]
       }
     }
     # Reclassify downloaded .txt files from their CONTENT. The name-based
@@ -726,6 +733,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # models / session objects, or could not be restored). Flagged as a
   # data-sharing recommendation: share the underlying data as CSV + codebook.
   workspace_files <- character(0)
+  # .rds files that are R workspaces, made with save() rather than saveRDS():
+  # readRDS() cannot open them (Lakens/tue_datamanager_check#5, item 3).
+  rds_workspace_files <- character(0)
   # Files that read as a data frame but are not a usable rectangular dataset
   # (human-formatted coding worksheets: mostly free-text columns and/or almost
   # entirely empty; see .tabular_usable()). Columns are NOT extracted from these
@@ -748,10 +758,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       f <- data_files[i, ]
       pb_cols$tick(1, list(what = f$file_name))
       df <- data_read_head(f$file_location, n_rows = Inf)
+      # columns data_read_head could only read as their plain stored values,
+      # because their values need an R package (see .plain_s4_columns())
+      s4_conv <- attr(df, "s4_converted") %||% character(0)
+      rds_ws <- tolower(tools::file_ext(f$file_name)) == "rds" &&
+        .rds_is_workspace(f$file_location)
+      if (rds_ws) rds_workspace_files <<- c(rds_workspace_files, f$source_file)
       if (is.null(df) || ncol(df) == 0) {
         # An .RData/.rda that yielded no data frame is an analysis workspace,
         # not reusable shared data — record it for a sharing recommendation.
-        if (tolower(tools::file_ext(f$file_name)) %in% c("rdata", "rda"))
+        if (rds_ws || tolower(tools::file_ext(f$file_name)) %in% c("rdata", "rda"))
           workspace_files <<- c(workspace_files, f$source_file)
         return(NULL)
       }
@@ -804,8 +820,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # codebook extraction. See issue #379.
       if (!isTRUE(usable$usable) &&
           tolower(tools::file_ext(f$file_name)) %in% c("xlsx", "xls")) {
-        sh_names <- tryCatch(readxl::excel_sheets(f$file_location),
-                             error = function(e) character(0))
+        # not for an .xls that crashes the reader (see .xls_readable())
+        sh_names <- if (!.xls_readable(f$file_location)) character(0) else
+          tryCatch(readxl::excel_sheets(f$file_location), error = function(e) character(0))
         sh_names <- setdiff(sh_names, sh_names[1])   # sheet 1 already tried
         for (sh in sh_names) {
           df2 <- tryCatch(data_read_head(f$file_location, n_rows = Inf, sheet = sh),
@@ -891,6 +908,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         qualtrics_display_order = qualtrics_display_order,
         sample_values     = sample_vals,
         utf8_repaired     = utf8_fixed,
+        needs_package     = ifelse(names(df) %in% names(s4_conv),
+                                   unname(s4_conv[names(df)]), ""),
         stats_mat
       )
     })
@@ -1060,8 +1079,11 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
                   names(type_counts)[type_counts > 0]), collapse = ", ")
   )
 
-  n_extracted <- nrow(data_files) - length(manifest_files) -
-    length(non_tabular_files)
+  # the files columns were read from: .RData files and unreadable files were
+  # counted too ("extracted 2 columns from 3 of them") (U99)
+  n_extracted <- if (!is.null(columns_df) && "source_file" %in% names(columns_df))
+    length(unique(columns_df$source_file)) else
+    nrow(data_files) - length(manifest_files) - length(non_tabular_files)
   summary_data <- sprintf(
     "We found %d tabular data file%s and extracted %d column%s from %d of them.",
     n_tabular_all, plural(n_tabular_all),
@@ -1374,6 +1396,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # for the same reason: such a file reads as one column of text, so it never
   # yields a usable preview to check (see .dv_space_csv_findings() below).
   space_csv_findings_df <- .dv_space_csv_findings(structure_df)
+  rds_ws_findings_df <- .dv_rds_workspace_findings(rds_workspace_files)
 
   # Per-paper spreadsheet counts, for both the early return (empty(), below)
   # and the main return's dv_summary_table.
@@ -1426,7 +1449,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # where codebook_check and psychds_check expect the column table -- so such
   # a paper's whole data_check summary and report were lost.
   empty <- function(text) {
-    file_findings_df <- dplyr::bind_rows(spreadsheet_findings_df, space_csv_findings_df)
+    file_findings_df <- dplyr::bind_rows(spreadsheet_findings_df, space_csv_findings_df,
+                                         rds_ws_findings_df)
     if (nrow(spreadsheet_findings_df) > 0)
       text <- paste(text, .dv_spreadsheet_summary_text(spreadsheet_findings_df,
                                                        n_spreadsheet_files))
@@ -1496,6 +1520,17 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       return(0L)
     hit <- columns_df$source_file == file & columns_df$column_name == col
     if (any(hit)) columns_df$utf8_repaired[which(hit)[1]] %||% 0L else 0L
+  }
+
+  # The value type and R package a column needs to be read ("Period, from
+  # the R package lubridate"), recorded by data_check per column; "" when it
+  # needs none or from an older data_check run without the column.
+  needs_package_of <- function(file, col) {
+    if (is.null(columns_df) || !all(c("source_file", "column_name",
+                                      "needs_package") %in% names(columns_df)))
+      return("")
+    hit <- columns_df$source_file == file & columns_df$column_name == col
+    if (any(hit)) columns_df$needs_package[which(hit)[1]] %||% "" else ""
   }
 
   # ── 2. Run checks per column ─────────────────────────────────────────────────
@@ -1632,13 +1667,25 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # file names, scripts, metadata keys) and often signal a misparsed header.
       cn <- data_check_colname(col)
       if (cn$problem) col_finds[["Problematic column name"]] <- cn$message
-      if (!is.null(coll[[col]]))
-        col_finds[["Colliding column names"]] <- coll[[col]]
+      # by name comparison, which also finds a blank name (U56)
+      coll_hit <- coll[names(coll) %in% col]
+      if (length(coll_hit))
+        col_finds[["Colliding column names"]] <- coll_hit[[1]]
 
       # Mixed / legacy encoding: values whose bytes were not valid UTF-8 at
       # read time. metacheck re-interpreted them as Latin-1 to continue, but
       # on other systems these characters silently corrupt (é becomes "Ã©" or
       # "�"), so the researcher should re-save the file as UTF-8.
+      # Values that need an R package to be read: anyone without that package
+      # cannot use the file, so it is a reproducibility problem
+      # (Lakens/tue_datamanager_check#4, item 8a).
+      pkg_need <- needs_package_of(file, col)
+      if (!is.na(pkg_need) && nzchar(pkg_need)) {
+        col_finds[["Needs an R package"]] <- sprintf(
+          "This column holds values of type %s, so the file cannot be read without that package. metacheck read the plain stored numbers to continue. Share the data in an open format such as CSV, with this column as plain numbers or text.",
+          pkg_need)
+      }
+
       n_enc <- utf8_repaired_of(file, col)
       if (!is.na(n_enc) && n_enc > 0) {
         col_finds[["Mixed encoding"]] <- sprintf(
@@ -1806,8 +1853,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   }
   if (n_careless_files > 0 && !careless_avail)
     careless_note <- sprintf(
-      "%d file%s contain survey data with an identifier, but careless-response checks were skipped because the `careless` package is not installed. Install it with `install.packages(\"careless\")` to screen for straightlining and other careless responding.",
-      n_careless_files, plural(n_careless_files))
+      "%d file%s contain%s survey data with an identifier, but careless-response checks were skipped because the `careless` package is not installed. Install it with `install.packages(\"careless\")` to screen for straightlining and other careless responding.",
+      n_careless_files, plural(n_careless_files),
+      plural(n_careless_files, "s", ""))   # "1 file contain" (U82)
 
   careless_block_df <- if (length(careless_specs) > 0) dplyr::bind_rows(careless_specs) else
     data.frame(source_file = character(0), scale = character(0),
@@ -1834,7 +1882,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # "Potential Issues" table but are excluded from n_flagged/check_counts
   # below, which are column-level tallies.
   findings_df <- dplyr::bind_rows(findings_df, spreadsheet_findings_df,
-                                  space_csv_findings_df)
+                                  space_csv_findings_df, rds_ws_findings_df)
 
 
 
@@ -1896,6 +1944,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     "Problematic column name" = "whose name contains file-illegal characters or is excessively long",
     "Colliding column names" = "whose names become identical when special characters are removed",
     "Mixed encoding"    = "with values in a legacy (non-UTF-8) encoding",
+    "Needs an R package" = "whose values cannot be read without a particular R package",
     "Personal info (values)"      = "whose values look like personal information",
     "Personal info (column name)" = "whose name suggests personal information",
     "Geographic coordinates"      = "that look like geographic coordinates",
@@ -1916,6 +1965,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (nrow(spreadsheet_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
   # Same for a .csv separated by spaces, whose columns could not be checked.
   if (nrow(space_csv_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
+  # And for an .rds file that readRDS() cannot open.
+  if (nrow(rds_ws_findings_df) > 0 && dv_tl == "green") dv_tl <- "yellow"
 
   # ── 4. Report ────────────────────────────────────────────────────────────────
   dv_summary_text <- if (n_flagged == 0) {
@@ -1972,6 +2023,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   if (nrow(space_csv_findings_df) > 0)
     dv_summary_text <- paste(dv_summary_text,
                              .dv_space_csv_summary_text(space_csv_findings_df))
+  if (nrow(rds_ws_findings_df) > 0)
+    dv_summary_text <- paste(dv_summary_text,
+                             .dv_rds_workspace_summary_text(rds_ws_findings_df))
 
   dv_report <- c(
     "This module runs automated data-quality checks (empty columns, SPSS filter variables, category casing, stray whitespace, numbers stored as text, problematic and colliding column names, mixed text encodings, personal information, spreadsheet formatting, and careless responding) on the extracted data files.",
@@ -2094,8 +2148,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     n_short <- sum(careless_df$short_scale_only %in% TRUE)
     dv_report <- c(dv_report,
       "#### Careless Responding",
-      sprintf("%d distinct respondent%s were flagged for **straightlining**: giving the same answer for at least 80%% of the items in a multi-item scale of %d items or more. One respondent can be flagged in several scales; the table below is **one row per person**, and the *Longest run* column gives the run that triggered the strongest flag, so you can check it against the raw data.",
-              n_car, plural(n_car), .dv_careless_min_items),
+      sprintf("%d distinct respondent%s %s flagged for **straightlining**: giving the same answer for at least 80%% of the items in a multi-item scale of %d items or more. One respondent can be flagged in several scales; the table below is **one row per person**, and the *Longest run* column gives the run that triggered the strongest flag, so you can check it against the raw data.",
+              n_car, plural(n_car), plural(n_car, "was", "were"),   # "1 respondent were" (U82)
+              .dv_careless_min_items),
       if (n_short > 0) sprintf(
         "Of these, **%d were flagged *only* by short-scale straightlining** (a run of identical answers on a scale of %d items or fewer). On a short, one-directional scale, answering consistently is often normal, coherent responding rather than carelessness — treat these as weak signals and inspect the actual responses before excluding anyone.",
         n_short, .dv_short_scale_max) else NULL,
@@ -2504,6 +2559,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   "Problematic column name"         = "\U0001F3F7\U0000FE0F",  # 🏷️
   "Colliding column names"          = "\U0001F465",  # 👥
   "Mixed encoding"                  = "\U0001F523",  # 🔣
+  "Needs an R package"              = "\U0001F4E6",  # 📦
   "Personal info (values)"          = "\U0001F512",  # 🔒
   "Personal info (column name)"     = "\U0001F512",  # 🔒
   "Geographic coordinates"          = "\U0001F30D",  # 🌍
@@ -2699,6 +2755,31 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
       "comma-separated .csv (or a tab-separated .tsv)."))
 }
 
+# An .rds file made with save() (an R workspace) instead of saveRDS(): one
+# file-level finding each, in the shared (source_file, column, label, check,
+# detail) shape (Lakens/tue_datamanager_check#5, item 3).
+.dv_rds_workspace_findings <- function(files) {
+  files <- unique(files)
+  data.frame(
+    source_file = files, column = rep(NA_character_, length(files)),
+    label = rep(NA_character_, length(files)),
+    check = rep("R workspace named .rds", length(files)),
+    detail = rep(paste(
+      # No "." before the first full stop: .dv_issue_cell() shows the text up
+      # to the first "." as the short description.
+      "This file was saved with save(), not saveRDS(), so it is an R workspace",
+      "with the extension .rds and readRDS() cannot open it. metacheck opened",
+      "it with load() instead. Rename it to .RData, or save it with saveRDS();",
+      "better still, share the data in an open format such as CSV."), length(files)))
+}
+
+.dv_rds_workspace_summary_text <- function(findings_df) {
+  n <- length(unique(findings_df$source_file))
+  sprintf("%d .rds file%s %s saved with save() instead of saveRDS(), so readRDS() cannot open %s; rename %s to .RData: %s.",
+          n, plural(n), if (n == 1) "was" else "were", if (n == 1) "it" else "them",
+          if (n == 1) "it" else "them", paste(unique(findings_df$source_file), collapse = ", "))
+}
+
 .dv_space_csv_summary_text <- function(findings_df) {
   n <- length(unique(findings_df$source_file))
   sprintf("%d .csv file%s %s separated by spaces instead of commas, so %s columns could not be checked; save %s as comma-separated .csv (or tab-separated .tsv): %s.",
@@ -2879,11 +2960,11 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
         path, col_names = FALSE, .name_repair = "minimal")))
       utils::head(d, 6L)
     }, error = function(e) NULL)
-  } else {
+  } else if (.xls_readable(path)) {   # see .xls_readable()
     tryCatch(as.data.frame(suppressWarnings(readxl::read_excel(
       path, col_names = FALSE, n_max = 6L, col_types = "text",
       .name_repair = "minimal"))), error = function(e) NULL)
-  }
+  } else NULL
   if (is.null(raw) || nrow(raw) < 2 || ncol(raw) < 2) return(NULL)
   rows <- lapply(seq_len(nrow(raw)), function(i) as.character(raw[i, , drop = TRUE]))
   det  <- .detect_header_row(rows)

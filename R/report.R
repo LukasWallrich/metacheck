@@ -141,6 +141,10 @@ report <- function(paper,
     # treat length-1 paperlist like 1 paper
     paper <- paper[[1]]
   } else if (.is_paper_list(paper)) {
+    # papers sharing a paper_id are renamed "~2", ... (U208); each report's
+    # file is named after its paper, so one overwrote the other
+    paper <- .unique_paper_ids(paper)
+
     ## set up progress bar ----
     pb <- pb(
       length(paper),
@@ -149,21 +153,26 @@ report <- function(paper,
     pb$tick(0, tokens = list(what = "Creating reports"))
 
     if (length(output_file) != length(paper)) {
-      bn <- paste0(names(paper), x = basename(output_file[[1]]))
+      # "<id>_<name>": pasted without a separator it was "<id>report.html" (U130)
+      bn <- paste0(names(paper), "_", basename(output_file[[1]]))
       output_file <- dirname(output_file[[1]]) |> file.path(bn)
     }
 
     reports <- mapply(\(x, of) {
+      # a paper keeps its id in info$paper_id; x$id was always NULL, which
+      # stopped the progress bar ("invalid 'replacement' argument")
+      pid <- tryCatch(as.character(paper_id(x))[1], error = \(e) NA_character_)
+      if (is.na(pid)) pid <- ""
       r <- tryCatch(report(x, modules, of, output_format, report_type, args),
         error = \(e) {
-          logger("report", list(paper = x$id, error = e$message))
-          warning("Error in ", x$id, ":\n", e$message,
+          logger("report", list(paper = pid, error = e$message))
+          warning("Error in ", pid, ":\n", e$message,
             call. = FALSE
           )
           return(NULL)
         }
       )
-      pb$tick(tokens = list(what = x$id))
+      pb$tick(tokens = list(what = pid))
       r
     }, x = paper, of = output_file, SIMPLIFY = FALSE)
 
@@ -566,14 +575,17 @@ report_qmd <- function(module_output, paper = list()) {
   title <- paper$info$title
   if (length(title) == 0 || is.na(title[[1]])) title <- ""
   subtitle <- gsub('"', '\\\\"', title[[1]])
-  doi_text <- ifelse(is.na(paper$info$doi) |
-                       (paper$info$doi %||% "") == "", "",
-    sprintf("DOI: [%s](https://doi.org/%s)", paper$info$doi, paper$info$doi)
-  )
+  # No paper (the default list()), a zero-row info table or no doi column gave
+  # a zero-length doi_text, and nrow(NULL) > 0 below stopped with "argument is
+  # of length zero" (U128): the report is written without them.
+  doi <- paper$info$doi
+  doi <- if (length(doi) == 0 || is.na(doi[[1]])) "" else doi[[1]]
+  doi_text <- if (nzchar(doi))
+    sprintf("DOI: [%s](https://doi.org/%s)", doi, doi) else ""
 
   # get authors
   author_text <- ""
-  if (nrow(paper$author) > 0) {
+  if (NROW(paper$author) > 0) {
     names <- paste(paper$author$given,
                    paper$author$family)
     last <- utils::tail(names, 1)
@@ -733,8 +745,12 @@ report_qmd <- function(module_output, paper = list()) {
   # nesting inside the <li>.
   summary_list <- sapply(summary_output, \(x) {
     tl <- x$traffic_light %||% "info"
-    tl_symbol <- emojis[[paste0("tl_", tl)]]
-    summary_text <- x$summary_text %||% ""
+    # an undefined light ("blue") has no emoji: NULL made sprintf() below
+    # return character(0), an empty row (U128)
+    tl_symbol <- emojis[[paste0("tl_", tl)]] %||% ""
+    # a summary of several parts is joined: nzchar() of a vector stopped the
+    # whole report in R >= 4.3 ("'length = 2' in coercion to 'logical(1)'", U7)
+    summary_text <- paste(x$summary_text %||% "", collapse = " ")
     # Some modules' summary_text is ITSELF a multi-item markdown list (one
     # "- " bullet per finding, e.g. code_check's "- We found 33 R...\n- 1
     # code file had no comments.\n..."), not a single sentence -- confirmed
@@ -983,7 +999,9 @@ report_qmd <- function(module_output, paper = list()) {
       # \if{html}{\out{...}}, and that wrapper leaked into the rendered report as
       # literal "}}" / "\if{html}{\out{" around the validation text. A fenced div
       # renders to <div class="validation"> cleanly and keeps the CSS hook.
-      m <- gregexpr("<validation>.*?</validation>", info$details)
+      # a module without details: gregexpr() on NULL stopped this block, so the
+      # whole callout (description, authors) was dropped (U129)
+      m <- gregexpr("<validation>.*?</validation>", info$details %||% "")
       if (m[[1]][1] > -1) {
         validation <- regmatches(info$details, m) |>
           _[[1]] |>
@@ -995,7 +1013,9 @@ report_qmd <- function(module_output, paper = list()) {
       author_ack <- tryCatch({
         if (!is.null(info$author)) {
           a <- info$author |>
-            gsub("\\s*\\(.*email\\{.+\\})", "", x = _)
+            # each "(\email{...})" on its own: the greedy pattern cut a line
+            # naming two authors down to the first (U6)
+            gsub("\\s*\\([^()]*email\\{[^}]*\\}\\)", "", x = _)
           authors <- if (length(a) < 3) {
             paste(a, collapse = " and ")
           } else {
@@ -1051,7 +1071,9 @@ module_report <- function(module_output,
 
   # set up header
   tl <- module_output$traffic_light %||% "info"
-  tl_symbol <- emojis[[paste0("tl_", tl)]]
+  # an undefined light ("blue") has no emoji: NULL made sprintf() below
+  # return character(0), so the heading was lost (U128)
+  tl_symbol <- emojis[[paste0("tl_", tl)]] %||% ""
   if (is.null(header)) {
     head <- ""
   } else if (header == 0) {
@@ -1094,8 +1116,11 @@ module_report <- function(module_output,
   # already a real block container, so it needs no second one nested inside.
   pre <- "<details><summary>View detailed feedback</summary>"
   post <- "</details>"
+  # without summary_text, all(NULL == report) was TRUE and the report was
+  # dropped (U129)
   if (is.null(report) ||
-    all(module_output$summary_text == report)) {
+    (!is.null(module_output$summary_text) &&
+       all(module_output$summary_text == report))) {
     pre <- post <- report <- NULL
   } else if (paste(report, collapse = "\n\n") |> nchar() < 300) {
     pre <- post <- NULL

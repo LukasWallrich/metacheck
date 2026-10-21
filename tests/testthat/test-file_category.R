@@ -100,3 +100,14 @@ test_that("README names, including read.me (#487)", {
   not_readmes <- c("spread.means.csv", "thread.metadata.csv", "bread.me", "data.csv")
   expect_false(any(.is_readme_name(not_readmes)))
 })
+
+test_that("names that are not valid UTF-8 are classified, not refused (U76)", {
+  bad <- c("a.csv", rawToChar(as.raw(c(0x62, 0xff, 0x2e, 0x74, 0x78, 0x74))))  # "b<ff>.txt"
+  expect_equal(filetype(bad), setNames(c("data", "text"), bad))  # named as given
+  fc <- file_category(bad)
+  expect_equal(fc$filetype[[2]], "text")
+  expect_identical(fc$name, bad)          # names kept as given
+  expect_length(data_classify_files(bad), 2)
+  cfn <- check_file_naming(bad)
+  expect_true(bad[2] %in% cfn$file_name)  # returned as given, so callers can match
+})

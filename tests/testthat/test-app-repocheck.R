@@ -21,6 +21,11 @@ test_that("a report on an uploaded .zip does not show the server's folders (#500
   llm_use(FALSE)
   extract_zip <- .repocheck_fun("extract_zip")$fun
   job <- .repocheck_fun("repocheck_job")
+  # the job puts the app's progress bar in metacheck's place
+  # (use_shiny_progress()); put metacheck's own back afterwards, or every
+  # later test in this session runs with the app's bar
+  orig_pb <- metacheck:::pb
+  withr::defer(utils::assignInNamespace("pb", orig_pb, ns = "metacheck"))
 
   for (wrapped in c(TRUE, FALSE)) {
     workdir <- withr::local_tempdir()
@@ -48,4 +53,27 @@ test_that("a report on an uploaded .zip does not show the server's folders (#500
     expect_match(txt, if (wrapped) "my_study" else "my_upload", fixed = TRUE)
     expect_match(txt, "analysis.R", fixed = TRUE)
   }
+})
+
+test_that("an empty .zip is called empty, not damaged (Lakens/tue_datamanager_check#4, item 8)", {
+  check_zip <- .repocheck_fun("check_zip")$fun
+  explain_error <- .repocheck_fun("explain_error")$fun
+  # a .zip without entries is only the 22-byte end-of-archive record
+  empty <- withr::local_tempfile(fileext = ".zip")
+  writeBin(as.raw(c(0x50, 0x4b, 0x05, 0x06, rep(0, 18))), empty)
+  msg <- tryCatch(check_zip(empty), error = conditionMessage)
+  expect_equal(msg, "The .zip holds no files.")
+  expect_true(startsWith(explain_error(msg), "The .zip holds no files."))
+  # a file that is not a .zip is still called damaged
+  broken <- withr::local_tempfile(fileext = ".zip")
+  writeLines("not a zip", broken)
+  msg <- tryCatch(check_zip(broken), error = conditionMessage)
+  expect_match(explain_error(msg), "could not be opened as a .zip archive")
+  # a .zip of an empty folder holds only the folder's entry
+  src <- withr::local_tempdir()
+  dir.create(file.path(src, "my_study"))
+  folders <- file.path(withr::local_tempdir(), "folders.zip")
+  withr::with_dir(src, utils::zip(folders, "my_study", flags = "-q"))
+  skip_if_not(file.exists(folders), "zip utility unavailable")
+  expect_error(check_zip(folders), "holds no files")
 })

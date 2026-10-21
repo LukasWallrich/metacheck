@@ -36,8 +36,22 @@ ref_pubpeer <- function(paper) {
 
   ## join to  pubpeer ----
   pp <- pubpeer_comments(bib$doi)
+  # NULL when PubPeer answered with an error: the join below stopped on it
+  # ("`x` and `y` must share the same src", U23)
+  if (is.null(pp)) {
+    return(list(
+      traffic_light = "fail",
+      summary_text = "PubPeer could not be reached (the request failed), so the references were not checked for comments."
+    ))
+  }
   pp <- pp[pp$total_comments > 0 & pp$users != "Statcheck", ]
+  # pubpeer_comments() gives one row per DOI looked up, so a DOI cited three
+  # times joined to three rows each (9 rows); each commented DOI counts once
+  # per paper (U118)
+  pp <- pp[!duplicated(pp$doi), , drop = FALSE]
+  if (!"url" %in% names(pp)) pp$url <- rep(NA_character_, nrow(pp))
   table <- dplyr::inner_join(bib, pp, by = "doi")
+  table <- table[!duplicated(table[, c("paper_id", "doi")]), , drop = FALSE]
 
   # traffic_light ----
   tl <- if (nrow(table)) "info" else "na"
@@ -53,8 +67,8 @@ ref_pubpeer <- function(paper) {
   if (nrow(table) == 0) {
     summary_text <- "No references with comments in PubPeer were found."
     report <- sprintf(
-      "We checked %d references with DOIs. %s",
-      sum(!is.na(bib$doi)), summary_text
+      "We checked %d reference%s with DOIs. %s",   # "1 references" (U82)
+      sum(!is.na(bib$doi)), plural(sum(!is.na(bib$doi))), summary_text
     )
   } else {
     ## summary_text ----
@@ -72,10 +86,12 @@ ref_pubpeer <- function(paper) {
     )
 
     ## report_table ----
-    rows <- !is.na(table$url)
+    # every commented reference, with a link where PubPeer gives one: rows
+    # without a url were left out, and without a url column this stopped (U118)
     cols <- c("text", "total_comments", "url")
-    report_table <- table[rows, cols]
-    report_table$url <- link(report_table$url, "link")
+    report_table <- table[, cols]
+    report_table$url <- ifelse(is.na(report_table$url), "",
+                               link(report_table$url, "link"))
     names(report_table) <- c("Reference", "Comments", "PubPeer Link")
 
     ## report ----

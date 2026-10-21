@@ -142,3 +142,19 @@ test_that("stat_p_nonsig", {
   mod_output <- module_run(paper, "stat_p_nonsig")
   expect_equal(mod_output$table$text, "p = .20")
 })
+
+test_that("stat_p_exact: p < .000 is zero, == is =, and a starred footnote hides only itself (U127)", {
+  s <- c("The effect was strong, p < .000.",
+         "Another, p == .000.",
+         "Group A differed, p < .05, and group B differed, p < .01 (*p < .05).")
+  mo <- module_run(test_paper(s), "stat_p_exact")
+  expect_equal(mo$summary_table$n_zero, 2)
+  expect_equal(mo$summary_table$n_imprecise, 2)   # .05 and .01, not the starred footnote
+})
+
+test_that("stat_check without statistics gives every paper of a list a summary row (U124)", {
+  p1 <- test_paper("no stats"); p1$paper_id <- "a"
+  p2 <- test_paper("none"); p2$paper_id <- "b"
+  mo <- module_run(paperlist(p1, p2), "stat_check")
+  expect_equal(mo$summary_table$paper_id, c("a", "b"))
+})

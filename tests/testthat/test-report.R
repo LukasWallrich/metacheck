@@ -415,6 +415,19 @@ test_that("module_report howitworks", {
   expect_false(grepl("This module was developed by", rep))
 })
 
+test_that("module_report keeps How It Works without details, and the report without summary_text (U129)", {
+  # gregexpr() on NULL details dropped the whole callout; a NULL summary_text
+  # made all(NULL == report) TRUE, which dropped the report
+  local_mocked_bindings(module_info = function(...)
+    list(description = "Demo description", details = NULL, author = "Ann Author"))
+  mo <- list(module = "nodetails", title = "No Details", traffic_light = "info",
+             summary_text = NULL, report = "The module's own report.")
+  rep <- module_report(mo)
+  expect_match(rep, "How It Works", fixed = TRUE)
+  expect_match(rep, "This module was developed by Ann Author", fixed = TRUE)
+  expect_match(rep, "The module's own report.", fixed = TRUE)
+})
+
 
 test_that("module_report validation", {
   paper <- demopaper()
@@ -465,6 +478,26 @@ test_that("report_qmd", {
 
   mi <- module_info(modules)
   expect_true(grepl(mi$title, report_text, fixed = TRUE))
+})
+
+test_that("report_qmd copes with a split summary, no paper and an unknown light (U7, U128)", {
+  mo <- function(summary = "All fine.", tl = "green") structure(list(
+    module = "demo_mod", title = "Demo Module", traffic_light = tl,
+    summary_text = summary, report = "Details here.", table = NULL),
+    class = "metacheck_module_output")
+
+  # a summary of several parts stopped the whole report (R >= 4.3)
+  txt <- report_qmd(list(demo_mod = mo(c("Part one.", "Part two."))), demopaper())
+  expect_match(txt, "Part one. Part two.", fixed = TRUE)
+
+  # the default paper = list() stopped ("argument is of length zero")
+  expect_match(report_qmd(list(demo_mod = mo())), "All fine.", fixed = TRUE)
+
+  # an undefined light kept no summary row and lost its heading
+  txt <- report_qmd(list(demo_mod = mo(tl = "blue")), demopaper())
+  expect_match(txt, "mc-summary-row blue", fixed = TRUE)
+  expect_match(txt, "All fine.", fixed = TRUE)
+  expect_match(module_report(mo(tl = "blue")), "### +Demo Module \\{#demo-module \\.blue\\}")
 })
 
 test_that("a paper without a title or DOI keeps the whole report header (#497)", {
@@ -520,4 +553,12 @@ test_that("the brief report keeps a green module that asks to be shown (#504)", 
   report_type("full")
   txt <- report_qmd(list(reproducibility_check = ran, repo_check = quiet), demopaper())
   expect_match(txt, "Repository Check", fixed = TRUE)
+})
+
+test_that("module_report credits every author, and scroll_table breaks lines in a blank-named column (U6, U131)", {
+  # the greedy email pattern kept only the first of two authors on one line;
+  # a vector's blank-named column kept its "\n"
+  rep <- module_report(module_run(demopaper(), "stat_p_exact"))
+  expect_match(rep, "developed by Lisa DeBruine and Daniel Lakens", fixed = TRUE)
+  expect_match(scroll_table(c("a\nb", "c")), "a<br>b", fixed = TRUE)
 })

@@ -28,6 +28,9 @@
 #'
 #' @returns a list
 stat_p_nonsig <- function(paper) {
+  # nothing to check in an empty paper or list: "na", not red or green
+  if (.paper_is_empty(paper)) return(.empty_input_result(paper))
+
   # detailed table of results ----
   table <- extract_p_values(paper)
 
@@ -35,7 +38,7 @@ stat_p_nonsig <- function(paper) {
   cond <- !is.na(table$p_value) &
     table$p_value <= 0.05 &
     !is.na(table$p_comp) &
-    table$p_comp %in% c("<", "=", "\u2264", "<=", "=<")
+    table$p_comp %in% c("<", "=", "==", "\u2264", "<=", "=<")   # "==" is "=" (U127)
 
   table$significance <- ifelse(cond, "significant", "nonsignificant")
   table <- subset(table, significance == "nonsignificant")

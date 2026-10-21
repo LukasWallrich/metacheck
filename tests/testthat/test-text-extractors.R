@@ -36,6 +36,15 @@ test_that("extract_urls", {
   expect_in(urls$paper_id, names(paper))
 })
 
+test_that("extract_urls skips e-mail addresses and 'et al.' glued to a word (U158, U206)", {
+  # both halves of an address were listed, and "et al.Inhibitory" gave the
+  # URL "al.Inhibitory"
+  paper <- test_paper(c("Catarino et al.Inhibitory Control was studied.",
+                        "Contact k.aristovich@ucl.ac.uk for data.",
+                        "Mail john@site.com, or visit site.com or twitter.com/@user."))
+  expect_equal(extract_urls(paper)$text, c("site.com", "twitter.com/@user"))
+})
+
 
 test_that("extract_p_values", {
   expect_true(is.function(metacheck::extract_p_values))
@@ -114,6 +123,21 @@ test_that("extract_p_values", {
   expect_equal(p$p_value[23:29], rep(0.05, 7))
 })
 
+
+test_that("extract_p_values reads ps, p's, x 10 and the Unicode minus (U204, U205)", {
+  # "ps < .05" gave no row, and "p = 1.8 x 10 -6" was read as 1.8
+  txt <- c("All ps < .05.", "Both p's > .10.", "Both p\u2019s > .10.",
+           "The p-values < .001.", "p = 1.8 \u00d7 10 -6", "p = 6.1 \u00d7 10\u22125",
+           "p=2.14e\u2212213", "p = 5.0 x 10^-2")
+  pv <- extract_p_values(txt)
+  expect_equal(pv$p_value, c(.05, .10, .10, .001, 1.8e-6, 6.1e-5, 2.14e-213, .05))
+})
+
+test_that("extract_eq reads the Unicode minus, and 'and z' is z (U205, U218)", {
+  eq <- extract_eq("t(28) = \u22122.15, r(98) = \u2212.32, r = \u2212 0.12, and z = 3.1.")
+  expect_equal(eq$lhs, c("t", "r", "r", "z"))
+  expect_equal(eq$rhs, c("-2.15", "-.32", "-0.12", "3.1"))
+})
 
 test_that("extract_eq", {
   expect_true(is.function(metacheck::extract_eq))
@@ -246,4 +270,27 @@ test_that("bibr vs extract_eq", {
 
   dplyr::filter(compare, is.na(bibr) | is.na(mc)) |> View()
 
+})
+
+test_that("extract_p_values and extract_eq search a character vector (U150)", {
+  # both stopped on a plain character vector, while extract_urls() took one
+  txt <- c("We found t(28) = 2.4, p = .03.", "No effect, p > .05.")
+  p <- extract_p_values(txt)
+  expect_equal(p$p_value, c(0.03, 0.05))
+  expect_equal(p$text_id, 1:2)
+  eq <- extract_eq(txt)
+  expect_equal(eq$lhs, c("t", "p", "p"))
+  expect_equal(eq$grp_id, c(1, 1, 2))
+  # a text table without paper_id or text_id stopped extract_eq's grouping
+  expect_equal(nrow(extract_eq(data.frame(text = txt))), 3)
+})
+
+test_that("extract_tests gives each paper of a list its own tests, once (U10)", {
+  # every test was repeated for every paper id
+  p1 <- test_paper(c("We found t(20) = 2.1, p = .04.", "Also F(1, 30) = 4.5, p = .04.")); p1$paper_id <- "a"
+  p2 <- test_paper("Here t(10) = 3.2, p = .01."); p2$paper_id <- "b"
+  tests <- extract_tests(paperlist(p1, p2))
+  expect_equal(as.vector(table(tests$paper_id)[c("a", "b")]), c(2L, 1L))
+  eq <- extract_eq(paperlist(p1, p2))
+  expect_equal(eq$grp_id[eq$paper_id == "a"], c(1, 1, 2, 2))
 })

@@ -183,7 +183,7 @@ ethics_check <- function(paper) {
         ethics_statements = list(unique(text[ethics])),
         .by = paper_id
       )
-    ethics_na <- sapply(ethics_summary$ethics_statements, length) == 0
+    ethics_na <- lengths(ethics_summary$ethics_statements) == 0
     ethics_summary$ethics_statements[ethics_na] <- NA_character_
   } else {
     ethics_summary <- dplyr::tibble(
@@ -200,7 +200,7 @@ ethics_check <- function(paper) {
         live_data_statements = list(unique(text[live_data])),
         .by = paper_id
       )
-    live_na <- sapply(live_summary$live_data_statements, length) == 0
+    live_na <- lengths(live_summary$live_data_statements) == 0
     live_summary$live_data_statements[live_na] <- NA_character_
   } else {
     live_summary <- dplyr::tibble(
@@ -215,9 +215,11 @@ ethics_check <- function(paper) {
     dplyr::left_join(live_summary, by = "paper_id")
   summary_table$ethics_approved[is.na(summary_table$ethics_approved)] <- FALSE
   summary_table$needs_ethics[is.na(summary_table$needs_ethics)] <- FALSE
-  ethics_null <- sapply(summary_table$ethics_statements, is.null)
+  # vapply()/lengths(), not sapply(): for no papers sapply() returned list(),
+  # and indexing with it stopped ("invalid subscript type 'list'", U79)
+  ethics_null <- vapply(summary_table$ethics_statements, is.null, logical(1))
   summary_table$ethics_statements[ethics_null] <- NA_character_
-  live_null <- sapply(summary_table$live_data_statements, is.null)
+  live_null <- vapply(summary_table$live_data_statements, is.null, logical(1))
   summary_table$live_data_statements[live_null] <- NA_character_
 
   # traffic_light + summary_text ----
@@ -242,6 +244,8 @@ ethics_check <- function(paper) {
   }
 
   # report ----
+  # each statement quoted once: one found at several text_ids was quoted
+  # each time (U102)
   report <- NULL
 
   if (nrow(summary_table) == 1) {
@@ -253,7 +257,7 @@ ethics_check <- function(paper) {
       if (approved) {
         report <- sprintf(
           "An ethics approval statement was detected, based on the following text:\n\n> %s",
-          paste(table$text[table$ethics], collapse = "\n\n> ")
+          paste(unique(table$text[table$ethics]), collapse = "\n\n> ")
         )
       } else {
         report <- "We did not detect an ethics approval statement, and this paper does not appear to involve live data collection from human or animal participants. Ethics approval is typically not required for theoretical work, simulations, reviews, meta-analyses, or secondary analyses of published data."
@@ -264,7 +268,7 @@ ethics_check <- function(paper) {
         report <- sprintf(
           "Based on the following text, we would expect an ethics approval statement, and it was present:\n\n> %s\n\nEthics approval statement:\n\n> %s",
           live_quote,
-          paste(table$text[table$ethics], collapse = "\n\n> ")
+          paste(unique(table$text[table$ethics]), collapse = "\n\n> ")
         )
       } else {
         report <- sprintf(

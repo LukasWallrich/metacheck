@@ -78,6 +78,11 @@ llm_cache_clear <- function() {
     params = p
   )
   raw <- serialize(payload, connection = NULL, ascii = TRUE, xdr = TRUE)
+  # without the header fields that record the R version that wrote it
+  # (lines 3 and 4 of the ascii form): with them, an R upgrade changed every
+  # key and emptied the cache (U20)
+  lines <- strsplit(rawToChar(raw), "\n", fixed = TRUE)[[1]]
+  raw <- charToRaw(paste(lines[-(3:4)], collapse = "\n"))
   tmp <- tempfile()
   on.exit(unlink(tmp), add = TRUE)
   writeBin(raw, tmp)
