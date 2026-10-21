@@ -95,6 +95,8 @@
 * `paper_id()` takes each paper's own id, so a paper whose info table has no rows keeps its id in a paper list (it was read from the info tables, so the id was lost and its rows got paper_id NA in `ethics_check` and elsewhere). `ethics_check` quotes each ethics statement once; one found in several places was quoted each time (#507: U102)
 * `funding_check`: the synonyms "Foundation", "papers", "Literature" and "Bibliography" were misspelled in their patterns and never matched, and an unclosed caseless part made later patterns ignore case; the reference list is found at a sentence that begins with its title, not at any sentence that ends with "References" and a capitalised word (#507: U104)
 * `ref_accuracy` (a paper without `bib_match` rows) and `reg_check` (every comparison failed) give the traffic light "fail"; they gave "error", which is not one of metacheck's lights, so the report showed no symbol (#507: U30)
+* `open_practices` on a paper list gives every paper a row, so the light and summary follow the number of papers: a list where only one paper had a flagged sentence was reported as a single paper (with a green, yellow or red light), and papers without a flagged sentence did not count as "neither" (#507: U106)
+* `open_practices` flags "on request" whatever its case ("ON REQUEST" passed the repository search but was not flagged), quotes each on-request sentence once in one paragraph, and counts only a capital "R" as a word for code, so a statistic such as "r(68) = .58" is not a code statement (#507: U107)
 
 # metacheck 0.4.0
 

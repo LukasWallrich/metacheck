@@ -56,11 +56,12 @@ open_practices <- function(paper) {
                   on_request)
 
   data_words <- c("data")
+  # a capital R only (searched separately, below): ignoring case, the
+  # statistic "r(68) = .58" counted as code (U107)
   code_words <- c("\\bcode\\b",
                   "\\bsoftware\\b",
                   "\\bscript",
                   "\\banaly",
-                  "\\bR\\b",
                   "\\bpython\\b")
   materials_words <- c("\\bmaterials?\\b",
                        "\\bquestionnaires?\\b",
@@ -76,8 +77,9 @@ open_practices <- function(paper) {
     text_search(availability)
   data$data <- TRUE
 
-  code <- paper |>
-    text_search(code_words) |>
+  code <- dplyr::bind_rows(text_search(paper, code_words),
+                           text_search(paper, "\\bR\\b", ignore.case = FALSE)) |>
+    dplyr::distinct() |>
     text_search(repo_words) |>
     text_search(availability)
   code$code <- TRUE
@@ -108,7 +110,9 @@ open_practices <- function(paper) {
   table$prereg[is.na(table$prereg)] <- FALSE
 
   # flag on_request
-  table$on_request <- grepl(on_request, table$text)
+  # ignoring case, as the repository search does: "ON REQUEST" passed that
+  # search but was not flagged (U107)
+  table$on_request <- grepl(on_request, table$text, ignore.case = TRUE)
 
   # re-order by paper_id (same as paper) and text_id (inc)
   paper_ids <- paper_id(paper)
@@ -135,6 +139,15 @@ open_practices <- function(paper) {
               materials_statements = list(unique(text[materials])),
               prereg_statements = list(unique(text[prereg])),
               .by = paper_id)
+  # one row per paper: a paper without a flagged sentence had none, so a
+  # list with one such paper was reported as a single paper, and those
+  # papers did not count as "neither" (U106)
+  summary_table <- dplyr::left_join(data.frame(paper_id = paper_ids),
+                                    summary_table, by = "paper_id")
+  for (col in c("data_open", "code_open", "materials_open", "prereg_open", "on_request"))
+    summary_table[[col]][is.na(summary_table[[col]])] <- FALSE
+  for (col in c("data_statements", "code_statements", "materials_statements", "prereg_statements"))
+    summary_table[[col]][vapply(summary_table[[col]], is.null, logical(1))] <- list(character(0))
   data_na <- sapply(summary_table$data_statements, length) == 0
   summary_table$data_statements[data_na] <- NA_character_
   code_na <- sapply(summary_table$code_statements, length) == 0
@@ -214,7 +227,10 @@ open_practices <- function(paper) {
     if (summary_table$on_request) {
       on_request_report <- sprintf(
         "Some materials are shared on request, which is not an acceptable method of sharing. This is based on the following text:\n\n> %s",
-        gsub("\n\n", "\n\n> ", table$text[table$on_request])
+        # each sentence once, in one paragraph: sprintf() over the sentences
+        # repeated the whole paragraph for each one (U107)
+        paste(gsub("\n\n", "\n\n> ", unique(table$text[table$on_request])),
+              collapse = "\n\n> ")
       )
     }
   }
