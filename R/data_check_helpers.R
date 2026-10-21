@@ -4773,22 +4773,31 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
     applicable   <- rbind(unscoped, same_group)
     other_scoped <- scoped[!in_group, , drop = FALSE]
 
+    # A codebook row without a label (a .jasp/.omv column read with haven
+    # that has no variable label) does not label the column: the column stays
+    # unlabelled here, so a later source can label it. Its value labels and
+    # other properties still count (below). All-empty labels stopped
+    # codebook_check with "replacement has length zero" (#520, item 1).
+    with_label <- function(d) d[!is.na(d$label) & nzchar(trimws(d$label)), , drop = FALSE]
+    labelled_rows <- with_label(applicable)
+    other_labelled <- with_label(other_scoped)
+
     if (nrow(applicable) == 0) {
-      if (nrow(other_scoped) > 0) {
+      if (nrow(other_labelled) > 0) {
         status_out[i]  <- "ambiguous_experiment"
-        label_out[i]   <- paste(unique(other_scoped$label), collapse = " | ")
-        cbk_var_out[i] <- paste(unique(other_scoped$codebook_variable), collapse = " | ")
-        src_out[i]     <- paste(unique(other_scoped$codebook_source), collapse = " | ")
+        label_out[i]   <- paste(unique(other_labelled$label), collapse = " | ")
+        cbk_var_out[i] <- paste(unique(other_labelled$codebook_variable), collapse = " | ")
+        src_out[i]     <- paste(unique(other_labelled$codebook_source), collapse = " | ")
       }
       next
     }
 
-    distinct_labels <- unique(applicable$label)
+    distinct_labels <- unique(labelled_rows$label)
     if (length(distinct_labels) > 1) {
-      haven_rows <- if ("parse_method" %in% names(applicable))
-        applicable[!is.na(applicable$parse_method) &
-                     applicable$parse_method == "haven", , drop = FALSE] else
-        applicable[0, , drop = FALSE]
+      haven_rows <- if ("parse_method" %in% names(labelled_rows))
+        labelled_rows[!is.na(labelled_rows$parse_method) &
+                        labelled_rows$parse_method == "haven", , drop = FALSE] else
+        labelled_rows[0, , drop = FALSE]
       norm_labels <- normalize_label(distinct_labels)
       if (nrow(haven_rows) > 0) {
         status_out[i]       <- "labelled"
@@ -4799,20 +4808,20 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
       } else if (length(unique(norm_labels)) == 1) {
         status_out[i]       <- "labelled"
         label_out[i]        <- distinct_labels[which.max(nchar(distinct_labels))]
-        cbk_var_out[i]      <- applicable$codebook_variable[1]
-        src_out[i]          <- paste(unique(applicable$codebook_source), collapse = " | ")
+        cbk_var_out[i]      <- labelled_rows$codebook_variable[1]
+        src_out[i]          <- paste(unique(labelled_rows$codebook_source), collapse = " | ")
         label_method_out[i] <- "merged_rules"
       } else {
         status_out[i]  <- "conflicting_definition"
         label_out[i]   <- paste(distinct_labels, collapse = " | ")
-        cbk_var_out[i] <- paste(unique(applicable$codebook_variable), collapse = " | ")
-        src_out[i]     <- paste(unique(applicable$codebook_source), collapse = " | ")
+        cbk_var_out[i] <- paste(unique(labelled_rows$codebook_variable), collapse = " | ")
+        src_out[i]     <- paste(unique(labelled_rows$codebook_source), collapse = " | ")
       }
-    } else {
+    } else if (length(distinct_labels) == 1) {
       status_out[i]  <- "labelled"
       label_out[i]   <- distinct_labels[1]
-      cbk_var_out[i] <- applicable$codebook_variable[1]
-      src_out[i]     <- paste(unique(applicable$codebook_source), collapse = " | ")
+      cbk_var_out[i] <- labelled_rows$codebook_variable[1]
+      src_out[i]     <- paste(unique(labelled_rows$codebook_source), collapse = " | ")
     }
 
     # Carry the DDI-derived properties from the matched codebook rows onto the
