@@ -15,6 +15,8 @@ test_that("message", {
     expect_equal(msg, "hi\n")
   }
 
+  # restored after the test: left off, later files lost their messages
+  withr::local_options(scienceverse.verbose = verbose())
   verbose(FALSE)
 
   msg <- capture_messages(message("hi"))

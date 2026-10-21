@@ -70,7 +70,7 @@ test_that("pubpeer_comments: one DOI is sent as an array; feedback without id or
 })
 
 test_that("check_orcid is FALSE for NA or an X before the check digit (U14)", {
-  verbose(FALSE); withr::defer(verbose(FALSE))
+  withr::local_options(scienceverse.verbose = FALSE)
   expect_false(check_orcid(NA))
   expect_false(check_orcid("0000-000X-0000-0001"))
   expect_equal(check_orcid("0000-0002-0247-239X"), "0000-0002-0247-239X")

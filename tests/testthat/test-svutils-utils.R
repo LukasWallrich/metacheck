@@ -42,6 +42,8 @@ test_that("verbose", {
   expect_true(is.function(metacheck::verbose))
   expect_no_error(helplist <- help(verbose, metacheck))
 
+  # restored after the test: left off, later files lost their messages
+  withr::local_options(scienceverse.verbose = verbose())
   expect_equal(verbose(FALSE), FALSE)
   expect_equal(verbose(), FALSE)
   expect_equal(verbose(TRUE), TRUE)
