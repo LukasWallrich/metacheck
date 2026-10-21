@@ -20,7 +20,9 @@ file_location + file_size)}
 }
 \value{
 a data frame with \code{basename}, \code{status} (one of \code{in_repo_not_downloaded},
-\code{withheld_size}, \code{absent}), \code{detail} (a human-readable reason), and
+\code{withheld_size}, \code{in_archive} (the file is in the repository only inside
+a .zip or .tar, so the code cannot read it as the package is), \code{absent}),
+\code{detail} (a human-readable reason), and
 \code{similar_to} (a candidate near-match basename from the repository's file
 list, or \code{NA} — only ever set for \code{absent} rows; see below).
 }

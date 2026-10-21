@@ -815,3 +815,21 @@ test_that("the duplicate note gives each copy's path in the package, not its pla
   expect_match(txt, "`ok.R` at `study2/ok.R` (same as `ok.R` at `study1/ok.R`)", fixed = TRUE)
   expect_false(grepl(dirname(repro_fixture("ok.R")), txt, fixed = TRUE))
 })
+
+test_that("a script reading a file that is only inside a .zip is not run, and the report says why (#520, item 2)", {
+  paper <- test_paper()
+  d <- withr::local_tempdir()
+  writeLines("d <- read.csv('data/scores.csv')", file.path(d, "main.R"))
+  code_tbl <- code_tbl_row(paper, "main.R", file.path(d, "main.R"))
+  code_tbl$file_path <- "main.R"
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "scores.csv",
+                             file_path = "data.zip/data/scores.csv",
+                             file_location = repro_fixture("data.csv"))
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df))
+  mo <- module_run(fake_code, "reproducibility_check", layout = "package")
+  txt <- paste(mo$report, collapse = "\n")
+  expect_match(txt, "in_archive", fixed = TRUE)
+  expect_match(txt, "only inside data.zip; unpack it so the code finds it", fixed = TRUE)
+  expect_equal(mo$summary_table$repro_missing_inputs, 1)
+})
