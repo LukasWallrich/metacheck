@@ -485,10 +485,13 @@ zenodo_file_download <- function(zenodo_id,
   if (dir.exists(download_to)) {
     download_to <- file.path(download_to, as.character(zenodo_id))
   }
+  # the base name is kept as it is: stripping "_<digits>" on each pass also
+  # stripped the deposit id of "figshare_<id>", so the next download went to
+  # "figshare_1" instead of "figshare_<id>_1" (U37)
   i <- 0L
+  base <- download_to
   while (dir.exists(download_to)) {
     i <- i + 1L
-    base <- sub("_\\d+$", "", download_to)
     download_to <- paste0(base, "_", i)
   }
   dir.create(download_to, showWarnings = FALSE, recursive = FALSE)
