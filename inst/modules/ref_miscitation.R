@@ -22,9 +22,17 @@ ref_miscitation <- function(paper, db = readRDS(system.file("databases/miscite.R
   if (.paper_is_empty(paper)) return(.empty_input_result(paper))
 
   # consolidate bib tables and filter to relevant DOI
-  bibs <- paper_table(paper, "bib", c("paper_id", "bib_id", "doi")) |>
-    dplyr::inner_join(db, by = "doi") |>
+  # DOIs compared in lower case (U157), and a missing DOI matches nothing:
+  # an NA DOI in the database matched every reference without a DOI (U117)
+  bibs <- paper_table(paper, "bib", c("paper_id", "bib_id", "doi"))
+  bibs <- bibs[!is.na(bibs$doi) & nzchar(bibs$doi), , drop = FALSE]
+  bibs$.doi_key <- tolower(bibs$doi)
+  db_keyed <- db[!is.na(db$doi) & nzchar(db$doi), , drop = FALSE]
+  db_keyed$.doi_key <- tolower(db_keyed$doi)
+  db_keyed$doi <- NULL
+  bibs <- dplyr::inner_join(bibs, db_keyed, by = ".doi_key") |>
     unique()
+  bibs$.doi_key <- NULL
 
   # consolidate xrefs, filter, and expand
   text <- paper_table(paper, "text")
@@ -35,6 +43,12 @@ ref_miscitation <- function(paper, db = readRDS(system.file("databases/miscite.R
   if (any(v12)) {
     xrefs$xref_id[v12] <- ifelse(xrefs$xref_type[v12] %in% "bib",
                                  xrefs$target_id[v12], NA_integer_)
+  }
+  # citations only: a footnote, figure or table xref whose xref_id equals a
+  # bib_id counted as a citation (U117). Grobid uses "bibr", older bibr
+  # exports "bib".
+  if (any(!v12)) {
+    xrefs$xref_id[!v12 & !xrefs$xref_type %in% c("bibr", "bib")] <- NA
   }
   xrefs <- xrefs |>
     dplyr::filter(!is.na(xref_id)) |>
@@ -49,9 +63,10 @@ ref_miscitation <- function(paper, db = readRDS(system.file("databases/miscite.R
   table <- xrefs[, cols] |> unique()
 
   # summary output for paperlists ----
+  # one bib_id per paper and DOI: two references with the same DOI made list
+  # columns with a warning (U117)
   summary_table <- table |>
-    dplyr::count(paper_id, bib_id, doi) |>
-    dplyr::select(-n) |>
+    dplyr::summarise(bib_id = min(bib_id), .by = c(paper_id, doi)) |>
     tidyr::pivot_wider(
       names_from = doi, values_from = bib_id,
       names_prefix = "miscite_"

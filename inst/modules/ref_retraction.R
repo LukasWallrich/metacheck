@@ -40,7 +40,19 @@ ref_retraction <- function(paper) {
   }
 
   ## join to rw table
-  table <- dplyr::inner_join(bib, rw(), by = "doi")
+  # DOIs compared in lower case: a fifth of the RetractionWatch DOIs have
+  # capitals (the Wakefield paper, 10.1016/S0140-6736(97)11096-0), while
+  # reference DOIs are lower case, so they were never flagged (U157). A DOI
+  # listed under two spellings gets both notices; the reference keeps its DOI.
+  rw_lower <- rw()
+  rw_lower$.doi_key <- tolower(rw_lower$doi)
+  rw_lower <- dplyr::summarise(
+    rw_lower, .by = ".doi_key",
+    retractionwatch = paste(unique(unlist(strsplit(retractionwatch, ";"))), collapse = ";"))
+  bib$.doi_key <- tolower(bib$doi)
+  table <- dplyr::inner_join(bib, rw_lower, by = ".doi_key")
+  table$.doi_key <- NULL
+  bib$.doi_key <- NULL
 
   # traffic_light ----
   tl <- if (nrow(table)) "info" else "na"

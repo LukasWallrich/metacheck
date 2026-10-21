@@ -296,3 +296,38 @@ test_that("ref_pubpeer counts a DOI cited three times once, and runs without url
   expect_match(mo$summary_text, "You cited 1 reference", fixed = TRUE)
   expect_equal(mo$summary_table$pubpeer_comments, 2)
 })
+
+test_that("ref_retraction compares DOIs without case (U157)", {
+  # a lower-case citation of a RetractionWatch DOI with capitals was missed
+  p <- test_paper("x")
+  local_mocked_bindings(ref_table = function(paper)
+    data.frame(paper_id = paper$paper_id, bib_id = 1, doi = "10.1016/s0140-6736(97)11096-0",
+               text = "Wakefield"))
+  mo <- module_run(p, "ref_retraction")
+  expect_equal(mo$table$doi, "10.1016/s0140-6736(97)11096-0")
+  expect_match(mo$table$retractionwatch, "Retraction", fixed = TRUE)
+})
+
+test_that("ref_miscitation matches DOIs without case, and a missing DOI matches nothing (U117, U157)", {
+  paper <- demopaper()
+  test_doi <- "10.1037/0003-066x.54.6.408"
+  db <- data.frame(doi = c(toupper(test_doi), NA), reftext = c("Ref", "None"),
+                   warning = c("Warn", "No DOI"))
+  mo <- module_run(paper, "ref_miscitation", db = db)
+  expect_equal(unique(mo$table$doi), test_doi)
+  expect_false("No DOI" %in% mo$table$warning)
+})
+
+test_that("ref_replication drops a citation of the original only when the same paper cites the replication (U116)", {
+  # paper B citing a replication hid paper A's citation of the original
+  fl <- FLoRA()
+  row <- fl[!is.na(fl$doi_r) & nzchar(fl$doi_r) & !is.na(fl$doi_o) & nzchar(fl$doi_o), ][1, ]
+  pa <- test_paper("x"); pa$paper_id <- "A"
+  pb <- test_paper("y"); pb$paper_id <- "B"
+  local_mocked_bindings(ref_table = function(paper)
+    data.frame(paper_id = c("A", "B"), bib_id = 1L, doi = c(row$doi_o, row$doi_r),
+               text = c("original", "replication")))
+  mo <- module_run(paperlist(pa, pb), "ref_replication")
+  # the replication paper B cites is still listed for paper A
+  expect_true(tolower(row$doi_r) %in% tolower(mo$table$replication_doi[mo$table$paper_id == "A"]))
+})

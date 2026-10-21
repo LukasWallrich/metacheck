@@ -51,11 +51,21 @@ ref_replication <- function(paper, show_outcomes = FALSE) {
       replication_type = type
     )
 
-  table <- dplyr::inner_join(bib, flora, by = "doi")
+  # DOIs compared in lower case, as DOIs are; the reference keeps its own (U157)
+  bib$.doi_key <- tolower(bib$doi)
+  flora$.doi_key <- tolower(flora$doi)
+  flora$doi <- NULL
+  table <- dplyr::inner_join(bib, flora, by = ".doi_key")
+  table$.doi_key <- NULL
+  bib$.doi_key <- NULL
 
-  ## remove rows that are already cited (by DOI)
+  ## remove rows that are already cited (by DOI), by the same paper: checked
+  ## against every paper's references, paper B citing a replication hid
+  ## paper A's citation of the original (U116)
   has_rep_doi <- !is.na(table$replication_doi) & table$replication_doi != ""
-  already_cited <- has_rep_doi & (table$replication_doi %in% bib$doi)
+  already_cited <- has_rep_doi &
+    paste(table$paper_id, tolower(table$replication_doi)) %in%
+    paste(bib$paper_id, tolower(bib$doi))
   table <- table[!already_cited, ]
 
   # Remove trailing URLs from reference text to avoid duplication with link
