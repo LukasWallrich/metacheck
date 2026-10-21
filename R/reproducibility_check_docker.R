@@ -448,7 +448,12 @@ repro_install_deps_docker <- function(install_deps, lib_dir, image = "rocker/r-v
 # the per-script runner, not a callable object.
 .repro_docker_capture_preamble <- function() {
   helpers <- .r_capture_helpers()
-  out <- character(0)
+  # stato_type_column() reads the vocabulary from its own surroundings, which
+  # deparse() leaves behind, so the vocabulary is written out first; without
+  # it every call to it failed, and aggregate()/tapply() results were never
+  # captured in a container (found with Lakens/tue_datamanager_check#5, item 4).
+  tbl_lines <- deparse(environment(helpers$stato_type_column)$stato_tables)
+  out <- c(paste0("stato_tables <- ", tbl_lines[1]), tbl_lines[-1])
   for (nm in names(helpers)) {
     fn_lines <- deparse(helpers[[nm]])
     nm_lit <- if (grepl("^[.a-zA-Z][.a-zA-Z0-9_]*$", nm)) nm else paste0("`", nm, "`")

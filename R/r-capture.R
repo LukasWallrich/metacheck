@@ -145,8 +145,14 @@
   # A GENERIC (aggregate, summary) has formals (x, ...), so a positionally
   # passed FUN stays inside `...` and match.call cannot see it. Retry against
   # the S3 methods, whose formals do name FUN.
-  meths <- tryCatch(as.character(utils::methods(fname)),
-                    error = function(e) character(0))
+  # Only a generic has methods: methods() on any other function warns, e.g.
+  # "function 'library' appears not to be S3 generic", and that warning
+  # ended up in the output of most scripts (Lakens/tue_datamanager_check#5,
+  # item 4).
+  is_generic <- !is.primitive(f) &&
+    any(grepl("UseMethod", deparse(body(f)), fixed = TRUE))
+  meths <- if (is_generic) tryCatch(suppressWarnings(as.character(utils::methods(fname))),
+                                    error = function(e) character(0)) else character(0)
   for (mn in meths) {
     short <- sub(paste0("^", fname, "\\."), "", mn)
     mf <- tryCatch(utils::getS3method(fname, short), error = function(e) NULL)
@@ -307,8 +313,16 @@
     # interactive session, which it never does.
     env <- globalenv()
     # Recreate the reducer helpers in the child (they cannot be referenced from
-    # the parent's namespace inside callr).
-    for (nm in names(helpers)) assign(nm, helpers[[nm]], envir = env)
+    # the parent's namespace inside callr). A helper copied from metacheck's
+    # namespace would still call the other helpers in whatever metacheck is
+    # installed where the script runs (an older version, or none), not the
+    # copies sent here, so it is moved into this environment
+    # (Lakens/tue_datamanager_check#5, item 4).
+    for (nm in names(helpers)) {
+      f <- helpers[[nm]]
+      if (is.function(f) && isNamespace(environment(f))) environment(f) <- env
+      assign(nm, f, envir = env)
+    }
     captures <- list()
     # Always leave a file behind, even on error/timeout, so the parent can read
     # whatever was captured before the script died.

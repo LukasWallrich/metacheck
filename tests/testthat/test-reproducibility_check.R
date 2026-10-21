@@ -1547,3 +1547,25 @@ test_that("repro_run_scripts starts no script once the time for all scripts has 
   expect_null(.repro_deadline(Inf))
   expect_equal(.repro_time_left(NULL), Inf)
 })
+
+test_that("library() in a script does not give an S3 warning from the capture code (Lakens/tue_datamanager_check#5, item 4)", {
+  expect_no_warning(.r_call_fun_arg("library(stats)"))
+  # an aggregating generic still gives its FUN
+  expect_equal(.r_call_fun_arg("aggregate(d$y, list(d$g), mean)"), "mean")
+  skip_if_not_installed("callr")
+  root <- withr::local_tempdir()
+  writeLines(c("library(stats)", "x <- 1"), file.path(root, "a.R"))
+  run_tbl <- data.frame(file_name = "a.R", script_path = file.path(root, "a.R"), run_dir = root)
+  out <- repro_run_scripts(run_tbl, order = "a.R", timeout = 60)
+  expect_equal(out$outcome, "ran_ok")
+  expect_false(grepl("appears not to be S3 generic", paste(out$stdout, out$stderr), fixed = TRUE))
+})
+
+test_that("the container's capture code knows the statistic names (found with Lakens/tue_datamanager_check#5, item 4)", {
+  # the helpers as the container gets them: text, run in a fresh environment
+  e <- new.env(parent = globalenv())
+  eval(parse(text = .repro_docker_capture_preamble()), envir = e)
+  expect_equal(e$stato_type_column("mean")$termSource, "STATO")
+  d <- data.frame(y = c(1, 2, 3, 4), g = c("a", "a", "b", "b"))
+  expect_false(is.null(e$.r_capture_value(aggregate(y ~ g, d, mean), "aggregate(y ~ g, d, mean)")))
+})
