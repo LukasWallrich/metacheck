@@ -16,7 +16,9 @@
 #' }
 local_files <- function(path, recursive = FALSE) {
   if (length(path) > 1) {
-    df <- lapply(path, local_files) |>
+    # `recursive` passed on: several paths were always listed without
+    # their subfolders (U49)
+    df <- lapply(path, local_files, recursive = recursive) |>
       dplyr::bind_rows()
     return(df)
   }

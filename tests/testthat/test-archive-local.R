@@ -162,3 +162,11 @@ test_that("a local file file_category() cannot place takes its extension's type 
   expect_equal(lf$file_type[match(c("a.zip", "b.tar.gz", "c.png"), lf$file_name)],
                c("archive", "archive", "image"))
 })
+
+test_that("local_files lists several paths recursively when asked (U49)", {
+  # recursive was not passed on for several paths
+  d1 <- withr::local_tempdir(); d2 <- withr::local_tempdir()
+  dir.create(file.path(d1, "sub")); file.create(file.path(d1, "sub", "a.csv"))
+  file.create(file.path(d2, "b.csv"))
+  expect_setequal(local_files(c(d1, d2), recursive = TRUE)$file_name, c("a.csv", "b.csv"))
+})
