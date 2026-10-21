@@ -126,6 +126,7 @@
 * The Grobid 12.0 conversion writes dates before the year 1000 with four digits ("0026-05-27T08:58:00Z"; the zero padding was lost, which is not a valid 12.0 date-time), gives NA for a time outside the years 0000-9999, and converts a vector of times (#507: U26)
 * `stat_effect_size` keeps the note that both eta-squared and partial eta-squared were reported (the partial-eta result overwrote it), and its summary ends with a full stop (#507: U125)
 * `marginal` cites its reference as "Olsson-Collentine A, van Assen MALM, Hartgerink CHJ (2019)"; the authors, written as one string, were printed as "van Assen, M. MAL, Hartgerink &amp;, J. CH" (#507: U3)
+* Internal ids of reported statistics are tidy: a missing source file gives the prefix "result" (it gave "na_na_result"), the fallback id no longer repeats the source prefix ("odd_name_spv_odd_name_spv_t3_a"), and both a leading and a trailing underscore are trimmed (#507: U138)
 
 # metacheck 0.4.0
 

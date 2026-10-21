@@ -419,3 +419,9 @@ test_that("SMCL: hex characters, literal braces and a huge dup count (U146)", {
   expect_equal(.smcl_render_line("x {c -(}a{c )-} y"), "x {a} y")
   expect_equal(.smcl_render_line("{dup 99999999999:-}{col 10}|"), "          |")
 })
+
+test_that("statistics ids: NA source, no repeated prefix, both underscores trimmed (U138)", {
+  expect_equal(.stat_sanitize_id("_abc_"), "abc")
+  expect_equal(.stat_result_ids(list(list(analysis = "x")), NA_character_), "result_x")
+  expect_equal(.stat_test_id(list(), "odd name.spv", "odd_name_spv_t3_r1", "a"), "odd_name_spv_t3_a")
+})

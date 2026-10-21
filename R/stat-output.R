@@ -52,7 +52,7 @@
 # appended by each caller separately) so the whole id can be sanitised as ONE
 # token here, in one place.
 .stat_result_ids <- function(tables, source_file = NA_character_) {
-  src <- .stat_sanitize_id(source_file %||% "result")
+  src <- .stat_source_prefix(source_file)
   locator <- vapply(tables, function(tb) {
     if (!is.null(tb[["line"]]) && !is.na(tb[["line"]])) {
       seq_n <- tb$line_seq %||% 1L
@@ -104,8 +104,11 @@
     # keeps them apart.
     paste0("l", tb[["line"]], "_", tb$line_seq %||% 1L)
   else sub("_r[0-9]+$", "", base_id)   # fall back to the table's own base id
-  .stat_sanitize_id(paste(.stat_sanitize_id(source_file %||% "result"),
-                          anchor, row_label, sep = "_"))
+  src <- .stat_source_prefix(source_file)
+  # the base id already starts with the source prefix: it was repeated
+  # ("odd_name_spv_odd_name_spv_t3_a") (U138)
+  anchor <- sub(paste0("^", src, "_"), "", anchor)
+  .stat_sanitize_id(paste(src, anchor, row_label, sep = "_"))
 }
 
 # .STAT_PLACEHOLDERS is defined in R/stat_helpers.R (one copy only, #482).
