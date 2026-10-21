@@ -102,6 +102,7 @@
 * `ref_pubpeer` counts each commented DOI once per paper: a DOI cited three times was joined to three lookups each ("You cited 9 references", with the comments summed nine times). It lists every commented reference, with a link where PubPeer gives one, and no longer stops when no feedback has a URL (#507: U118)
 * `local_files()` given several paths lists their subfolders when `recursive = TRUE`; the setting was not passed on (#507: U49)
 * Reading a bibr export matches its keys exactly: R's `$` matches the start of a name, so a file without `bib` read its `bib_match` rows as the references (and `info`, `metadata`, `source`, `extraction`, `producer` and `schema_version` were read the same way) (#507: U25)
+* `doi_lookup()`, `datacite_doi()` and `openalex_doi()` keep every other DOI when one lookup fails: a `return()` inside `tryCatch()` returned from the whole function, so one unknown DOI made `doi_lookup()` and `datacite_doi()` return NULL and `openalex_doi()` return only that DOI's error. A failed DOI gets an empty row (in `openalex_doi()` an entry with error "not found", as a list of entries like any other call), later rows no longer shift, and an organisation author is named from the record's name (#507: U12)
 
 # metacheck 0.4.0
 

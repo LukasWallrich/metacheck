@@ -316,8 +316,8 @@ test_that("openalex_doi", {
 
   doi <- "10.1177/fake"
   suppressWarnings(oa <- openalex_doi(doi))
-  expect_equal(oa$DOI, doi)
-  expect_equal(oa$error, "not found")
+  expect_equal(oa[[1]]$DOI, doi)   # one entry per DOI, as for the others (U12)
+  expect_equal(oa[[1]]$error, "not found")
 
   doi <- "bad.form"
   oa <- openalex_doi(doi)
