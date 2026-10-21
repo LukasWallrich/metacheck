@@ -2130,6 +2130,11 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     # orphaned in a now-broken expression.
     if (!is.null(rw) && nrow(rw)) {
       good <- rw$matched & !rw$ambiguous & !is.na(rw$target) & nzchar(rw$target)
+      # a reference kept as written is left alone: for a call its target is
+      # the call itself, which was put in quotes, so `sprintf("%s/x.xlsx", wd)`
+      # became the unparseable `"sprintf("%s/x.xlsx", wd)"`
+      # (Lakens/tue_datamanager_check#4, item 9)
+      if ("as_written" %in% names(rw)) good <- good & !(rw$as_written %in% TRUE)
       is_call_col <- if ("is_call" %in% names(rw)) rw$is_call else rep(FALSE, nrow(rw))
       for (k in which(good)) {
         repl <- if (isTRUE(is_call_col[k]))

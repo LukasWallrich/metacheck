@@ -132,6 +132,7 @@
 * `psychds_check` checks each paper of a list against Psych-DS from its own files, codebook columns and labels: each paper gets its own summary row and its own report section ("Paper <id>"), and the summary counts how many papers are compliant, convertible, not yet convertible, or without files. The files of all papers were checked as one dataset, credited to the first paper, and the other papers got 0. A single paper is checked as before (#507: U113)
 * The reproducibility sandbox also removes `base::setwd(...)` and a Python `chdir(...)` under any module name (`from os import chdir` followed by `chdir(...)`, or `o.chdir(...)`); only `setwd(` and `os.chdir(` were caught, so such a call ran and failed on the author's own path (Lakens/tue_datamanager_check#4, item 5)
 * An old Excel `.xls` file is first opened in a separate R process before metacheck reads it. Some files (an old Mac Excel file) make readxl crash the whole R process, which no error handler can catch, so the job ended without a report; such a file is now reported as unreadable and the rest of the check goes on. Applies to `data_read_head()`, the codebook reader and data_check's sheet loop (Lakens/tue_datamanager_check#4, item 4)
+* In a package layout, a path-building call that the reproducibility check keeps as written is no longer put in quotes: `sprintf("%s/x.xlsx", wd)` became the unparseable `"sprintf("%s/x.xlsx", wd)"`, so the script stopped with a parse error before running (Lakens/tue_datamanager_check#4, item 9)
 
 # metacheck 0.4.0
 

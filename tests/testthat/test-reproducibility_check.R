@@ -1511,3 +1511,17 @@ test_that("repro_missing_inputs reports a withheld file without a file_size colu
                               skipped = data.frame(file_name = "big.csv"))
   expect_equal(out$status, "withheld_size")
 })
+
+test_that("a path-building call kept as written is not put in quotes (tue_datamanager_check#4, item 9)", {
+  # its target was the call itself, written as "sprintf(...)": unparseable
+  code <- c('wd <- "/Volumes/author/project"',
+            'sheets <- sprintf("%s/Data_Dictionary_Final.xlsx", wd)')
+  plan <- data.frame(file_name = "Data_Dictionary_Final.xlsx",
+                     target_path = "Data_Dictionary_Final.xlsx")
+  rw <- .repro_keep_working_refs(repro_rewrite_paths(code, "02-scripts/a.R", plan, "R"),
+                                 plan, "02-scripts/a.R")
+  out <- repro_write_scripts(list("a.R" = code), list("a.R" = rw), plan, withr::local_tempdir())
+  written <- readLines(out$script_path[1])
+  expect_true(code[2] %in% written)
+  expect_no_error(parse(text = written))
+})
