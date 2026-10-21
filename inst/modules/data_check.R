@@ -811,8 +811,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # codebook extraction. See issue #379.
       if (!isTRUE(usable$usable) &&
           tolower(tools::file_ext(f$file_name)) %in% c("xlsx", "xls")) {
-        sh_names <- tryCatch(readxl::excel_sheets(f$file_location),
-                             error = function(e) character(0))
+        # not for an .xls that crashes the reader (see .xls_readable())
+        sh_names <- if (!.xls_readable(f$file_location)) character(0) else
+          tryCatch(readxl::excel_sheets(f$file_location), error = function(e) character(0))
         sh_names <- setdiff(sh_names, sh_names[1])   # sheet 1 already tried
         for (sh in sh_names) {
           df2 <- tryCatch(data_read_head(f$file_location, n_rows = Inf, sheet = sh),
@@ -2893,11 +2894,11 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
         path, col_names = FALSE, .name_repair = "minimal")))
       utils::head(d, 6L)
     }, error = function(e) NULL)
-  } else {
+  } else if (.xls_readable(path)) {   # see .xls_readable()
     tryCatch(as.data.frame(suppressWarnings(readxl::read_excel(
       path, col_names = FALSE, n_max = 6L, col_types = "text",
       .name_repair = "minimal"))), error = function(e) NULL)
-  }
+  } else NULL
   if (is.null(raw) || nrow(raw) < 2 || ncol(raw) < 2) return(NULL)
   rows <- lapply(seq_len(nrow(raw)), function(i) as.character(raw[i, , drop = TRUE]))
   det  <- .detect_header_row(rows)

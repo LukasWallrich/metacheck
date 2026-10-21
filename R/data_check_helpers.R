@@ -2314,6 +2314,29 @@ txt_classify_content <- function(path) {
   out
 }
 
+# Whether readxl can open an old Excel .xls file without crashing R. Some .xls
+# files (an old Mac Excel file, code page 10000) make readxl's xls library
+# crash the whole R process (a segfault, which tryCatch() cannot catch), so
+# the researcher got no report at all (Lakens/tue_datamanager_check#4, item
+# 4). The file is first opened in a separate R process: its sheets are listed
+# and a few rows of each read. If that process fails, the file counts as
+# unreadable; otherwise it is read as before. Remembered per file for the
+# session. Any file that is not .xls is TRUE.
+.xls_readable_cache <- new.env(parent = emptyenv())
+.xls_readable <- function(path) {
+  if (length(path) != 1 || is.na(path) || !grepl("\\.xls$", path, ignore.case = TRUE) ||
+      !file.exists(path) || !requireNamespace("callr", quietly = TRUE)) return(TRUE)
+  key <- paste(normalizePath(path, winslash = "/", mustWork = FALSE), file.mtime(path))
+  if (exists(key, envir = .xls_readable_cache, inherits = FALSE))
+    return(get(key, envir = .xls_readable_cache, inherits = FALSE))
+  ok <- tryCatch(isTRUE(callr::r(function(p) {
+    for (sh in readxl::excel_sheets(p)) readxl::read_excel(p, sheet = sh, n_max = 10)
+    TRUE
+  }, args = list(p = path), timeout = 120)), error = function(e) FALSE)
+  assign(key, ok, envir = .xls_readable_cache)
+  ok
+}
+
 #' Read the head of a data file regardless of format
 #'
 #' Reads the first `n_rows` of a tabular data file (csv/tsv/txt/dat/xlsx/xls/
@@ -2384,6 +2407,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
       xlsx = , xls = {
         if (!requireNamespace("readxl", quietly = TRUE))
           stop("The 'readxl' package is required to read Excel files.")
+        if (!.xls_readable(path)) return(NULL)   # crashes the reader (see .xls_readable())
         nmax <- if (is.finite(n_rows)) n_rows else Inf
         # Suppress readxl's per-cell type-guess warnings ("Expecting numeric ...
         # got a date"): a mixed column can emit one per row (hundreds on a wide
@@ -4245,7 +4269,7 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
         }
       },
       xlsx = , xls = {
-        if (!requireNamespace("readxl", quietly = TRUE)) {
+        if (!requireNamespace("readxl", quietly = TRUE) || !.xls_readable(path)) {
           NULL
         } else {
           .extract_spreadsheet_codebook(

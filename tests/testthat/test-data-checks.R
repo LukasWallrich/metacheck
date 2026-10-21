@@ -1552,3 +1552,19 @@ test_that("data_check counts the files it extracted columns from (U99)", {
   mo <- suppressMessages(module_run(test_paper("x"), "data_check", local_path = d))
   expect_match(mo$summary_text, "extracted 2 columns from 1 of them", fixed = TRUE)
 })
+
+test_that("an .xls that crashes the reader in a separate process is not read (tue_datamanager_check#4)", {
+  # an old Mac Excel .xls made readxl crash the whole R process, so there
+  # was no report; such a file is now first opened in a separate process
+  skip_if_not_installed("readxl")
+  skip_if_not_installed("callr")
+  src <- readxl::readxl_example("datasets.xls")
+  ok <- file.path(withr::local_tempdir(), "ok.xls"); file.copy(src, ok)
+  expect_true(.xls_readable(ok))
+  expect_true(nrow(data_read_head(ok)) > 0)
+
+  bad <- file.path(withr::local_tempdir(), "bad.xls"); file.copy(src, bad)
+  local_mocked_bindings(r = function(...) stop("R session crashed"), .package = "callr")
+  expect_false(.xls_readable(bad))
+  expect_null(data_read_head(bad))
+})
