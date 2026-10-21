@@ -1525,3 +1525,25 @@ test_that("a path-building call kept as written is not put in quotes (tue_datama
   expect_true(code[2] %in% written)
   expect_no_error(parse(text = written))
 })
+
+test_that("repro_run_scripts starts no script once the time for all scripts has run out (Lakens/tue_datamanager_check#4, item 6)", {
+  skip_if_not_installed("callr")
+  root <- withr::local_tempdir()
+  writeLines("Sys.sleep(60)", file.path(root, "slow.R"))
+  writeLines("x <- 1", file.path(root, "next.R"))
+  run_tbl <- data.frame(file_name = c("slow.R", "next.R"),
+                        script_path = file.path(root, c("slow.R", "next.R")),
+                        run_dir = root)
+  # the first script is stopped when the time runs out, not after its own
+  # 60 seconds; the second is not started
+  t0 <- Sys.time()
+  out <- repro_run_scripts(run_tbl, order = c("slow.R", "next.R"), timeout = 60,
+                           deadline = Sys.time() + 5)
+  expect_equal(out$outcome, c("timed_out", "skipped_time_limit"))
+  expect_lt(as.numeric(difftime(Sys.time(), t0, units = "secs")), 45)
+  expect_match(out$error[[2]], "time for all scripts together")
+  # no limit
+  expect_null(.repro_deadline(NULL))
+  expect_null(.repro_deadline(Inf))
+  expect_equal(.repro_time_left(NULL), Inf)
+})

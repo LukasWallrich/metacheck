@@ -2628,6 +2628,19 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
   else fail(ok)
 }
 
+# The time for all of a paper's scripts together: the moment after which no
+# script is started (NULL: no limit), and the seconds left until then
+# (Lakens/tue_datamanager_check#4, item 6).
+.repro_deadline <- function(total_timeout) {
+  if (is.null(total_timeout) || length(total_timeout) != 1 ||
+      is.na(total_timeout) || !is.finite(total_timeout)) return(NULL)
+  Sys.time() + total_timeout
+}
+.repro_time_left <- function(deadline) {
+  if (is.null(deadline)) return(Inf)
+  as.numeric(difftime(deadline, Sys.time(), units = "secs"))
+}
+
 #' Run the paper's scripts, in order, in isolated subprocesses
 #'
 #' Runs each script with [callr::r()] from `run_dir`, with `lib_dir` prepended to
@@ -2665,10 +2678,14 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
 #'   own text, one element per source line — the exact text `stdout`'s echoed
 #'   statements were run from, so [read_r_output()] can match them back to a
 #'   line number; empty character(0) for a script that did not run).
+#' @param deadline the time ([Sys.time()] plus the time for all scripts
+#'   together) after which no script is started, recorded as
+#'   `skipped_time_limit`; a running script is stopped then. `NULL` (the
+#'   default) sets no such limit.
 #' @export
 repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
                               skip = character(0), parses = NULL,
-                              failed_deps = character(0)) {
+                              failed_deps = character(0), deadline = NULL) {
   if (is.null(run_tbl) || nrow(run_tbl) == 0)
     return(data.frame(file_name = character(0), outcome = character(0),
                       error = character(0), error_type = character(0),
@@ -2703,6 +2720,16 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
                         error = "", error_type = NA_character_,
                         undefined_var = NA_character_,
                         stdout = "", stderr = "", elapsed = 0)))
+    # Once the time for all scripts together has run out, a script is not
+    # started; a script that is started stops when that time runs out
+    # (Lakens/tue_datamanager_check#4, item 6)
+    left <- .repro_time_left(deadline)
+    if (left <= 0)
+      return(no_lines(data.frame(file_name = fn, outcome = "skipped_time_limit",
+                        error = "not started: the time for all scripts together had run out",
+                        error_type = NA_character_, undefined_var = NA_character_,
+                        stdout = "", stderr = "", elapsed = 0)))
+    timeout <- min(timeout, ceiling(left))
 
     # The EXECUTED script's own text (path-rewritten, setwd()-commented — what
     # actually ran), one element per source line: this is what read_r_output()

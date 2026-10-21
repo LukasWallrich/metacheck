@@ -731,7 +731,8 @@ report_type <- function(report_type = NULL) {
         outcome_labels <- c(
           skipped_missing_inputs = "could not be run because a referenced input file is missing",
           not_parsed              = "could not be parsed and so could not be run",
-          dependency_unavailable  = "could not be run because a required dependency is unavailable"
+          dependency_unavailable  = "could not be run because a required dependency is unavailable",
+          skipped_time_limit      = "could not be started because the time for all scripts together had run out"
         )
         groups <- split(seq_len(nrow(grouped_rows)), grouped_rows$Outcome)
         vapply(groups, \(rows) {

@@ -13,7 +13,8 @@ repro_run_scripts_py_docker(
   timeout = 600,
   skip = character(0),
   parses = NULL,
-  failed_deps = character(0)
+  failed_deps = character(0),
+  deadline = NULL
 )
 }
 \arguments{
@@ -42,6 +43,11 @@ recorded \code{not_parsed} and not run}
 
 \item{failed_deps}{character vector of package names
 \code{\link[=repro_install_deps_py_docker]{repro_install_deps_py_docker()}} could not install}
+
+\item{deadline}{the time (\code{\link[=Sys.time]{Sys.time()}} plus the time for all scripts
+together) after which no script is started, recorded as
+\code{skipped_time_limit}; a running script is stopped then. \code{NULL} (the
+default) sets no such limit.}
 }
 \value{
 a data frame — identical columns to \code{\link[=repro_run_scripts_py]{repro_run_scripts_py()}}'s

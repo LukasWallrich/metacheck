@@ -745,3 +745,57 @@ test_that("execute = TRUE: Python console output feeds stat_output via a real sc
   long <- dplyr::bind_rows(lapply(mo$stat_output, `[[`, "long"))
   expect_gt(nrow(long), 0)
 })
+
+test_that("execute = TRUE: scripts are not started once total_timeout has run out (Lakens/tue_datamanager_check#4, item 6)", {
+  skip_if_quick()
+  skip_if_not_installed("callr")
+
+  paper <- test_paper()
+  d <- withr::local_tempdir()
+  writeLines("Sys.sleep(60)", file.path(d, "1_slow.R"))
+  writeLines("y <- 2", file.path(d, "2_next.R"))
+  code_tbl <- rbind(code_tbl_row(paper, "1_slow.R", file.path(d, "1_slow.R")),
+                    code_tbl_row(paper, "2_next.R", file.path(d, "2_next.R")))
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  plan_df <- data.frame(file_name = "data.csv", target_path = "data.csv")
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df),
+                                 psychds_check = list(table = plan_df))
+
+  mo <- module_run(fake_code, "reproducibility_check", execute = TRUE,
+                   timeout = 60, total_timeout = 5)
+  rr <- mo$run_results
+  expect_equal(rr$outcome[match(c("1_slow.R", "2_next.R"), rr$file_name)],
+               c("timed_out", "skipped_time_limit"))
+  expect_match(paste(mo$report, collapse = "\n"),
+               "1 script was not started, because the time for all scripts together", fixed = TRUE)
+})
+
+test_that("execute = TRUE: a script the second run has no time for keeps its first result (Lakens/tue_datamanager_check#4, item 6)", {
+  skip_if_quick()
+  skip_if_not_installed("callr")
+
+  paper <- test_paper()
+  d <- withr::local_tempdir()
+  # 1_use.R needs x from 2_def.R, so the first run fails on it and a second
+  # run in the corrected order follows; 2_def.R uses up the time
+  writeLines("print(x)", file.path(d, "1_use.R"))
+  writeLines(c("x <- 1", "Sys.sleep(60)"), file.path(d, "2_def.R"))
+  code_tbl <- rbind(code_tbl_row(paper, "1_use.R", file.path(d, "1_use.R")),
+                    code_tbl_row(paper, "2_def.R", file.path(d, "2_def.R")))
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  plan_df <- data.frame(file_name = "data.csv", target_path = "data.csv")
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df),
+                                 psychds_check = list(table = plan_df))
+
+  mo <- module_run(fake_code, "reproducibility_check", execute = TRUE,
+                   timeout = 60, total_timeout = 8)
+  rr <- mo$run_results
+  expect_true(attr(rr, "reran_for_order"))
+  expect_equal(rr$outcome[match(c("1_use.R", "2_def.R"), rr$file_name)],
+               c("errored", "timed_out"))
+  expect_false(any(rr$outcome == "skipped_time_limit"))
+})
