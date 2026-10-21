@@ -1568,3 +1568,22 @@ test_that("an .xls that crashes the reader in a separate process is not read (tu
   expect_false(.xls_readable(bad))
   expect_null(data_read_head(bad))
 })
+
+test_that("data_check warns about a column that needs an R package to be read (Lakens/tue_datamanager_check#4, item 8a)", {
+  llm_use(FALSE)
+  d <- withr::local_tempdir()
+  span <- asS4(structure(as.numeric(1:20),
+                         class = structure("Span", package = "notinstalledpkg")))
+  df <- structure(list(id = 1:20, score = round(seq(1, 5, length.out = 20), 1), span = span),
+                  class = "data.frame", row.names = 1:20)
+  saveRDS(df, file.path(d, "trials.rds"))
+
+  mo <- module_run(test_paper("x"), "data_check", local_path = d, local_only = TRUE)
+  expect_equal(mo$table$needs_package[mo$table$column_name == "span"],
+               "Span, from the R package notinstalledpkg")
+  expect_equal(mo$table$needs_package[mo$table$column_name == "id"], "")
+  f <- mo$findings[mo$findings$check == "Needs an R package", ]
+  expect_equal(f$column, "span")
+  expect_match(f$detail, "type Span, from the R package notinstalledpkg, so the file cannot be read without that package")
+  expect_false(mo$traffic_light == "green")
+})

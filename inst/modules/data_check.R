@@ -755,6 +755,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       f <- data_files[i, ]
       pb_cols$tick(1, list(what = f$file_name))
       df <- data_read_head(f$file_location, n_rows = Inf)
+      # columns data_read_head could only read as their plain stored values,
+      # because their values need an R package (see .plain_s4_columns())
+      s4_conv <- attr(df, "s4_converted") %||% character(0)
       if (is.null(df) || ncol(df) == 0) {
         # An .RData/.rda that yielded no data frame is an analysis workspace,
         # not reusable shared data — record it for a sharing recommendation.
@@ -899,6 +902,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         qualtrics_display_order = qualtrics_display_order,
         sample_values     = sample_vals,
         utf8_repaired     = utf8_fixed,
+        needs_package     = ifelse(names(df) %in% names(s4_conv),
+                                   unname(s4_conv[names(df)]), ""),
         stats_mat
       )
     })
@@ -1509,6 +1514,17 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     if (any(hit)) columns_df$utf8_repaired[which(hit)[1]] %||% 0L else 0L
   }
 
+  # The value type and R package a column needs to be read ("Period, from
+  # the R package lubridate"), recorded by data_check per column; "" when it
+  # needs none or from an older data_check run without the column.
+  needs_package_of <- function(file, col) {
+    if (is.null(columns_df) || !all(c("source_file", "column_name",
+                                      "needs_package") %in% names(columns_df)))
+      return("")
+    hit <- columns_df$source_file == file & columns_df$column_name == col
+    if (any(hit)) columns_df$needs_package[which(hit)[1]] %||% "" else ""
+  }
+
   # ── 2. Run checks per column ─────────────────────────────────────────────────
   findings <- list()
   plot_specs    <- list()   # per numeric column: values + bounds for the distribution facet
@@ -1652,6 +1668,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # read time. metacheck re-interpreted them as Latin-1 to continue, but
       # on other systems these characters silently corrupt (é becomes "Ã©" or
       # "�"), so the researcher should re-save the file as UTF-8.
+      # Values that need an R package to be read: anyone without that package
+      # cannot use the file, so it is a reproducibility problem
+      # (Lakens/tue_datamanager_check#4, item 8a).
+      pkg_need <- needs_package_of(file, col)
+      if (!is.na(pkg_need) && nzchar(pkg_need)) {
+        col_finds[["Needs an R package"]] <- sprintf(
+          "This column holds values of type %s, so the file cannot be read without that package. metacheck read the plain stored numbers to continue. Share the data in an open format such as CSV, with this column as plain numbers or text.",
+          pkg_need)
+      }
+
       n_enc <- utf8_repaired_of(file, col)
       if (!is.na(n_enc) && n_enc > 0) {
         col_finds[["Mixed encoding"]] <- sprintf(
@@ -1910,6 +1936,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     "Problematic column name" = "whose name contains file-illegal characters or is excessively long",
     "Colliding column names" = "whose names become identical when special characters are removed",
     "Mixed encoding"    = "with values in a legacy (non-UTF-8) encoding",
+    "Needs an R package" = "whose values cannot be read without a particular R package",
     "Personal info (values)"      = "whose values look like personal information",
     "Personal info (column name)" = "whose name suggests personal information",
     "Geographic coordinates"      = "that look like geographic coordinates",
@@ -2519,6 +2546,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   "Problematic column name"         = "\U0001F3F7\U0000FE0F",  # 🏷️
   "Colliding column names"          = "\U0001F465",  # 👥
   "Mixed encoding"                  = "\U0001F523",  # 🔣
+  "Needs an R package"              = "\U0001F4E6",  # 📦
   "Personal info (values)"          = "\U0001F512",  # 🔒
   "Personal info (column name)"     = "\U0001F512",  # 🔒
   "Geographic coordinates"          = "\U0001F30D",  # 🌍

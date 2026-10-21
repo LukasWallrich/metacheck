@@ -2523,7 +2523,12 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
       },
       rds = {
         obj <- readRDS(path)
-        if (is.data.frame(obj)) .head_keep_attrs(obj, n_rows) else NULL
+        if (is.data.frame(obj)) {
+          obj <- .plain_s4_columns(obj)
+          out <- .head_keep_attrs(obj, n_rows)
+          attr(out, "s4_converted") <- attr(obj, "s4_converted")
+          out
+        } else NULL
       },
       rda = , rdata = {
         # An .RData/.rda workspace can hold arbitrary objects -- fitted models,
@@ -2543,6 +2548,31 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     warning("Could not read ", basename(path), ": ", conditionMessage(e))
     NULL
   })
+}
+
+# A column of values of a formal (S4) class, such as lubridate's periods and
+# durations, cannot be used without the package that defines the class: R
+# loads the file, but head() and every later step stop with "unable to load
+# required package". Each such column is replaced by its plain stored values,
+# and recorded in the attribute "s4_converted" (column -> "Period, from the R
+# package lubridate") so data_check can warn: the file cannot be read without
+# that package (Lakens/tue_datamanager_check#4, item 8a). The same steps run
+# in the separate R process of .read_rdata_isolated().
+.plain_s4_columns <- function(df) {
+  conv <- character(0)
+  for (j in seq_along(df)) {
+    x <- df[[j]]
+    if (!isS4(x)) next
+    cl <- attr(x, "class")
+    v <- unclass(x)
+    attributes(v) <- NULL
+    if (!is.atomic(v) || length(v) != nrow(df)) v <- rep(NA, nrow(df))
+    df[[j]] <- v
+    conv[names(df)[j]] <- paste0(cl[[1]], ", from the R package ",
+                                 attr(cl, "package") %||% "that defines it")
+  }
+  if (length(conv)) attr(df, "s4_converted") <- conv
+  df
 }
 
 # The first n rows of a data frame with each column's label, value labels
@@ -2580,11 +2610,19 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     "sink(type='message'); close(con)",
     "df <- NULL",
     "if (ok) { dfs <- Filter(is.data.frame, as.list(e))",
-    "  if (length(dfs) > 0) { d <- as.data.frame(dfs[[1]]); n <- %s",
+    "  if (length(dfs) > 0) { d <- dfs[[1]]; conv <- character(0)",
+    # a column of a formal (S4) class: its plain values (see .plain_s4_columns())
+    "    for (j in seq_along(d)) if (isS4(d[[j]])) { cl <- attr(d[[j]], 'class')",
+    "      v <- unclass(d[[j]]); attributes(v) <- NULL",
+    "      if (!is.atomic(v) || length(v) != nrow(d)) v <- rep(NA, nrow(d))",
+    "      d[[j]] <- v; p <- attr(cl, 'package'); if (is.null(p)) p <- 'that defines it'",
+    "      conv[names(d)[j]] <- paste0(cl[[1]], ', from the R package ', p) }",
+    "    d <- as.data.frame(d); n <- %s",
     "    df <- if (is.finite(n)) utils::head(d, n) else d",
     "    for (j in seq_along(d)) for (a in c('label', 'labels', 'class')) {",
     "      v <- attr(d[[j]], a, exact = TRUE)",
-    "      if (!is.null(v) && is.null(attr(df[[j]], a, exact = TRUE))) attr(df[[j]], a) <- v } } }",
+    "      if (!is.null(v) && is.null(attr(df[[j]], a, exact = TRUE))) attr(df[[j]], a) <- v }",
+    "    if (length(conv)) attr(df, 's4_converted') <- conv } }",
     "saveRDS(df, %s)",
     sep = "\n"),
     deparse(path), if (is.finite(nmax)) nmax else "Inf", deparse(out_rds))

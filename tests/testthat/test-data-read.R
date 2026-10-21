@@ -227,3 +227,28 @@ test_that(".ods is treated as tabular data", {
   expect_equal(data_format("ods"), "tabular")
   expect_equal(data_format("fods"), "tabular")
 })
+
+test_that("data_read_head reads a column whose values need an R package that is not installed (Lakens/tue_datamanager_check#4, item 8a)", {
+  # lubridate's periods and durations are values of a formal (S4) class: R
+  # loads the file without lubridate, but head() and every later step stop
+  # with "unable to load required package". A made-up package stands in for
+  # lubridate; the data frame is put together by hand, since even `$<-`
+  # needs the class.
+  span <- asS4(structure(c(60, 120, 180),
+                         class = structure("Span", package = "notinstalledpkg")))
+  d <- structure(list(id = 1:3, span = span), class = "data.frame", row.names = 1:3)
+  rds <- withr::local_tempfile(fileext = ".rds")
+  rda <- withr::local_tempfile(fileext = ".rda")
+  saveRDS(d, rds)
+  save(d, file = rda)
+  for (f in c(rds, rda)) {
+    expect_no_warning(df <- data_read_head(f, n_rows = Inf))
+    expect_equal(df$span, c(60, 120, 180))
+    expect_equal(df$id, 1:3)
+    expect_identical(attr(df, "s4_converted"),
+                     c(span = "Span, from the R package notinstalledpkg"))
+  }
+  # the first rows only
+  expect_identical(attr(data_read_head(rds, n_rows = 2), "s4_converted"),
+                   c(span = "Span, from the R package notinstalledpkg"))
+})
