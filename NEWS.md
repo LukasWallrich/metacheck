@@ -119,6 +119,7 @@
 * OSF helpers: a versioned id (`abcde_v1`) is looked up as a GUID (it was sent to /files/), only unnamed folders take their storage provider's name (unnamed rows of any kind were renamed when several rows were read at once), and a record without `root` no longer reads `root_folder` in its place (#507: U52)
 * A CrossRef record with a null field is read (it stopped with "differing number of rows: 1, 0", so the record was lost), a list-valued field becomes one text value, and `openalex_query()` sorts its results by relevance score as numbers; they were sorted as text (#507: U13, partly: `crossref_query()` on data frames and `openalex_doi()`'s `select` are unchanged)
 * `psychds_check` judges whether a file is misplaced against its final target (raw data already at `data/eeg.npy` was told "Move data/eeg.npy -> data/eeg.npy") and keeps a data file name that is already a valid Psych-DS name (`study-a_data.csv` became `data/study-studyadata_data.csv`, so data files were never in place) (#507: U112, partly: where `dataset_description.json`, LICENSE and CHANGES go is unchanged)
+* Reports credit every author of a module (a single author line naming two authors was cut to the first), `report()` on a paper list with one `output_file` names the files "<id>_<name>" (it was "<id>report.html"), `scroll_table()` and `report_table()` turn line breaks into `<br>` in every text column, also a blank-named one, and a shortened Zenodo progress line fits its width (#507: U6, U130, U131, U50)
 
 # metacheck 0.4.0
 

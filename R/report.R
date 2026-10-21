@@ -153,7 +153,8 @@ report <- function(paper,
     pb$tick(0, tokens = list(what = "Creating reports"))
 
     if (length(output_file) != length(paper)) {
-      bn <- paste0(names(paper), x = basename(output_file[[1]]))
+      # "<id>_<name>": pasted without a separator it was "<id>report.html" (U130)
+      bn <- paste0(names(paper), "_", basename(output_file[[1]]))
       output_file <- dirname(output_file[[1]]) |> file.path(bn)
     }
 
@@ -1012,7 +1013,9 @@ report_qmd <- function(module_output, paper = list()) {
       author_ack <- tryCatch({
         if (!is.null(info$author)) {
           a <- info$author |>
-            gsub("\\s*\\(.*email\\{.+\\})", "", x = _)
+            # each "(\email{...})" on its own: the greedy pattern cut a line
+            # naming two authors down to the first (U6)
+            gsub("\\s*\\([^()]*email\\{[^}]*\\}\\)", "", x = _)
           authors <- if (length(a) < 3) {
             paste(a, collapse = " and ")
           } else {

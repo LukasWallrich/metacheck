@@ -554,3 +554,11 @@ test_that("the brief report keeps a green module that asks to be shown (#504)", 
   txt <- report_qmd(list(reproducibility_check = ran, repo_check = quiet), demopaper())
   expect_match(txt, "Repository Check", fixed = TRUE)
 })
+
+test_that("module_report credits every author, and scroll_table breaks lines in a blank-named column (U6, U131)", {
+  # the greedy email pattern kept only the first of two authors on one line;
+  # a vector's blank-named column kept its "\n"
+  rep <- module_report(module_run(demopaper(), "stat_p_exact"))
+  expect_match(rep, "developed by Lisa DeBruine and Daniel Lakens", fixed = TRUE)
+  expect_match(scroll_table(c("a\nb", "c")), "a<br>b", fixed = TRUE)
+})

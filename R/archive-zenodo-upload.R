@@ -19,7 +19,8 @@
 .pb_say <- function(pb, text) {
   width <- max(getOption("width", 80) - 12, 40)
   if (nchar(text) > width) {
-    text <- paste0(substr(text, 1, width - 1), "...")
+    # "..." included in the width: the line was 2 characters too wide (U50)
+    text <- paste0(substr(text, 1, width - 3), "...")
   }
   pb$tick(0, tokens = list(what = formatC(text, width = -width)))
   invisible(NULL)
