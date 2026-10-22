@@ -1,5 +1,6 @@
 # metacheck 0.4.1
 
+* The file-naming check's length messages (`check_file_naming()`, used by `repo_check` and so shown in its reports and the checklist reports) now say what is too long in words: "The file name is 58 characters, over the recommended 50" instead of "filename-length-50 is 58 characters, over the 50-character budget"; likewise for the folder path (recommended 100), the path (recommended 228, which leaves room for a download folder) and the 255-character limit. The rule's id stays in `rule`
 * `ref_accuracy` on a paper whose references were not looked up at Crossref (no `bib_match` table: converted without `crossref`, and no `add_bib_match()`) now reports "na" with "The references were not looked up at Crossref, so their accuracy was not checked." It reported "fail" with "We found no bib_match entries. You may need to add them with `add_bib_match()`", which a checklist report lists under "To fix", although a skipped lookup is not a fault of the paper
 * `report(report_type = "checklist")` (and `"simple"`, `"brief"`, `"simple_brief"`) now finds the Pandoc that Quarto bundles on Linux. Quarto keeps it in `bin/tools/<arch>/` there (`x86_64` or `aarch64`), not in `bin/tools/` as on Windows and macOS, so on a Linux server without a separate Pandoc these reports stopped with "pandoc version 1.12.3 or higher is required and was not found"
 
