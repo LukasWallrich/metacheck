@@ -77,11 +77,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     return(norefs)
   }
 
+  # no Crossref lookup (convert() without crossref, no add_bib_match()): the
+  # references were not checked, which is not a fault of the paper
   if (nrow(bib_match) == 0) {
     norefs <- list(
-      # "fail": "error" is not one of metacheck's lights (U30)
-      traffic_light = "fail",
-      summary_text = "We found no bib_match entries. You may need to add them with `add_bib_match()`."
+      traffic_light = "na",
+      summary_text = "The references were not looked up at Crossref, so their accuracy was not checked."
     )
     return(norefs)
   }
