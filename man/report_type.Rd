@@ -61,7 +61,11 @@ A module without \code{checks} is shown as one check: its traffic light gives
 the result (red: to fix, yellow: to improve, green: fine), its summary text
 what was found, and its report the folded details. A module can also give
 \code{intro} (a paragraph shown at the top) and \code{logo} (the path of an image
-shown next to metacheck's logo).
+shown next to metacheck's logo). A module that gives \code{checklist_section}
+(markdown) gets a section of its own, under its title, after the results
+and before "More detail", with its report folded at the end; its check
+then links to that section instead of folding the report.
+\code{reproducibility_check} gives one when it ran the code.
 }
 \examples{
 report_type()

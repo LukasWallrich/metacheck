@@ -43,10 +43,18 @@
         sprintf("This module failed to run: %s", report)
       } else summary
       status <- unname(.checklist_light_status[tl])
+      # a module with its own section shows its details there, not folded here
+      note <- ""
+      if (.checklist_has_section(mo)) {
+        details <- ""
+        note <- sprintf("See the section [%s](#%s) below for the details.",
+                        mo$title %||% mo$module, .checklist_section_id(mo))
+      }
       checks <- data.frame(
         status = if (is.na(status)) "info" else status,
         title = mo$title %||% mo$module,
         found = found,
+        note = note,
         details = details
       )
     }
@@ -75,6 +83,31 @@
   }
   rownames(checks) <- NULL
   checks
+}
+
+# Whether a module gives its own section for the checklist report
+# (`checklist_section`, R Markdown), and the id of that section's heading.
+.checklist_has_section <- function(mo) {
+  sec <- mo$checklist_section
+  !is.null(sec) && length(sec) > 0 && any(nzchar(sec))
+}
+.checklist_section_id <- function(mo) {
+  paste0("section-", gsub("[^A-Za-z0-9_-]", "-", mo$module %||% "module"))
+}
+
+# The sections modules give, each under its own heading, with the module's
+# full report folded at its end.
+.checklist_module_sections <- function(module_output) {
+  secs <- vapply(module_output, \(mo) {
+    if (!.checklist_has_section(mo)) return("")
+    report <- paste(mo$report %||% "", collapse = "\n\n")
+    paste(c(sprintf("## %s {#%s}", mo$title %||% mo$module, .checklist_section_id(mo)),
+            paste(mo$checklist_section, collapse = "\n\n"),
+            .checklist_fold(if (nzchar(report)) report else "",
+                            sprintf("All details of the %s", mo$title %||% mo$module))),
+          collapse = "\n\n")
+  }, character(1))
+  secs[nzchar(secs)]
 }
 
 # A check's folded details: <details> with its summary line. `title` falls
@@ -246,6 +279,7 @@
     if (length(intro)) sprintf("::: {.mc-intro}\n%s\n:::", paste(intro, collapse = "\n\n")),
     .checklist_counts(checks),
     unlist(sections),
+    .checklist_module_sections(module_output),
     more
   )
   paste(head,
