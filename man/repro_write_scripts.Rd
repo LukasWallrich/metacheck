@@ -62,7 +62,10 @@ before.}
 \item{writes_in_place}{if \code{TRUE} (the package layout), a write stays where
 the code puts it, so a later script finds the file where it expects it;
 only a write to an absolute path or out of the package is redirected to
-\verb{output/}. \code{FALSE} (default) redirects every write, as before.}
+\verb{output/}. A quoted relative path whose folder exists from the script's
+own folder (or its \code{.Rproj} folder) but not from the top is first
+rewritten to its path from the top, for reads and writes alike.
+\code{FALSE} (default) redirects every write, as before.}
 }
 \value{
 a data frame with \code{file_name}, \code{script_path} (absolute path written),
