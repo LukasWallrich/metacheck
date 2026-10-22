@@ -258,7 +258,7 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
       file_group <- if ("group" %in% names(haven_rows)) haven_rows$group[i] else NA_character_
       ext <- tolower(tools::file_ext(p))
       df <- tryCatch(switch(ext,
-        sav      = if (have_haven) as.data.frame(haven::read_sav(p, n_max = 0L)),
+        sav      = if (have_haven) as.data.frame(.read_sav_any(p, n_max = 0L)),
         dta      = if (have_haven) as.data.frame(haven::read_dta(p, n_max = 0L)),
         sas7bdat = if (have_haven) as.data.frame(haven::read_sas(p, n_max = 0L)),
         jasp     = import_jasp(p)$data,
@@ -623,8 +623,12 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
   n_codebook_vars <- nrow(codebook_vars_df)
   used_var <- if (n_codebook_vars > 0) {
     mn <- matched_norm_by_paper[codebook_vars_df$paper_id]
+    # USE.NAMES = FALSE: the names would become the row names of the
+    # data.frame() below, which stops on a variable whose normalised name is
+    # NA ("row names contain missing values", #523, item 1)
     mapply(function(varname, mn_set) varname %in% (mn_set %||% character(0)),
-           normalize_varname(codebook_vars_df$codebook_variable), mn)
+           normalize_varname(codebook_vars_df$codebook_variable), mn,
+           USE.NAMES = FALSE)
   } else {
     logical(0)
   }
