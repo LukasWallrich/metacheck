@@ -1531,6 +1531,10 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
       failed_deps <- install_results$package[!install_results$installed]
     } else {
       .dbg("install_missing FALSE or no deps; skipping installs.")
+      # Nothing was installed, so a script that then fails because one of its
+      # packages is not there could not run here: dependency_unavailable, not
+      # an error in the script.
+      if (!isTRUE(install_missing)) failed_deps <- install_deps$package
     }
 
     # 3. Run in order. A file whose inputs are known-missing is not run (it
@@ -2387,6 +2391,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   r_run_results <- run_results
   r_install_results <- install_results
   r_modifications <- modifications
+  r_missing_inputs <- missing_inputs
+  r_n_dup <- n_dup
 
   } # end if (has_r)
 
@@ -2408,6 +2414,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     r_install_results <- NULL
     r_modifications <- data.frame(file_name = character(0), change_type = character(0),
                                   detail = character(0))
+    r_missing_inputs <- NULL
+    r_n_dup <- 0L
   }
 
   ## ── Python code path ────────────────────────────────────────────────────
@@ -2436,6 +2444,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   py_stat_cut <- integer(0)
   py_modifications <- data.frame(file_name = character(0), change_type = character(0),
                                  detail = character(0))
+  py_missing_inputs <- NULL
+  n_py_dup <- 0L
 
   if (has_py) {
   n_py_code <- nrow(py_files)
@@ -2691,6 +2701,9 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
       }
     } else {
       .dbg("[repro/py] install_missing FALSE or no deps; skipping installs.")
+      # as for R: nothing installed, so a missing package means the script
+      # could not run here
+      if (!isTRUE(install_missing)) py_failed_deps <- py_install_deps$package
     }
 
     py_parses_named <- stats::setNames(py_parses, py_files$file_name)
@@ -3309,7 +3322,17 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # font substitution, and library() injection) — see the "modifications"
     # build above. Empty (0-row, same columns) when execute = FALSE (nothing
     # was actually written/run to modify) or nothing needed modifying.
-    modifications = modifications
+    modifications = modifications,
+    # The checklist report's own section on this check: what happened to each
+    # script, the problems in the files and the comparison with the paper
+    # (see .repro_checklist_section()). NULL when no code was run.
+    checklist_section = if (isTRUE(execute)) .repro_checklist_section(
+      table, run_results,
+      missing_inputs = dplyr::bind_rows(r_missing_inputs, py_missing_inputs),
+      n_dup = r_n_dup + n_py_dup,
+      n_tests = shared_match$summary$n_tests %||% NA_integer_,
+      n_found = shared_match$summary$n_found %||% NA_integer_,
+      sandbox = sandbox, timeout = timeout, install_missing = install_missing)
   )
   # When asked to keep the sandbox, surface its path so the caller can inspect
   # exactly what ran (data/, statistical_output/, and — when execute = TRUE —
