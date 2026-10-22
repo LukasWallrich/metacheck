@@ -69,9 +69,9 @@ test_that("ref_accuracy", {
   paper <- demopaper()
   paper$bib_match <- NULL
   mod_output <- module_run(paper, module)
-  expect_equal(mod_output$traffic_light, "fail")   # "error" is not a light (U30)
+  expect_equal(mod_output$traffic_light, "na")
   expect_null(mod_output$table)
-  expect_match(mod_output$summary_text, "add_bib_match")
+  expect_match(mod_output$summary_text, "not looked up at Crossref")
 
   # relevant references
   paper <- demopaper()
