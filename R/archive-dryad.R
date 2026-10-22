@@ -279,6 +279,12 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
   for (i in seq_along(valid_dois)) {
     doi <- valid_dois[[i]]
     cached <- if (isTRUE(cache)) .repo_info_cache_get("dryad", doi) else NULL
+    # A listing stored before the paging fix (0.3.3.1) has no `files_total`:
+    # it holds only Dryad's first page of 20 files, so it is not reused, and
+    # Dryad is asked again (#506). Neither is one marked incomplete.
+    if (!is.null(cached) && (!"files_total" %in% names(cached) ||
+                             isTRUE(cached$files_incomplete)))
+      cached <- NULL
     if (!is.null(cached)) {
       id_info[[i]] <- cached
     } else {

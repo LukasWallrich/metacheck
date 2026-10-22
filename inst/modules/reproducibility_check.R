@@ -153,7 +153,9 @@
 #'   (default 600).
 #' @param total_timeout the time in seconds for running all scripts together,
 #'   R and Python, counted from when the first script starts (default 3600,
-#'   one hour; `NULL` or `Inf` for no limit). Once it has run out, no further
+#'   one hour; `NULL` or `Inf` for no limit), or a clock time (`POSIXct`) by
+#'   which all scripts must be done, such as a server's job limit minus the
+#'   time its report needs. Once it has run out, no further
 #'   script is started (outcome `skipped_time_limit`), and a running script is
 #'   stopped, so a package with many slow scripts still gets a report.
 #' @param keep_sandbox if TRUE, do not delete the temp materialised layout
@@ -1447,6 +1449,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   # timed-out script forces red (see after the block).
   run_results <- NULL
   install_results <- NULL
+  # scripts whose output was searched only in part (see .repro_output_head())
+  stat_cut <- integer(0)
   if (isTRUE(execute)) {
     # ── DEBUG tracing (TEMPORARY — remove before release). Prints every step of
     # the execute phase so a hang is attributable to the exact operation. ───────
@@ -1752,6 +1756,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
       .dbg("parsing output of '", fn, "' (",
            if (is.null(so) || is.na(so) || !nzchar(so)) 0L else length(strsplit(so, "\n", fixed = TRUE)[[1]]),
            " lines) ...")
+      so <- .repro_output_head(so)
+      if (!is.null(attr(so, "n_lines"))) stat_cut[[fn]] <<- attr(so, "n_lines")
       exec_lines <- run_results$script_lines[[i]]
       caps <- if ("captures" %in% names(run_results))
         run_results$captures[[i]] else NULL
@@ -1989,8 +1995,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # (Lakens/tue_datamanager_check#4, item 6)
     if (n_late > 0) {
       report_exec <- paste0(report_exec, sprintf(
-        " %d %s not started, because the time for all scripts together (%g minutes, `total_timeout`) had run out.",
-        n_late, plural(n_late, "script was", "scripts were"), total_timeout / 60))
+        " %d %s not started, because %s had run out.",
+        n_late, plural(n_late, "script was", "scripts were"), .repro_deadline_text(total_timeout)))
     }
 
     # Scripts run only inside the script that sources them (see
@@ -2206,7 +2212,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                 if (!is.null(report_by_source)) c("**Run by another script**", report_by_source),
                 if (length(output_blocks) > 0)
                   "*Expand a row below to see the output each script produced.*",
-                output_blocks, truncation_note)
+                output_blocks, truncation_note, .repro_output_cut_note(stat_cut))
 
     if (!is.null(install_results) && nrow(install_results) > 0) {
       n_ok   <- sum(install_results$installed)
@@ -2427,6 +2433,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   py_summary_text <- NULL
   py_run_results <- NULL
   py_install_results <- NULL
+  py_stat_cut <- integer(0)
   py_modifications <- data.frame(file_name = character(0), change_type = character(0),
                                  detail = character(0))
 
@@ -2773,6 +2780,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
       if (is.null(so) || !nzchar(so)) return(NULL)
       lines <- strsplit(so, "\n", fixed = TRUE)[[1]]
       .dbg("[repro/py] parsing output of '", fn, "' (", length(lines), " lines) ...")
+      lines <- .repro_output_head(lines)
+      if (!is.null(attr(lines, "n_lines"))) py_stat_cut[[fn]] <<- attr(lines, "n_lines")
       lines <- lines[nzchar(trimws(lines))]
       if (!length(lines) || .ipynb_is_noise(lines)) return(NULL)
 
@@ -2953,8 +2962,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # (Lakens/tue_datamanager_check#4, item 6)
     if (n_late > 0) {
       py_report_exec <- paste0(py_report_exec, sprintf(
-        " %d %s not started, because the time for all scripts together (%g minutes, `total_timeout`) had run out.",
-        n_late, plural(n_late, "script was", "scripts were"), total_timeout / 60))
+        " %d %s not started, because %s had run out.",
+        n_late, plural(n_late, "script was", "scripts were"), .repro_deadline_text(total_timeout)))
     }
 
     py_setwd_rows <- if (exists("py_run_tbl", inherits = FALSE) &&
@@ -3071,7 +3080,7 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
                    if (!is.null(py_report_setwd)) c("**`os.chdir()` in the code**", py_report_setwd),
                    if (length(py_output_blocks) > 0)
                      "*Expand a row below to see the output each script produced.*",
-                   py_output_blocks, py_truncation_note)
+                   py_output_blocks, py_truncation_note, .repro_output_cut_note(py_stat_cut))
 
     if (!is.null(py_install_results) && nrow(py_install_results) > 0) {
       n_py_ok <- sum(py_install_results$installed)
