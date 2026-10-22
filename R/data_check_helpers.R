@@ -2337,6 +2337,18 @@ txt_classify_content <- function(path) {
   ok
 }
 
+# haven::read_sav() reads text in the encoding the file declares. A file made
+# on Windows can hold CP1252 (Latin-1) text that is not valid in that
+# encoding, and haven stops with "Unable to convert string to the requested
+# encoding (invalid byte sequence)", so the file was not checked at all
+# (#523, item 6). Such a file is read again as CP1252.
+.read_sav_any <- function(path, ...) {
+  tryCatch(haven::read_sav(path, ...), error = function(e) {
+    if (!grepl("requested encoding", conditionMessage(e), fixed = TRUE)) stop(e)
+    haven::read_sav(path, ..., encoding = "CP1252")
+  })
+}
+
 #' Read the head of a data file regardless of format
 #'
 #' Reads the first `n_rows` of a tabular data file (csv/tsv/txt/dat/xlsx/xls/
@@ -2501,7 +2513,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
           stop("The 'haven' package is required to read SPSS/Stata/SAS files.")
         nmax <- if (is.finite(n_rows)) n_rows else Inf
         as.data.frame(switch(ext,
-          sav      = haven::read_sav(path, n_max = nmax),
+          sav      = .read_sav_any(path, n_max = nmax),
           dta      = haven::read_dta(path, n_max = nmax),
           sas7bdat = haven::read_sas(path, n_max = nmax),
           # SPSS portable format: an older, ASCII-transport variant of .sav.
@@ -4345,7 +4357,7 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
           NULL
         } else {
           df <- switch(ext,
-            sav      = haven::read_sav(path),
+            sav      = .read_sav_any(path),
             dta      = haven::read_dta(path),
             sas7bdat = haven::read_sas(path))
           res <- .extract_haven_labels(as.data.frame(df), src)

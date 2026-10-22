@@ -1960,6 +1960,115 @@ repro_materialize_layout <- function(plan, structure_df, root) {
   rw
 }
 
+# Paths in a script that count from the script's own folder (package layout)
+#
+# Every script runs from the top of the package, but a script made in its own
+# folder (or in an RStudio project, whose .Rproj folder is the working
+# directory) writes `"Data/x_processed.csv"` into a `Data/` folder beside it.
+# From the top that folder does not exist, and the write stopped with "Cannot
+# open file for writing"; a later script reading the written file stopped too
+# (#523, item 3). Reads of the package's own files are already rewritten
+# (.repro_keep_working_refs()), but a file the code makes is not one of them.
+#
+# So every quoted relative path whose folder does not exist from the top, but
+# does from the script's .Rproj folder or its own folder (in that order), is
+# rewritten to its path from the top. A path given as a later piece of a
+# joining call (`file.path(base, "fig7/x.csv")`, `os.path.join(...)`) is left
+# alone: the code joins it with a folder of its own. `txt` is the script's
+# lines, `script_path` its path from the top, and `plan` the package
+# layout's plan (.repro_package_plan()); returns `txt` with those paths
+# rewritten.
+.repro_relocate_relative_paths <- function(txt, script_path, plan) {
+  if (!length(txt) || is.null(plan) || !nrow(plan) ||
+      is.na(script_path) || !nzchar(script_path)) return(txt)
+  files <- gsub("\\\\", "/", plan$target_path)
+  folders <- character(0)
+  d <- dirname(files)
+  while (length(d <- setdiff(d[d != "."], folders))) {
+    folders <- c(folders, d)
+    d <- dirname(d)
+  }
+  if (!length(folders)) return(txt)
+  script_dir <- dirname(gsub("\\\\", "/", script_path))
+  # the nearest folder at or above the script's that holds an .Rproj file
+  rproj <- dirname(files[grepl("\\.Rproj$", files, ignore.case = TRUE)])
+  up <- script_dir
+  proj_dir <- NA_character_
+  repeat {
+    if (up %in% rproj) { proj_dir <- up; break }
+    if (up == ".") break
+    up <- dirname(up)
+  }
+  bases <- unique(stats::na.omit(c(proj_dir, script_dir)))
+  bases <- bases[bases != "."]
+  if (!length(bases)) return(txt)
+
+  relocate <- function(s) {
+    p <- gsub("\\\\", "/", s)
+    if (grepl("^([A-Za-z]:/|/|~)|://", p) || !grepl("/", p, fixed = TRUE)) return(s)
+    dir <- if (endsWith(p, "/")) sub("/+$", "", p) else dirname(p)
+    top <- .repro_norm_rel(dir)
+    # a path going up out of the top ("../Data/x.csv") is tried from the bases
+    if (!is.na(top) && (top %in% c("", ".") || top %in% folders)) return(s)
+    for (b in bases) {
+      from_base <- .repro_norm_rel(file.path(b, dir))
+      if (!is.na(from_base) && from_base %in% folders) {
+        out <- .repro_norm_rel(file.path(b, p))
+        return(if (endsWith(p, "/")) paste0(out, "/") else out)
+      }
+    }
+    s
+  }
+  join_pat <- "(file\\.path|os\\.path\\.join|paste0?|Path|here)\\s*\\([^()]*,\\s*$"
+  lit_pat <- "(['\"])([^'\"\n]*/[^'\"\n]*)\\1"
+  for (i in grep(lit_pat, txt, perl = TRUE)) {
+    m <- gregexpr(lit_pat, txt[i], perl = TRUE)
+    hits <- regmatches(txt[i], m)[[1]]
+    starts <- m[[1]]
+    new <- vapply(seq_along(hits), function(k) {
+      before <- substr(txt[i], 1, starts[k] - 1)
+      if (grepl(join_pat, before, perl = TRUE)) return(hits[k])
+      q <- substr(hits[k], 1, 1)
+      inner <- substr(hits[k], 2, nchar(hits[k]) - 1)
+      paste0(q, relocate(inner), q)
+    }, character(1))
+    regmatches(txt[i], m) <- list(new)
+  }
+  txt
+}
+
+# The first lines of a script's console output, which are searched for
+# statistical results. read_r_output() reads about 700 lines a second, so a
+# script that printed a growing table in a loop (millions of lines in its 300
+# seconds) kept the check busy for most of an hour after the script had been
+# stopped, and the job ran into its 60-minute limit with no report (#523,
+# item 2: OSF sq8y6). `metacheck.repro_output_max_lines` (default 20000) sets
+# the number of lines. `txt` is one string or a vector of lines; the result
+# has the same form, with attribute `n_lines` (the number of lines before
+# cutting) when it was cut.
+.repro_output_head <- function(txt, max_lines = getOption("metacheck.repro_output_max_lines", 20000L)) {
+  if (!length(txt) || anyNA(txt) || !is.finite(max_lines)) return(txt)
+  if (length(txt) > 1) {
+    if (length(txt) <= max_lines) return(txt)
+    return(structure(txt[seq_len(max_lines)], n_lines = length(txt)))
+  }
+  nl <- gregexpr("\n", txt, fixed = TRUE)[[1]]
+  if (nl[1] == -1 || length(nl) < max_lines) return(txt)
+  structure(substr(txt, 1, nl[max_lines] - 1), n_lines = length(nl) + 1)
+}
+
+# The report's note on scripts whose output was searched only in part: `cut`
+# is a named vector, script name -> its number of output lines. NULL when
+# nothing was cut.
+.repro_output_cut_note <- function(cut,
+                                   max_lines = getOption("metacheck.repro_output_max_lines", 20000L)) {
+  if (!length(cut)) return(NULL)
+  sprintf("*Statistical results were searched for in the first %s lines of the output of %s, to keep the check within its time.*",
+          format(max_lines, big.mark = ","),
+          paste(sprintf("`%s` (%s lines)", names(cut), format(cut, big.mark = ",", trim = TRUE)),
+                collapse = ", "))
+}
+
 # A relative path with "." and ".." resolved ("code/../raw_data/x.csv" ->
 # "raw_data/x.csv"); NA when it goes above the top.
 .repro_norm_rel <- function(path) {
@@ -2090,7 +2199,10 @@ repro_materialize_layout <- function(plan, structure_df, root) {
 #' @param writes_in_place if `TRUE` (the package layout), a write stays where
 #'   the code puts it, so a later script finds the file where it expects it;
 #'   only a write to an absolute path or out of the package is redirected to
-#'   `output/`. `FALSE` (default) redirects every write, as before.
+#'   `output/`. A quoted relative path whose folder exists from the script's
+#'   own folder (or its `.Rproj` folder) but not from the top is first
+#'   rewritten to its path from the top, for reads and writes alike.
+#'   `FALSE` (default) redirects every write, as before.
 #' @returns a data frame with `file_name`, `script_path` (absolute path written),
 #'   `run_dir` (the working directory a run should use — always `root`),
 #'   `setwd_removed` (count of `setwd()`/`os.chdir()` calls replaced with a
@@ -2195,6 +2307,11 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     # as its working directory (run_dir, in both sandboxes; setwd()/os.chdir()
     # are neutralised below), which is also what the rewritten READ paths
     # (plan target paths, relative to the root) already rely on.
+    # In the package layout, a path counted from the script's own (or its
+    # .Rproj) folder is rewritten to its path from the top first, so such a
+    # write stays in the package and a later script reads it there (#523)
+    if (isTRUE(writes_in_place))
+      txt <- .repro_relocate_relative_paths(txt, script_target(fn, i), plan)
     wr <- .repro_redirect_writes(txt, lang = fn_lang)
     # In the package layout a write stays where the code puts it, so a later
     # script reads the file where it expects it; only a write to an absolute

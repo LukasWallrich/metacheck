@@ -267,3 +267,26 @@ test_that("data_read_head reads an .rds file made with save() (Lakens/tue_datama
   saveRDS(d, rds, compress = FALSE)
   expect_false(.rds_is_workspace(rds))
 })
+
+test_that("data_read_head reads an SPSS file with Windows (CP1252) text (#523, item 6)", {
+  skip_if_not_installed("haven")
+  sav <- withr::local_tempfile(fileext = ".sav")
+  df <- data.frame(x = c("café", "abc"))
+  attr(df$x, "label") <- "Café label"
+  haven::write_sav(df, sav)
+  # every UTF-8 "é" (C3 A9) becomes CP1252's "é" and a space (E9 20),
+  # bytes that are not valid UTF-8, as in a file made on Windows
+  b <- readBin(sav, "raw", file.size(sav))
+  i <- which(b[-length(b)] == as.raw(0xc3) & b[-1] == as.raw(0xa9))
+  b[i] <- as.raw(0xe9)
+  b[i + 1] <- as.raw(0x20)
+  writeBin(b, sav)
+  expect_error(haven::read_sav(sav), "requested encoding")
+
+  out <- data_read_head(sav, n_rows = Inf)
+  expect_equal(nrow(out), 2)
+  expect_equal(trimws(out$x[1]), "café")
+  expect_equal(trimws(attr(.read_sav_any(sav, n_max = 0L)$x, "label")), "Café  label")
+  # any other error is not hidden
+  expect_error(.read_sav_any(bad_arg))
+})

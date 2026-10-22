@@ -586,9 +586,31 @@ repro_run_scripts_docker <- function(run_tbl, order, sandbox_root, lib_dir = NUL
     # run phase before this line was added.
     libpath_setup <- if (!is.null(lib_dir_norm))
       '  .libPaths(c("/rlib", .libPaths()))' else NULL
+    # The container is read-only apart from /tmp, its home folder too, so a
+    # package that keeps files in the user's cache, configuration or data
+    # folder stopped: renv::restore() with "failed to create directory at
+    # path '/home/rcheck/.cache/R/renv'" (#523, item 4). Those folders are
+    # put in /tmp. rmarkdown::render() looks for pandoc, which the image has
+    # only inside Quarto (in bin/tools/<arch>/ on Linux, see
+    # .report_pandoc_dir()), and stopped with "pandoc version 2.8 or higher
+    # is required and was not found" (#523, item 5); RSTUDIO_PANDOC points
+    # it there.
+    env_setup <- c(
+      '  Sys.setenv(XDG_CACHE_HOME = "/tmp/.cache", XDG_CONFIG_HOME = "/tmp/.config",',
+      '             XDG_DATA_HOME = "/tmp/.local/share", R_USER_CACHE_DIR = "/tmp/.cache",',
+      '             R_USER_CONFIG_DIR = "/tmp/.config", R_USER_DATA_DIR = "/tmp/.local/share")',
+      '  quarto <- Sys.which("quarto")',
+      '  if (nzchar(quarto) && !nzchar(Sys.getenv("RSTUDIO_PANDOC"))) {',
+      '    tools <- file.path(dirname(normalizePath(quarto)), "tools")',
+      '    pandoc <- c(file.path(tools, "pandoc"), Sys.glob(file.path(tools, "*", "pandoc")))',
+      '    pandoc <- pandoc[file.exists(pandoc)]',
+      '    if (length(pandoc)) Sys.setenv(RSTUDIO_PANDOC = dirname(pandoc[1]))',
+      '  }'
+    )
     wrapper_lines <- c(
       capture_preamble,
       '.repro_docker_run <- function() {',
+      env_setup,
       libpath_setup,
       '  captures <- list()',
       paste0('  on.exit(try(saveRDS(captures, "', cap_file_container, '"), silent = TRUE), add = TRUE)'),
