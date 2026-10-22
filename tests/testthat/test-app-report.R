@@ -206,11 +206,11 @@ test_that("modules that need a setting are dropped when it is off", {
     txt
   }
 
-  # ref_pubpeer needs the PubPeer API; ref_accuracy needs the CrossRef
-  # bib_match table, so each disappears when its setting is off
+  # ref_pubpeer needs the PubPeer API, so it disappears when that setting is
+  # off; ref_accuracy is not offered at all for now
   expect_match(snippet(), '"ref_pubpeer"', fixed = TRUE)
-  expect_match(snippet(), '"ref_accuracy"', fixed = TRUE)
   expect_no_match(snippet(pubpeer = FALSE), '"ref_pubpeer"', fixed = TRUE)
+  expect_no_match(snippet(crossref = TRUE), '"ref_accuracy"', fixed = TRUE)
   expect_no_match(snippet(crossref = FALSE), '"ref_accuracy"', fixed = TRUE)
 })
 
@@ -286,7 +286,7 @@ test_that("the report run passes the right modules and args to report()", {
   # the settings-dependent modules behave the same way here as in the snippet
   expect_false("ref_pubpeer"  %in% run(TRUE, "", pubpeer  = FALSE)$modules)
   expect_false("ref_accuracy" %in% run(TRUE, "", crossref = FALSE)$modules)
-  expect_true("ref_accuracy"  %in% run(TRUE, "", crossref = TRUE)$modules)
+  expect_false("ref_accuracy" %in% run(TRUE, "", crossref = TRUE)$modules)
 })
 
 test_that("the report run and the shown R code select the same modules", {
@@ -315,11 +315,10 @@ test_that("the report run and the shown R code select the same modules", {
       gsub("\\s+", " ", x = _)
   }
 
-  # both blocks must drop ref_pubpeer, ref_accuracy and the repo modules
+  # both blocks must drop ref_pubpeer and the repo modules
   for (blk in list(run_block, snip_block)) {
     n <- normalise(blk)
     expect_match(n, "if \\(!use_pubpeer\\) M <- setdiff\\(M, \"ref_pubpeer\"\\)")
-    expect_match(n, "if \\(!use_crossref\\) M <- setdiff\\(M, \"ref_accuracy\"\\)")
     expect_match(n, "if \\(!use_repos && !L\\) M <- setdiff\\(M, repo_modules\\)")
   }
 })
