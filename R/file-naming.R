@@ -236,18 +236,24 @@
   base_part <- basename(file_path)
 
   out <- list()
-  add_rows <- function(hit, rule, budget, actual) {
+  # detail: a sprintf() template for the length, in words a reader knows
+  # (the rule's id is in `rule`)
+  add_rows <- function(hit, rule, detail, actual) {
     if (!any(hit)) return(invisible())
     out[[length(out) + 1L]] <<- data.frame(
       file_name = file_path[hit], rule = rule,
-      detail = sprintf("%s is %d characters, over the %d-character budget",
-                       rule, actual[hit], budget),
+      detail = sprintf(detail, actual[hit]),
       stringsAsFactors = FALSE)
   }
-  add_rows(nchar(file_path) > 255L, "path-length-255", 255L, nchar(file_path))
-  add_rows(nchar(file_path) > 228L, "path-length-228", 228L, nchar(file_path))
-  add_rows(nchar(dir_part) > 100L, "directory-length-100", 100L, nchar(dir_part))
-  add_rows(nchar(base_part) > 50L, "filename-length-50", 50L, nchar(base_part))
+  add_rows(nchar(file_path) > 255L, "path-length-255",
+           "The path is %d characters, over the 255-character limit", nchar(file_path))
+  add_rows(nchar(file_path) > 228L, "path-length-228",
+           "The path is %d characters, over the recommended 228, which leaves room for a download folder",
+           nchar(file_path))
+  add_rows(nchar(dir_part) > 100L, "directory-length-100",
+           "The folder path is %d characters, over the recommended 100", nchar(dir_part))
+  add_rows(nchar(base_part) > 50L, "filename-length-50",
+           "The file name is %d characters, over the recommended 50", nchar(base_part))
 
   if (length(out)) do.call(rbind, out) else data.frame(
     file_name = character(0), rule = character(0), detail = character(0),
