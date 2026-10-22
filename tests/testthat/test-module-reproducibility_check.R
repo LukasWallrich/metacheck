@@ -772,6 +772,40 @@ test_that("execute = TRUE: scripts are not started once total_timeout has run ou
                "1 script was not started, because the time for all scripts together", fixed = TRUE)
 })
 
+test_that("total_timeout can be a clock time: the scripts must be done by then (#523)", {
+  # the deadline itself, not counted from the first script
+  at <- Sys.time() + 120
+  expect_identical(metacheck:::.repro_deadline(at), at)
+  expect_null(metacheck:::.repro_deadline(as.POSIXct(NA)))
+  expect_null(metacheck:::.repro_deadline(Inf))
+  expect_lt(abs(as.numeric(difftime(metacheck:::.repro_deadline(60), Sys.time() + 60, units = "secs"))), 2)
+  expect_equal(metacheck:::.repro_deadline_text(at), "the time for all scripts together")
+  expect_match(metacheck:::.repro_deadline_text(3600), "60 minutes", fixed = TRUE)
+
+  skip_if_quick()
+  skip_if_not_installed("callr")
+  paper <- test_paper()
+  d <- withr::local_tempdir()
+  writeLines("Sys.sleep(60)", file.path(d, "1_slow.R"))
+  writeLines("y <- 2", file.path(d, "2_next.R"))
+  code_tbl <- rbind(code_tbl_row(paper, "1_slow.R", file.path(d, "1_slow.R")),
+                    code_tbl_row(paper, "2_next.R", file.path(d, "2_next.R")))
+  structure_df <- data.frame(paper_id = paper_id(paper), file_name = "data.csv",
+                             file_location = repro_fixture("data.csv"))
+  plan_df <- data.frame(file_name = "data.csv", target_path = "data.csv")
+  fake_code <- fake_module_output("code_check", code_tbl, paper)
+  fake_code$prev_outputs <- list(data_check = list(structure = structure_df),
+                                 psychds_check = list(table = plan_df))
+
+  mo <- module_run(fake_code, "reproducibility_check", execute = TRUE,
+                   timeout = 60, total_timeout = Sys.time() + 5)
+  rr <- mo$run_results
+  expect_equal(rr$outcome[match(c("1_slow.R", "2_next.R"), rr$file_name)],
+               c("timed_out", "skipped_time_limit"))
+  expect_match(paste(mo$report, collapse = "\n"),
+               "1 script was not started, because the time for all scripts together had run out.", fixed = TRUE)
+})
+
 test_that("execute = TRUE: a script the second run has no time for keeps its first result (Lakens/tue_datamanager_check#4, item 6)", {
   skip_if_quick()
   skip_if_not_installed("callr")

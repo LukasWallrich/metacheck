@@ -153,7 +153,9 @@
 #'   (default 600).
 #' @param total_timeout the time in seconds for running all scripts together,
 #'   R and Python, counted from when the first script starts (default 3600,
-#'   one hour; `NULL` or `Inf` for no limit). Once it has run out, no further
+#'   one hour; `NULL` or `Inf` for no limit), or a clock time (`POSIXct`) by
+#'   which all scripts must be done, such as a server's job limit minus the
+#'   time its report needs. Once it has run out, no further
 #'   script is started (outcome `skipped_time_limit`), and a running script is
 #'   stopped, so a package with many slow scripts still gets a report.
 #' @param keep_sandbox if TRUE, do not delete the temp materialised layout
@@ -1989,8 +1991,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # (Lakens/tue_datamanager_check#4, item 6)
     if (n_late > 0) {
       report_exec <- paste0(report_exec, sprintf(
-        " %d %s not started, because the time for all scripts together (%g minutes, `total_timeout`) had run out.",
-        n_late, plural(n_late, "script was", "scripts were"), total_timeout / 60))
+        " %d %s not started, because %s had run out.",
+        n_late, plural(n_late, "script was", "scripts were"), .repro_deadline_text(total_timeout)))
     }
 
     # Scripts run only inside the script that sources them (see
@@ -2953,8 +2955,8 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
     # (Lakens/tue_datamanager_check#4, item 6)
     if (n_late > 0) {
       py_report_exec <- paste0(py_report_exec, sprintf(
-        " %d %s not started, because the time for all scripts together (%g minutes, `total_timeout`) had run out.",
-        n_late, plural(n_late, "script was", "scripts were"), total_timeout / 60))
+        " %d %s not started, because %s had run out.",
+        n_late, plural(n_late, "script was", "scripts were"), .repro_deadline_text(total_timeout)))
     }
 
     py_setwd_rows <- if (exists("py_run_tbl", inherits = FALSE) &&

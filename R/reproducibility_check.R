@@ -2676,11 +2676,18 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE) 
 
 # The time for all of a paper's scripts together: the moment after which no
 # script is started (NULL: no limit), and the seconds left until then
-# (Lakens/tue_datamanager_check#4, item 6).
+# (Lakens/tue_datamanager_check#4, item 6). A clock time (POSIXct) is the
+# deadline itself, such as a server's job limit minus the time for the report.
 .repro_deadline <- function(total_timeout) {
-  if (is.null(total_timeout) || length(total_timeout) != 1 ||
-      is.na(total_timeout) || !is.finite(total_timeout)) return(NULL)
+  if (is.null(total_timeout) || length(total_timeout) != 1 || is.na(total_timeout)) return(NULL)
+  if (inherits(total_timeout, "POSIXct")) return(total_timeout)
+  if (!is.finite(total_timeout)) return(NULL)
   Sys.time() + total_timeout
+}
+# The time limit as the report names it, for scripts not started because of it.
+.repro_deadline_text <- function(total_timeout) {
+  if (inherits(total_timeout, "POSIXct")) return("the time for all scripts together")
+  sprintf("the time for all scripts together (%g minutes, `total_timeout`)", total_timeout / 60)
 }
 .repro_time_left <- function(deadline) {
   if (is.null(deadline)) return(Inf)
