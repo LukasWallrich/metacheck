@@ -1,5 +1,7 @@
 # metacheck 0.4.1
 
+* `report(report_type = "checklist")` (and `"simple"`, `"brief"`, `"simple_brief"`) now finds the Pandoc that Quarto bundles on Linux. Quarto keeps it in `bin/tools/<arch>/` there (`x86_64` or `aarch64`), not in `bin/tools/` as on Windows and macOS, so on a Linux server without a separate Pandoc these reports stopped with "pandoc version 1.12.3 or higher is required and was not found"
+
 * `report()` on several papers no longer stops in metacheck's apps. It named each paper by `x$id`, but a paper keeps its id in `paper_id`, so the name was always empty; the apps' progress bar (`use_shiny_progress()`) cannot show an empty value and stopped with "invalid 'replacement' argument". The console progress bar ignored it. Papers are now named by `paper_id()`, and the apps' progress bar shows an empty value as nothing
 * An empty `SURF_API_URL`, `BIBR_API_URL` or `OLLAMA_BASE_URL` now counts as not set. On Linux and macOS a variable set to "" stays set (Windows removes it), so `Sys.getenv(name, default)` gave "" and `convert_bibr()` and the Ollama functions had no address to send to; the default address is now used
 * A ResearchBox page that is not served is reported with ResearchBox's HTTP status ("ResearchBox did not serve <address> (HTTP <status>)") instead of "could not be found". A box that does not exist still answers 200, so any other status is a refusal or a server error
