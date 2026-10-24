@@ -69,7 +69,9 @@
 #'   tables, stacked headings instead of tabs, a single theme, no embedded
 #'   JavaScript at all. Use `"simple"` for a report you plan to email: mail
 #'   clients and scanners routinely flag the JavaScript a full report embeds
-#'   (even though it is inert without a browser). `"checklist"` sorts every
+#'   (even though it is inert without a browser). `"brief"` and
+#'   `"simple_brief"` show only the modules that need attention (red, yellow
+#'   or failed), in the full and the simple layout. `"checklist"` sorts every
 #'   check by its result (to fix, to improve, ...), with what was found and
 #'   what to do on separate lines; it is static too. See [report_type()].
 #' @param args a list of arguments to pass to modules (see Details)
@@ -107,7 +109,8 @@ report <- function(paper,
                                         "_report.",
                                         output_format),
                    output_format = c("html", "qmd"),
-                   report_type = c("full", "simple"),
+                   report_type = c("full", "brief", "simple",
+                                   "simple_brief", "checklist"),
                    args = list()) {
   # error catching ----
   ## check output format
@@ -339,8 +342,9 @@ report <- function(paper,
 #'   exist.
 #' @param output_format the format to create the report in, `"html"` (the
 #'   default) or `"qmd"`
-#' @param report_type `"full"` (the default), `"simple"` (a static,
-#'   email-safe report with no embedded JavaScript) or `"checklist"` (every
+#' @param report_type `"full"` (the default), `"brief"` (only the modules
+#'   that need attention), `"simple"` (a static, email-safe report with no
+#'   embedded JavaScript), `"simple_brief"` (both) or `"checklist"` (every
 #'   check sorted by its result, also static) -- see [report()] and
 #'   [report_type()].
 #' @param modules the modules to run. Defaults to the four repository modules,
@@ -366,7 +370,8 @@ report <- function(paper,
 report_repository <- function(path,
                               output_file = NULL,
                               output_format = c("html", "qmd"),
-                              report_type = c("full", "simple"),
+                              report_type = c("full", "brief", "simple",
+                                              "simple_brief", "checklist"),
                               modules = c("repo_check", "code_check",
                                           "data_check", "codebook_check"),
                               args = list()) {

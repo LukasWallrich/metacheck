@@ -11,7 +11,7 @@ report(
     "marginal", "ref_replication", "ref_retraction", "ref_pubpeer", "ref_summary"),
   output_file = paste0(paper$paper_id, "_report.", output_format),
   output_format = c("html", "qmd"),
-  report_type = c("full", "simple"),
+  report_type = c("full", "brief", "simple", "simple_brief", "checklist"),
   args = list()
 )
 }
@@ -30,7 +30,9 @@ sections), or \code{"simple"} for a static report with none of that -- plain
 tables, stacked headings instead of tabs, a single theme, no embedded
 JavaScript at all. Use \code{"simple"} for a report you plan to email: mail
 clients and scanners routinely flag the JavaScript a full report embeds
-(even though it is inert without a browser). \code{"checklist"} sorts every
+(even though it is inert without a browser). \code{"brief"} and
+\code{"simple_brief"} show only the modules that need attention (red, yellow
+or failed), in the full and the simple layout. \code{"checklist"} sorts every
 check by its result (to fix, to improve, ...), with what was found and
 what to do on separate lines; it is static too. See \code{\link[=report_type]{report_type()}}.}
 
