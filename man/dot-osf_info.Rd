@@ -12,7 +12,7 @@
 \item{pb}{a progress bar passed from another function}
 
 \item{cache}{if \code{TRUE}, reuse a previously cached listing for an id
-already looked up (see \code{\link[=repo_info_cache]{repo_info_cache()}}) instead of re-querying the
+already looked up (see \code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}}) instead of re-querying the
 OSF API. Off by default. Separate from (and in addition to) \code{osf_info()}'s
 own in-memory, session-only cache (\code{options(metacheck.osf.cache = )}) --
 this one is persistent on disk and survives a restart of the script.}

@@ -194,7 +194,7 @@ psycharchives_links <- function(paper) {
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a cached listing from a prior call for the
 #'   same item instead of re-querying PsychArchives (see
-#'   [repo_info_cache()]); default `FALSE`
+#'   [repo_info_cache_clear()]); default `FALSE`
 #'
 #' @returns a data frame of information
 #' @export
@@ -465,7 +465,7 @@ psycharchives_info <- function(pa_url, id_col = 1, pb = NULL, cache = FALSE) {
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a cached listing from a prior call for the
 #'   same item instead of re-querying PsychArchives (see
-#'   [repo_info_cache()]); default `FALSE`
+#'   [repo_info_cache_clear()]); default `FALSE`
 #'
 #' @returns a data frame of file information (one row per public bitstream)
 #' @export

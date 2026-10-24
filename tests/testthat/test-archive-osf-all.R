@@ -80,6 +80,15 @@ test_that("mode = 'all' downloads a whole single-node project", {
   expect_match(dl$folder[[1]], "6nt4v$")
   expect_true(dir.exists(dl$download_path[[1]]))
   expect_equal(length(list.files(dl$download_path[[1]], recursive = TRUE)), 1)
+
+  # a folder that does not exist yet also gets the project's OSF-ID folder,
+  # as an existing one does (#533)
+  new_folder <- file.path(withr::local_tempdir(), "new_folder")
+  dl_new <- suppressWarnings(
+    osf_file_download("6nt4v", new_folder, mode = "all", metadata = FALSE))
+  expect_true(dir.exists(file.path(new_folder, "6nt4v")))
+  expect_true(dir.exists(dl_new$download_path[[1]]))
+  expect_match(dl_new$download_path[[1]], "new_folder/6nt4v/")
 })
 
 

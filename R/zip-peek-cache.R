@@ -1,6 +1,6 @@
 # On-disk cache for zip_peek()'s result (a zip's central-directory listing,
 # read via one or two HTTP range requests -- see R/zip-peek.R). This is the
-# same fix, one level further in, that repo_info_cache() (R/repo-info-cache.R)
+# same fix, one level further in, that the repository-listing cache (R/repo-info-cache.R)
 # already applies to a repository's file LISTING: zip_peek()'s own cache
 # (.zip_peek_cache, R/zip-peek.R) is in-memory only, so it is reset every time
 # the R process restarts, and a restarted pipeline run re-peeks every zip it
@@ -8,7 +8,7 @@
 # contents cannot have changed (scienceverse/metacheck#427).
 #
 # Off by default (a zip_peek() caller that does not pass cache = TRUE is
-# unaffected), same shape as repo_info_cache()'s own cache = TRUE/FALSE
+# unaffected), same shape as the repository-listing cache's own cache = TRUE/FALSE
 # parameter, gated on the same `cache` argument repo_check()/data_check()
 # already take.
 

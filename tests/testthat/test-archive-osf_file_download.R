@@ -44,6 +44,31 @@ test_that("osf_file_download", {
   unlink(f3, recursive = TRUE)
 }, "mock")
 
+test_that("osf_file_download into a new folder (#533)", {
+  osf_cache_clear()
+  withr::defer(osf_cache_clear())
+
+  ## a folder that does not exist yet also gets the folder named after the
+  ## OSF ID, so a second run finds the first run's files instead of
+  ## downloading everything again into download_to/6nt4v/
+  osf_id <- "6nt4v"
+  download_to <- file.path(withr::local_tempdir(), "new_folder")
+  op <- capture_messages(
+    dl <- osf_file_download(osf_id, download_to, metadata = FALSE, mode = "select")
+  )
+  f <- file.path(download_to, osf_id)
+  expect_true(file.path(f, "osfstorage", "Processed_Data", "processed-data.csv") |>
+                file.exists())
+  expect_equal(dl$folder, osf_id)
+
+  op <- capture_messages(
+    dl2 <- osf_file_download(osf_id, download_to, metadata = FALSE, mode = "select")
+  )
+  expect_equal(dl2$folder, osf_id)
+  expect_true(any(grepl("already on disk", op)))
+  expect_false(dir.exists(file.path(f, osf_id)))
+}, "mock")
+
 test_that("too small max_file_size", {
   osf_cache_clear()
   withr::defer(osf_cache_clear())

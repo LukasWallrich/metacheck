@@ -201,7 +201,9 @@
                   plural(nrow(nodes))))
 
   download_to <- normalizePath(download_to, winslash = "/", mustWork = FALSE)
-  if (dir.exists(download_to)) download_to <- file.path(download_to, osf_id)
+  # always into download_to/<osf_id>/, as osf_file_download(mode = "select")
+  # does (#533)
+  download_to <- file.path(download_to, osf_id)
   dir.create(download_to, showWarnings = FALSE, recursive = TRUE)
 
   results <- vector("list", nrow(nodes))

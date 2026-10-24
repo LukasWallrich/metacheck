@@ -122,9 +122,13 @@ convert <- function(file_path,
     if (keep_xml) {
       args$save_path <- sub("\\.json$", "\\.xml", save_path)
     } else {
-      tmp_xml <- tempfile(fileext = ".xml")
-      args$save_path <- tmp_xml
-      on.exit(unlink(tmp_xml))
+      # a temporary folder, in which convert_grobid() names each XML file
+      # after its PDF: the paper ID and JSON file name come from the XML file
+      # name, and a random tempfile() name gave the paper a random ID
+      tmp_dir <- tempfile("grobid")
+      dir.create(tmp_dir)
+      on.exit(unlink(tmp_dir, recursive = TRUE))
+      args$save_path <- tmp_dir
     }
 
     grobid_args <- c("file_path", "save_path", "api_url", "start_page", "end_page")

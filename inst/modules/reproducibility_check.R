@@ -2557,6 +2557,15 @@ reproducibility_check <- function(paper, local_path = NULL, local_only = FALSE,
   }
   py_deps <- repro_dependencies_py(py_code_text_list, manifest_text = py_manifest_text)
   py_install_deps <- py_deps[!py_deps$base, , drop = FALSE]
+  # The repository's own modules (`from utils import helpers`, with
+  # utils/helpers.py in the repository) are not packages: nothing to install,
+  # and a failed import of one is an error in the run, not a missing package
+  py_local_paths <- py_files$file_path %||% py_files$file_name
+  py_local_paths <- gsub("\\\\", "/", ifelse(is.na(py_local_paths) | !nzchar(py_local_paths),
+                                             py_files$file_name, py_local_paths))
+  py_local_modules <- unique(c(tools::file_path_sans_ext(basename(py_local_paths)),
+                               unlist(strsplit(dirname(py_local_paths), "/", fixed = TRUE))))
+  py_install_deps <- py_install_deps[!py_install_deps$package %in% py_local_modules, , drop = FALSE]
   n_py_deps <- nrow(py_install_deps)
 
   # ── Per-file path rewrite + I/O for ordering ──────────────────────────────

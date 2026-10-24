@@ -16,7 +16,7 @@ osf_info(osf_url, id_col = 1, recursive = FALSE, pb = NULL, cache = FALSE)
 \item{pb}{a progress bar passed from another function}
 
 \item{cache}{if \code{TRUE}, also reuse a PERSISTENT, on-disk cached listing per
-id (see \code{\link[=repo_info_cache]{repo_info_cache()}}) that survives a restart of the script --
+id (see \code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}}) that survives a restart of the script --
 separate from, and in addition to, this function's own in-memory,
 session-only cache described above. Off by default.}
 }
