@@ -98,7 +98,7 @@ fsd_links <- function(paper) {
 #'   `fsd_url` is a table
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a cached listing from a prior call for the
-#'   same study instead of re-querying FSD (see [repo_info_cache()]);
+#'   same study instead of re-querying FSD (see [repo_info_cache_clear()]);
 #'   default `FALSE`
 #'
 #' @returns a data frame of information

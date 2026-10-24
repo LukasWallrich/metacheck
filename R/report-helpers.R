@@ -41,7 +41,11 @@
 #' the result (red: to fix, yellow: to improve, green: fine), its summary text
 #' what was found, and its report the folded details. A module can also give
 #' `intro` (a paragraph shown at the top) and `logo` (the path of an image
-#' shown next to metacheck's logo).
+#' shown next to metacheck's logo). A module that gives `checklist_section`
+#' (markdown) gets a section of its own, under its title, after the results
+#' and before "More detail", with its report folded at the end; its check
+#' then links to that section instead of folding the report.
+#' `reproducibility_check` gives one when it ran the code.
 #'
 #' @param report_type if one of `"full"`, `"brief"`, `"simple"`,
 #'   `"simple_brief"` or `"checklist"`, sets the report type; `NULL` (the

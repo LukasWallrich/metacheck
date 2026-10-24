@@ -32,7 +32,7 @@
 #'
 #' @returns report list
 module_name <- function(paper, ...) {
-  # see https://www.scienceverse.org/metacheck/articles/creating_modules.html
+  # see https://www.scienceverse.org/metacheck_book/chapters/creating-modules.html
 
   # module code ----
   pattern <- "significant"
@@ -45,9 +45,9 @@ module_name <- function(paper, ...) {
   table <- text_search(paper, pattern)
 
   ## summary_table ----
-  # must have id column as the id of each paper, one row per paper
+  # must have a paper_id column as the id of each paper, one row per paper
   # and further columns to be added to a master summary table
-  summary_table <- dplyr::count(table, id, name = "n_significant")
+  summary_table <- dplyr::count(table, paper_id, name = "n_significant")
 
   ## traffic light ----
   # displayed in reports, possible values:
@@ -77,7 +77,7 @@ module_name <- function(paper, ...) {
   # use quarto / markdown for styling
   # https://quarto.org/docs/authoring/markdown-basics.html
   report_text <- "This table shows all of the sentences where the paper used the word *significant*. "
-  report_table <- table[, c("section", "text")]
+  report_table <- table[, c("header", "text")]
   further_info <- c(
     "For more opinions on the use of the word *significant*:",
     "* Motulsky, H. (2014). Opinion: Never use the word ‘significant’ in a scientific paper. Advances in regenerative biology, 1(1), 25155. doi: [10.3402/arb.v1.25155](https://doi.org/10.3402/arb.v1.25155)"

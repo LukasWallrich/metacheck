@@ -27,19 +27,27 @@
 # one render path, reuse the copy Quarto already bundles (report() already
 # depends on Quarto for the full-report path) via quarto::quarto_path(),
 # whose directory layout is <quarto_root>/bin/quarto(.exe) with Pandoc at
-# <quarto_root>/bin/tools/. Returns NULL (not an error) if that binary or
-# layout cannot be found, so the caller can still try rmarkdown's own
-# default detection rather than fail outright.
+# <quarto_root>/bin/tools/ on Windows and macOS, but one folder deeper on
+# Linux, <quarto_root>/bin/tools/<arch>/ (x86_64 or aarch64): that folder was
+# not looked in, so on a Linux server without a separate Pandoc the checklist
+# and simple reports failed with "pandoc version 1.12.3 or higher is required
+# and was not found". Returns NULL (not an error) if that binary or layout
+# cannot be found, so the caller can still try rmarkdown's own default
+# detection rather than fail outright.
 .report_pandoc_dir <- function() {
   quarto_bin <- tryCatch(quarto::quarto_path(), error = function(e) NULL)
   if (is.null(quarto_bin) || !nzchar(quarto_bin)) return(NULL)
 
-  pandoc_dir <- file.path(dirname(quarto_bin), "tools")
-  has_pandoc <- file.exists(file.path(pandoc_dir, "pandoc")) ||
-    file.exists(file.path(pandoc_dir, "pandoc.exe"))
-  if (!dir.exists(pandoc_dir) || !has_pandoc) return(NULL)
-
-  pandoc_dir
+  tools <- file.path(dirname(quarto_bin), "tools")
+  candidates <- c(tools, file.path(tools, c("x86_64", "aarch64")),
+                  list.dirs(tools, full.names = TRUE, recursive = FALSE))
+  for (pandoc_dir in unique(candidates)) {
+    if (file.exists(file.path(pandoc_dir, "pandoc")) ||
+        file.exists(file.path(pandoc_dir, "pandoc.exe"))) {
+      return(pandoc_dir)
+    }
+  }
+  NULL
 }
 
 #' Create a Report
@@ -90,7 +98,6 @@ report <- function(paper,
                      "stat_p_nonsig",
                      "stat_effect_size",
                      "marginal",
-                     "ref_accuracy",
                      "ref_replication",
                      "ref_retraction",
                      "ref_pubpeer",

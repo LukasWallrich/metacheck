@@ -91,12 +91,13 @@
 #'   are classified and listed as their own rows. On by default (with it off,
 #'   data inside zip archives was never found, see issue #424).
 #' @param max_file_size largest single file to download, in MB (default 100).
-#'   The size caps are an upfront, all-or-nothing gate: if any file in a
-#'   repository exceeds this, the whole repository is refused (nothing
-#'   downloaded) with a message naming the size to lift it. Set `Inf` for no cap.
+#'   A file over this is skipped on its own; the rest of the repository is
+#'   still downloaded. Set `Inf` for no cap.
 #' @param max_download_size largest total download per repository, in MB
-#'   (default 500). If a repository's total exceeds this, the whole repository is
-#'   refused (nothing downloaded) with a message naming the size to lift it. Set
+#'   (default 500), used as a budget: files already in the cache count first,
+#'   then the smallest missing files are added until the next one would not
+#'   fit. A file whose size cannot be found out is skipped on its own. Skipped
+#'   files are named in the summary text, with the size to lift the limit. Set
 #'   `Inf` for no cap.
 #' @param max_files_per_repo largest file COUNT a single repository may have
 #'   before it is refused outright (default `Inf`, no cap). Unlike the size
@@ -248,7 +249,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     # repo_check() falls back to its own default (cache = FALSE) regardless
     # of what the caller asked for, and every repo listing (Dryad/Zenodo/OSF/
     # ...) is re-queried from scratch on every restart -- exactly the
-    # repeated-listing quota exhaustion repo_info_cache()/cache.R's own docs
+    # repeated-listing quota exhaustion R/repo-info-cache.R / cache.R's own docs
     # describe (confirmed live again 2026-09-13: batch 1 of a fresh corpus
     # rerun hit Dryad's 100/day zip quota despite cache = TRUE requested
     # throughout the reproducibility_check -> data_check chain).
@@ -422,8 +423,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # repo_check lists OSF/GitHub/Zenodo files without fetching them. With
   # download = "data" (default) fetch only the readable subset the checks analyse
   # (tabular data + codebook/readme); with download = "all" fetch every file, for
-  # building a complete data archive. Repos refused by the size caps (upfront,
-  # all-or-nothing per repo).
+  # building a complete data archive. The size caps skip files one by one (over
+  # max_file_size, or of unknown size), and fill max_download_size as a
+  # budget with the smallest files first (see download_repo_files()).
   gated_repos <- NULL
   oversize_files <- NULL
   failed_files   <- NULL

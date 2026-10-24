@@ -21,49 +21,23 @@
 # unaffected) -- opt in explicitly, same shape as download caching's own
 # cache = TRUE/FALSE parameter.
 
-#' Enable, disable, or query the repository-listing cache
-#'
-#' When enabled, [dryad_info()] and [zenodo_info()] (via `repo_check()`'s own
-#' `cache` parameter) store each repository's listing result (dataset
-#' metadata + file list) on disk and reuse it on a later call for the same
-#' repository, instead of re-querying the host's API. This is a SEPARATE
-#' cache from the downloaded-file-bytes cache (see [repo_cache_dir()]) --
-#' listing a repository and downloading its files are different costs, and a
-#' restart that has nothing new to download would otherwise still re-pay the
-#' full listing cost every time.
-#'
-#' A cached listing is not refreshed automatically; a published dataset's own
-#' metadata/file list rarely changes once public, but if a paper's repository
-#' has genuinely been updated, clear the relevant entry with
-#' [repo_info_cache_clear()].
-#'
-#' @param enabled if logical, sets whether the cache is used; if `NULL`
-#'   (default) returns the current setting
-#'
-#' @returns the current setting (logical), invisibly when setting
-#' @export
-#'
-#' @examples
-#' repo_info_cache()          # is the cache on?
-#' \dontrun{
-#' repo_info_cache(TRUE)      # reuse listings across restarts
-#' }
-repo_info_cache <- function(enabled = NULL) {
-  if (is.null(enabled)) {
-    return(isTRUE(getOption("metacheck.repo_info.cache", FALSE)))
-  }
-  if (!is.logical(enabled) || length(enabled) != 1 || is.na(enabled)) {
-    stop("Set repo_info_cache with TRUE or FALSE", call. = FALSE)
-  }
-  options(metacheck.repo_info.cache = enabled)
-  invisible(enabled)
-}
-
 #' Clear the on-disk repository-listing cache
 #'
-#' Deletes all cached repository listings (see [repo_info_cache()]). Safe at
-#' any time -- a cleared entry is simply re-fetched from the host's API the
-#' next time it is needed.
+#' Deletes all cached repository listings. Safe at any time -- a cleared entry
+#' is simply re-fetched from the host's API the next time it is needed.
+#'
+#' With `cache = TRUE`, `repo_check` (and `code_check` and `data_check`, which
+#' pass it on), and the `*_info()` functions such as [dryad_info()] and
+#' [zenodo_info()], store each repository's listing result (dataset metadata +
+#' file list) on disk and reuse it on a later call for the same repository,
+#' instead of re-querying the host's API. This is a SEPARATE cache from the
+#' downloaded-file-bytes cache (see [repo_cache_dir()]) -- listing a repository
+#' and downloading its files are different costs, and a restart that has
+#' nothing new to download would otherwise still re-pay the full listing cost
+#' every time. A cached listing is not refreshed automatically; a published
+#' dataset's own metadata/file list rarely changes once public, but if a
+#' paper's repository has genuinely been updated, clear the cache with this
+#' function.
 #'
 #' @returns the number of cache entries removed, invisibly
 #' @export

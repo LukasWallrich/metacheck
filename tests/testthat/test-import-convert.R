@@ -114,6 +114,9 @@ test_that("PDF-XML-grobid keep_xml = FALSE", {
 
   paper <- read(obs)
   expect_true(paper_validate(paper))
+  # named after the PDF, not after a random temporary file
+  expect_equal(basename(obs), "to_err_is_human.json")
+  expect_equal(paper$paper_id, "to_err_is_human")
 }, "mock")
 
 test_that("PDF-bibr", {

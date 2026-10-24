@@ -14,7 +14,7 @@ zenodo_info(zenodo_url, id_col = 1, pb = NULL, cache = FALSE)
 \item{pb}{a progress bar passed from another function}
 
 \item{cache}{if \code{TRUE}, reuse a previously cached listing for a record
-already looked up (see \code{\link[=repo_info_cache]{repo_info_cache()}}) instead of re-querying
+already looked up (see \code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}}) instead of re-querying
 Zenodo's API. Off by default.}
 }
 \value{

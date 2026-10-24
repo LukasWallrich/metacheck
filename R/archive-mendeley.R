@@ -130,7 +130,7 @@ mendeley_links <- function(paper) {
 #'   URLs, if `mendeley_url` is a table
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a previously cached listing for a dataset
-#'   already looked up (see [repo_info_cache()]) instead of re-querying the
+#'   already looked up (see [repo_info_cache_clear()]) instead of re-querying the
 #'   API. Off by default.
 #'
 #' @returns a data frame of information

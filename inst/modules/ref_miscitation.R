@@ -73,9 +73,11 @@ ref_miscitation <- function(paper, db = readRDS(system.file("databases/miscite.R
     )
 
   # determine the traffic light ----
+  # no commonly miscited paper cited: nothing to check, so "na", as
+  # ref_retraction and ref_replication do
   tl <- dplyr::case_when(
     nrow(table) > 0 ~ "yellow",
-    .default = "green"
+    .default = "na"
   )
 
   # report text for each possible traffic light ----

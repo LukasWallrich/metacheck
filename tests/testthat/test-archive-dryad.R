@@ -294,3 +294,32 @@ test_that("*_info() takes a table or vector with an NA, and a failed connection 
     researchdata4tu_info(data.frame(href = c("16766929", NA), extra = 1:2))))
   expect_true(all(c("href", "extra") %in% names(info)))
 })
+
+test_that("a stored Dryad listing from before the paging fix is fetched again (#506)", local({
+  withr::local_options(metacheck.repo_info_cache.dir = withr::local_tempdir())
+  doi <- "10.5061/dryad.m8j17"
+  url <- paste0("https://doi.org/", doi)
+  # stored before 0.3.3.1: the first page of files only, no files_total
+  old <- data.frame(dryad_doi = doi, doi = paste0("doi:", doi), license = "cc0")
+  .repo_info_cache_put("dryad", doi, old)
+  n_calls <- 0
+  testthat::local_mocked_bindings(
+    online = \(...) TRUE,
+    .dryad_info = function(dryad_doi, pb = NULL) {
+      n_calls <<- n_calls + 1
+      data.frame(dryad_doi = dryad_doi, doi = paste0("doi:", dryad_doi), license = "cc0",
+                 files_total = 22, files_incomplete = FALSE)
+    }
+  )
+  info <- suppressMessages(dryad_info(url, cache = TRUE))
+  expect_equal(n_calls, 1)
+  expect_equal(info$files_total, 22)
+  # the complete listing is stored, and reused
+  info <- suppressMessages(dryad_info(url, cache = TRUE))
+  expect_equal(n_calls, 1)
+  expect_equal(info$files_total, 22)
+  # a stored listing marked incomplete is fetched again too
+  .repo_info_cache_put("dryad", doi, transform(old, files_total = 22, files_incomplete = TRUE))
+  info <- suppressMessages(dryad_info(url, cache = TRUE))
+  expect_equal(n_calls, 2)
+}))

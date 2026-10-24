@@ -58,7 +58,7 @@
 #'   this module makes anyway, so `repo_metadata` has their licence
 #'   populated regardless of this parameter.
 #' @param cache if TRUE, reuse a previously cached Dryad/Zenodo listing (see
-#'   [repo_info_cache()]) instead of re-querying the host's API for a
+#'   [repo_info_cache_clear()]) instead of re-querying the host's API for a
 #'   repository already looked up. FALSE (the default) always queries fresh.
 #'   This is a SEPARATE cache from the downloaded-file-bytes cache
 #'   ([repo_cache_dir()]) -- listing a repository and downloading its files

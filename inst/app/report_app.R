@@ -161,7 +161,7 @@ server <- function(input, output, session) {
 
   validated_modules <- c(
     "power", "marginal", "prereg_check", "ethics_check",
-    "ref_pubpeer", "ref_retraction", "ref_replication", "ref_accuracy",
+    "ref_pubpeer", "ref_retraction", "ref_replication",
     "stat_check", "stat_p_exact", "stat_p_nonsig", "stat_effect_size",
     "repo_check", "code_check", "data_check", "codebook_check"
   )
@@ -289,8 +289,6 @@ server <- function(input, output, session) {
                         (file.exists(local_path) || dir.exists(local_path))
         modules <- validated_modules
         if (!isTRUE(input$query_pubpeer)) modules <- setdiff(modules, "ref_pubpeer")
-        # ref_accuracy needs the CrossRef bib_match table to compare against
-        if (!use_crossref) modules <- setdiff(modules, "ref_accuracy")
         if (!isTRUE(input$query_repos) && !has_local)
           modules <- setdiff(modules, repo_modules)
         skip_online <- has_local && !isTRUE(input$query_repos)
@@ -359,7 +357,6 @@ server <- function(input, output, session) {
     # make module list
     mods_used    <- validated_modules
     if (!use_pubpeer) mods_used <- setdiff(mods_used, "ref_pubpeer")
-    if (!use_crossref) mods_used <- setdiff(mods_used, "ref_accuracy")
     if (!use_repos && !has_local_snip)
       mods_used <- setdiff(mods_used, repo_modules)
     mods_str     <- paste0('"', mods_used, '"', collapse = ', ') |> sprintf("c(%s)", x= _)

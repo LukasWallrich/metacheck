@@ -141,7 +141,7 @@ osf_cache_clear <- function() {
 #' @param recursive whether to retrieve all children
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, also reuse a PERSISTENT, on-disk cached listing per
-#'   id (see [repo_info_cache()]) that survives a restart of the script --
+#'   id (see [repo_info_cache_clear()]) that survives a restart of the script --
 #'   separate from, and in addition to, this function's own in-memory,
 #'   session-only cache described above. Off by default.
 #'
@@ -1281,9 +1281,11 @@ osf_file_download <- function(osf_id,
   # On the OSF you can nest folders and give long folder names, but windows has a 260 character folder name limit.
   # download_to <- fs::path_abs(download_to)
   download_to <- normalizePath(download_to, winslash = "/", mustWork = FALSE)
-  if (dir.exists(download_to)) {
-    download_to <- file.path(download_to, osf_id)
-  }
+  # Always into a folder named after the OSF ID, whether or not download_to
+  # exists yet. Adding it only when download_to existed wrote a first download
+  # into a new folder directly, and a second run (which then found the folder)
+  # into download_to/<osf_id>/, downloading everything again (#533).
+  download_to <- file.path(download_to, osf_id)
 
   # A project is downloaded into the SAME folder every time, so running the
   # command again resumes rather than starting a second copy. Earlier this

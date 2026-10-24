@@ -60,9 +60,10 @@ stat_p_nonsig <- function(paper) {
 
   # traffic light ----
   # possible values: na, info, red, yellow, green, fail
-  tl <- if (sum(summary_table$n_nonsignificant) > 0) "yellow" else "green"
+  # no nonsignificant p values: nothing to check, so "na", not green
+  tl <- if (sum(summary_table$n_nonsignificant) > 0) "yellow" else "na"
 
-  if (tl == "green") {
+  if (tl == "na") {
     report <- "We detected no nonsignificant p values."
     summary_text <- report
   } else {

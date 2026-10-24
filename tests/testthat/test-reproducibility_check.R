@@ -1046,6 +1046,29 @@ test_that("repro_run_scripts_docker stops the container on timeout instead of or
              info = "a repro_* container was still `docker ps`-visible 10s after its own timeout fired")
 })
 
+test_that("repro_run_scripts_docker gives scripts writable cache folders and Quarto's pandoc (#523)", {
+  skip_if_quick()
+  skip_if_not_installed("processx")
+  docker_ok <- tryCatch(repro_docker_available(), error = function(e) list(ok = FALSE))
+  skip_if_not(isTRUE(docker_ok$ok), "Docker not available")
+
+  root <- withr::local_tempdir()
+  # renv::restore() stopped here: the home folder is read-only
+  writeLines(c('d <- tools::R_user_dir("renv", "cache")',
+               'dir.create(d, recursive = TRUE)',
+               'stopifnot(dir.exists(d))',
+               'stopifnot(rmarkdown::pandoc_available("2.8"))'),
+             file.path(root, "cache.R"))
+  run_tbl <- data.frame(file_name = "cache.R", script_path = file.path(root, "cache.R"),
+                        run_dir = root)
+
+  out <- repro_run_scripts_docker(
+    run_tbl, order = "cache.R", sandbox_root = root,
+    image = "ghcr.io/scienceverse/metacheck_r_large:latest", timeout = 120)
+
+  expect_equal(out$outcome, "ran_ok", info = out$stderr)
+})
+
 test_that("a package install.packages() cannot find is reported as unavailable", {
   # Issue #421: install.packages() only WARNS for a name it cannot find, so
   # the load check reported "installed but package 'x' is not loadable" --
@@ -1444,6 +1467,95 @@ test_that(".repro_norm_rel resolves . and ..", {
   expect_equal(.repro_norm_rel("code/../raw_data/./x.csv"), "raw_data/x.csv")
   expect_equal(.repro_norm_rel("code\\x.R"), "code/x.R")
   expect_true(is.na(.repro_norm_rel("../x.csv")))
+})
+
+test_that(".repro_relocate_relative_paths counts paths from the script's own or .Rproj folder (#523)", {
+  plan <- data.frame(file_name = c("Study2.Rproj", "raw.csv", "x.csv", "top.csv"),
+                     target_path = c("Study 2/Study2.Rproj", "Study 2/Data/raw.csv",
+                                     "processed_data/fig7/x.csv", "Data/top.csv"))
+  code <- c("write.csv(d, 'Output/made.csv')",
+            "p <- read.csv(\"Output/made.csv\")",
+            "write.csv(d, '../Output/up.csv')",
+            "a <- read.csv(file.path(base, 'fig7/x.csv'))",
+            "b <- read.csv('Data/top.csv')",
+            "u <- 'https://osf.io/abc/x.csv'",
+            "dir <- 'Output/'")
+  # a script in a subfolder of the .Rproj folder; Output/ is in the .Rproj folder
+  plan2 <- rbind(plan, data.frame(file_name = "old.csv",
+                                  target_path = "Study 2/Output/old.csv"))
+  out <- .repro_relocate_relative_paths(code, "Study 2/scripts/clean.R", plan2)
+  expect_equal(out[1], "write.csv(d, 'Study 2/Output/made.csv')")
+  expect_equal(out[2], "p <- read.csv(\"Study 2/Output/made.csv\")")
+  expect_equal(out[3], "write.csv(d, 'Study 2/Output/up.csv')")
+  # a folder that exists from the top, a joined piece and a web address stay
+  expect_equal(out[4:6], code[4:6])
+  expect_equal(out[7], "dir <- 'Study 2/Output/'")
+
+  # without a .Rproj file, the script's own folder
+  out <- .repro_relocate_relative_paths(code[1], "Study 2/clean.R",
+                                        plan2[plan2$file_name != "Study2.Rproj", ])
+  expect_equal(out, "write.csv(d, 'Study 2/Output/made.csv')")
+  # a script at the top, or no plan: unchanged
+  expect_equal(.repro_relocate_relative_paths(code, "clean.R", plan2), code)
+  expect_equal(.repro_relocate_relative_paths(code, "Study 2/clean.R", NULL), code)
+})
+
+test_that(".repro_output_head keeps the first lines of long output (#523, item 2)", {
+  txt <- paste(sprintf("line %d", 1:10), collapse = "\n")
+  out <- .repro_output_head(txt, 4)
+  expect_equal(as.character(out), "line 1\nline 2\nline 3\nline 4")
+  expect_equal(attr(out, "n_lines"), 10)
+  expect_identical(.repro_output_head(txt, 10), txt)
+  # a vector of lines, as the Python path has
+  out <- .repro_output_head(c("a", "b", "c"), 2)
+  expect_equal(as.character(out), c("a", "b"))
+  expect_equal(attr(out, "n_lines"), 3)
+  expect_identical(.repro_output_head(NA_character_, 2), NA_character_)
+  expect_identical(.repro_output_head("", 2), "")
+  withr::local_options(metacheck.repro_output_max_lines = 3L)
+  expect_equal(attr(.repro_output_head(txt), "n_lines"), 10)
+
+  expect_null(.repro_output_cut_note(integer(0)))
+  expect_match(.repro_output_cut_note(c(V1_Modeling.R = 2300000L), 20000L),
+               "first 20,000 lines of the output of `V1_Modeling.R` (2,300,000 lines)",
+               fixed = TRUE)
+})
+
+test_that("reproducibility_check searches only the first lines of long output (#523, item 2)", {
+  skip_if_quick()
+  llm_use(FALSE)
+  withr::local_options(metacheck.repro_output_max_lines = 2000L)
+  pkg <- withr::local_tempdir()
+  writeLines("for (i in 1:5000) cat('row', i, 'value', i / 7, '\\n')",
+             file.path(pkg, "chatty.R"))
+  mo <- suppressMessages(module_run(test_paper(), "reproducibility_check", local_path = pkg,
+                                    local_only = TRUE, execute = TRUE))
+  expect_equal(mo$run_results$outcome, "ran_ok")
+  report <- paste(unlist(mo$report), collapse = "\n")
+  # 5,000 lines and the echoed command
+  expect_match(report, "first 2,000 lines of the output of `chatty.R` (5,00", fixed = TRUE)
+})
+
+test_that("the package layout runs scripts that write next to themselves (#523)", {
+  skip_if_quick()
+  llm_use(FALSE)
+  pkg <- withr::local_tempdir()
+  for (s in c("Study 2", "Study 3")) {
+    dir.create(file.path(pkg, s, "Data"), recursive = TRUE)
+    writeLines("Version: 1.0", file.path(pkg, s, paste0(sub(" ", "", s), ".Rproj")))
+    writeLines(c("a,b", "1,2"), file.path(pkg, s, "Data", "raw.csv"))
+  }
+  writeLines(c("d <- read.csv('Data/raw.csv')",
+               "write.csv(d, 'Data/processed.csv', row.names = FALSE)"),
+             file.path(pkg, "Study 2", "1_clean.R"))
+  writeLines(c("p <- read.csv('Data/processed.csv')", "print(nrow(p))"),
+             file.path(pkg, "Study 2", "2_analyse.R"))
+
+  mo <- suppressMessages(module_run(test_paper(), "reproducibility_check", local_path = pkg,
+                                    local_only = TRUE, execute = TRUE))
+  oc <- stats::setNames(mo$run_results$outcome, mo$run_results$file_name)
+  expect_equal(oc[["1_clean.R"]], "ran_ok")
+  expect_equal(oc[["2_analyse.R"]], "ran_ok")
 })
 
 test_that("repro_write_scripts leaves writes in place in the package layout", {

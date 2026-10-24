@@ -183,7 +183,7 @@ dryad_links <- function(paper) {
 #'   `dryad_url` is a table
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a previously cached listing for a dataset
-#'   already looked up (see [repo_info_cache()]) instead of re-querying
+#'   already looked up (see [repo_info_cache_clear()]) instead of re-querying
 #'   Dryad's API. Off by default. Worth enabling for a corpus build likely to
 #'   be interrupted and restarted, since Dryad's per-IP request quota is
 #'   otherwise re-spent on every restart re-listing datasets nothing new
@@ -279,6 +279,12 @@ dryad_info <- function(dryad_url, id_col = 1, pb = NULL, cache = FALSE) {
   for (i in seq_along(valid_dois)) {
     doi <- valid_dois[[i]]
     cached <- if (isTRUE(cache)) .repo_info_cache_get("dryad", doi) else NULL
+    # A listing stored before the paging fix (0.3.3.1) has no `files_total`:
+    # it holds only Dryad's first page of 20 files, so it is not reused, and
+    # Dryad is asked again (#506). Neither is one marked incomplete.
+    if (!is.null(cached) && (!"files_total" %in% names(cached) ||
+                             isTRUE(cached$files_incomplete)))
+      cached <- NULL
     if (!is.null(cached)) {
       id_info[[i]] <- cached
     } else {

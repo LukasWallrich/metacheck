@@ -17,7 +17,7 @@ if \code{pa_url} is a table}
 
 \item{cache}{if \code{TRUE}, reuse a cached listing from a prior call for the
 same item instead of re-querying PsychArchives (see
-\code{\link[=repo_info_cache]{repo_info_cache()}}); default \code{FALSE}}
+\code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}}); default \code{FALSE}}
 }
 \value{
 a data frame of information
