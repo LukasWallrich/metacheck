@@ -8,7 +8,7 @@ report_repository(
   path,
   output_file = NULL,
   output_format = c("html", "qmd"),
-  report_type = c("full", "simple"),
+  report_type = c("full", "brief", "simple", "simple_brief", "checklist"),
   modules = c("repo_check", "code_check", "data_check", "codebook_check"),
   args = list()
 )
@@ -24,8 +24,9 @@ exist.}
 \item{output_format}{the format to create the report in, \code{"html"} (the
 default) or \code{"qmd"}}
 
-\item{report_type}{\code{"full"} (the default), \code{"simple"} (a static,
-email-safe report with no embedded JavaScript) or \code{"checklist"} (every
+\item{report_type}{\code{"full"} (the default), \code{"brief"} (only the modules
+that need attention), \code{"simple"} (a static, email-safe report with no
+embedded JavaScript), \code{"simple_brief"} (both) or \code{"checklist"} (every
 check sorted by its result, also static) -- see \code{\link[=report]{report()}} and
 \code{\link[=report_type]{report_type()}}.}
 
