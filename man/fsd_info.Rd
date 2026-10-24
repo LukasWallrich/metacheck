@@ -16,7 +16,7 @@ containing them (e.g., as created by \code{fsd_links()})}
 \item{pb}{a progress bar passed from another function}
 
 \item{cache}{if \code{TRUE}, reuse a cached listing from a prior call for the
-same study instead of re-querying FSD (see \code{\link[=repo_info_cache]{repo_info_cache()}});
+same study instead of re-querying FSD (see \code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}});
 default \code{FALSE}}
 }
 \value{

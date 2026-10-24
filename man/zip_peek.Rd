@@ -22,8 +22,8 @@ automatically on retry when the central directory is larger)}
 
 \item{cache}{if \code{TRUE}, persist this URL's result to disk (see
 \code{\link[=zip_peek_cache_clear]{zip_peek_cache_clear()}}) so a later R process reuses it instead of
-re-peeking the archive over HTTP. Off by default, matching
-\code{\link[=repo_info_cache]{repo_info_cache()}}'s own opt-in shape; a caller that never asks for
+re-peeking the archive over HTTP. Off by default, like the
+repository-listing cache (see \code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}}); a caller that never asks for
 caching sees no behavior change. \code{repo_check()}/\code{data_check()} forward
 their own \code{cache} argument here.}
 

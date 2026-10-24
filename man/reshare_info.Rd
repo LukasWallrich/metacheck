@@ -16,7 +16,7 @@ if \code{reshare_url} is a table}
 \item{pb}{a progress bar passed from another function}
 
 \item{cache}{if \code{TRUE}, reuse a previously cached listing for a deposit
-already looked up (see \code{\link[=repo_info_cache]{repo_info_cache()}}) instead of re-querying the
+already looked up (see \code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}}) instead of re-querying the
 API. Off by default.}
 }
 \value{

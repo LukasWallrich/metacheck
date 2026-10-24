@@ -109,6 +109,12 @@ test_that("module_template", {
 
   module_template("demo")
   expect_true(file.exists("modules/demo.R"))
+
+  # the module the template writes runs (#532): it used columns id and
+  # section, which text_search() does not return
+  expect_no_error(mo <- module_run(demopaper(), "modules/demo.R"))
+  expect_true("paper_id" %in% names(mo$summary_table))
+  expect_equal(mo$traffic_light, "info")
   unlink("modules/demo.R")
 })
 

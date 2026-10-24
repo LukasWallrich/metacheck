@@ -178,7 +178,7 @@ causal_claims <- function(paper) {
       tl <- "green" # causal language with random assignment
     }
   } else {
-    tl <- "green" # no causal language
+    tl <- "na" # no causal language: nothing to check
   }
 
   # report ----

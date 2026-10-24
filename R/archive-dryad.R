@@ -183,7 +183,7 @@ dryad_links <- function(paper) {
 #'   `dryad_url` is a table
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a previously cached listing for a dataset
-#'   already looked up (see [repo_info_cache()]) instead of re-querying
+#'   already looked up (see [repo_info_cache_clear()]) instead of re-querying
 #'   Dryad's API. Off by default. Worth enabling for a corpus build likely to
 #'   be interrupted and restarted, since Dryad's per-IP request quota is
 #'   otherwise re-spent on every restart re-listing datasets nothing new

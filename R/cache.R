@@ -46,15 +46,15 @@
 #'
 #' Prints the location and size of all three on-disk caches — the downloaded
 #' repository-FILE cache, the repository-LISTING cache (dataset/record
-#' metadata, off by default -- see [repo_info_cache()]), and the LLM-response
+#' metadata, off by default -- see [repo_info_cache_clear()]), and the LLM-response
 #' cache — so they are never hidden. By default each sits in a folder in the
 #' current working directory (`.metacheck_repo_cache`,
 #' `.metacheck_repo_info_cache`, and `.metacheck_llm_cache`); relocate all
 #' three with `options(metacheck.cache.dir = "/some/path")`.
 #'
 #' @returns a data.frame (`cache`, `path`, `size_mb`), invisibly.
-#' @seealso [repo_cache_dir()], [repo_cache_clear()], [repo_info_cache()],
-#'   [repo_info_cache_clear()], [llm_cache_clear()]
+#' @seealso [repo_cache_dir()], [repo_cache_clear()], [repo_info_cache_clear()],
+#'   [llm_cache_clear()]
 #' @export
 #' @examples
 #' \dontrun{

@@ -1,10 +1,10 @@
 #' Code Check
 #'
 #' @description
-#' This module retrieves information from repositories checked by repo_check about code files (R, SAS, SPSS, Stata).
+#' This module retrieves information from repositories checked by repo_check about code files (R, Python, SAS, SPSS, Stata, Mplus, MATLAB).
 #'
 #' @details
-#' The Code Check module checks R, Rmd, Qmd, SAS, SPSS, and Stata files, using regular expressions to check the code. The regular expression search will detect the number of comments, the lines at which libraries/imports are loaded, attempts to detect absolute paths to files, and lists files that are loaded, and checks if these files are in the repository. The module will return suggestions to improve the code if there are no comments, if libraries/imports are loaded in lines further than 4 lines apart, if files that are loaded are not in the repository, and if absolute file paths are found.
+#' The Code Check module checks R (also R Markdown and Quarto), Python (also Jupyter notebooks), SAS, SPSS, Stata, Mplus, and MATLAB files, using regular expressions to check the code; JASP files are listed but not read. The language of a Quarto document or a notebook is read from the file itself (its engine or kernel), not from its extension. The regular expression search will detect the number of comments, the lines at which libraries/imports are loaded, attempts to detect absolute paths to files, `setwd()` and `install.packages()` calls, and lists files that are loaded, and checks if these files are in the repository; R code is also parsed. The module will return suggestions to improve the code if there are no comments, if libraries/imports are loaded in lines further than 4 lines apart, if files that are loaded are not in the repository, if absolute file paths, `setwd()` or `install.packages()` are found, and if R code cannot be parsed.
 #'
 #' The regular expressions can miss information in code files, or falsely detect parts of the code as a fixed file path. Libraries/imports might be loaded in one block, even if there are more than 3 intermittent lines. The module was tried out internally on papers published in Psychological Science, but has not been formally validated. There might be valid reasons why some loaded files can’t be shared, but the module can’t evaluate these reasons, and always gives a warning.
 #'
@@ -33,8 +33,8 @@
 #' @param local_path optional path to a local directory. When provided, all files in that directory (recursively) are added to the file list alongside any files found via `repo_check`.
 #' @param local_only if TRUE, skip online repository lookups (see `repo_check`)
 #' @param download if TRUE (default), download the code files to be checked from online repositories so they are read locally. Set FALSE to stream each file from its URL instead.
-#' @param max_file_size largest single file to download, in MB (default 100). Size caps are an upfront, all-or-nothing gate per repository; set `Inf` for no cap.
-#' @param max_download_size largest total download per repository, in MB (default 500). Set `Inf` for no cap.
+#' @param max_file_size largest single file to download, in MB (default 100). A file over this is skipped on its own; the rest of the repository is still downloaded. Set `Inf` for no cap.
+#' @param max_download_size largest total download per repository, in MB (default 500), used as a budget: files already in the cache count first, then the smallest missing files are added until the next one would not fit. A file whose size cannot be found out is skipped on its own. Set `Inf` for no cap.
 #' @param max_files_per_repo largest file COUNT a single repository may have before it is refused outright (default `Inf`, no cap) -- see [download_repo_files()]'s own parameter of the same name.
 #' @param cache if TRUE, keep downloaded files in a persistent on-disk cache (see [repo_cache_dir()]) so they are reused on later runs. If FALSE (the default), download to a temporary directory discarded when the session ends. Clear the cache with [repo_cache_clear()].
 #' @param skip_on_api_limit if TRUE, a 429 that carries a confirmed rate-limit-exhausted signal (e.g. Dryad's per-day quota) skips that file instead of waiting out the host's own reset. Default FALSE (always wait for a confirmed reset) -- see [download_repo_files()]'s own parameter of the same name. Also forwarded to `repo_check()` and to `.code_expand_zip()`'s own zip-peeking step, both of which make the same kind of request and can hit the same rate limit.
@@ -78,7 +78,7 @@ code_check <- function(paper, local_path = NULL,
     # repo_check() falls back to its own default (cache = FALSE) regardless
     # of what the caller asked for, and every repo listing (Dryad/Zenodo/OSF/
     # ...) is re-queried from scratch on every restart -- exactly the
-    # repeated-listing quota exhaustion repo_info_cache()/cache.R's own docs
+    # repeated-listing quota exhaustion R/repo-info-cache.R / cache.R's own docs
     # describe (see metacheck#402-adjacent finding, same corpus rerun).
     # skip_on_api_limit forwarded too: repo_check()'s own peek_zips step can
     # now wait out a confirmed rate limit the same way a download does (see

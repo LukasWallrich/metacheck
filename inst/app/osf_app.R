@@ -794,7 +794,7 @@ server <- function(input, output, session) {
           " in R on your own computer — see ",
           tags$a("the manual",
                  href = paste0("https://www.scienceverse.org/metacheck_book/",
-                               "chapters/archiving-osf-to-zenodo.html"),
+                               "chapters/archiving-osf.html"),
                  target = "_blank"),
           "."
         )
@@ -858,7 +858,7 @@ server <- function(input, output, session) {
         " in R — see ",
         tags$a("the manual",
                href = paste0("https://www.scienceverse.org/metacheck_book/",
-                             "chapters/archiving-osf-to-zenodo.html"),
+                             "chapters/archiving-osf.html"),
                target = "_blank"),
         "."
       )

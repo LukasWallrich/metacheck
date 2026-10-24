@@ -76,9 +76,11 @@ FLoRA_update <- function() {
     ignore_folder_structure = TRUE,
     mode = "select"
   ))
-  on.exit(unlink(tmp))
+  on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
-  file <- list.files(tmp, "\\.csv", full.names = TRUE)
+  # the file is in tmp/t4j8f/ (osf_file_download() saves into a folder named
+  # after the OSF ID)
+  file <- list.files(tmp, "\\.csv", full.names = TRUE, recursive = TRUE)
   if (length(file) == 0) stop("The file at osf.io/t4j8f is missing")
   FLoRA <- suppressMessages(
     readr::read_csv(file[[1]], show_col_types = FALSE)

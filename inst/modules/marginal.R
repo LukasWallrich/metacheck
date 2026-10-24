@@ -29,14 +29,19 @@ marginal <- function(paper) {
   summary_table <- dplyr::count(table, paper_id, name = "marginal")
 
   # traffic light ----
-  tl <- ifelse(nrow(table), "red", "green")
+  # no such terms: nothing to check, so "na" (not applicable), not green
+  tl <- ifelse(nrow(table), "red", "na")
 
   # summary_text ----
-  summary_text <- sprintf("You described %d effect%s with terms related to 'marginally significant'.", nrow(table), ifelse(nrow(table) == 1, "", "s"))
+  summary_text <- if (tl == "na") {
+    "No effects were described with terms related to 'marginally significant'."
+  } else {
+    sprintf("You described %d effect%s with terms related to 'marginally significant'.", nrow(table), ifelse(nrow(table) == 1, "", "s"))
+  }
 
 
   # report ----
-  if (tl == "green") {
+  if (tl == "na") {
     report <- "No effects were described with terms related to 'marginally significant'."
   } else if (tl == "red") {
     report_text <- "You described effects with terms related to 'marginally significant'. If *p* values above 0.05 are interpreted as an effect, you inflate the alpha level, and increase the Type 1 error rate. If a *p* value is higher than the prespecified alpha level, it should be interpreted as a non-significant result."

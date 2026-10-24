@@ -152,7 +152,7 @@ osf_pat <- function(pat = NULL) {
 #' @param osf_id an vector of OSF IDs or URLs
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a previously cached listing for an id
-#'   already looked up (see [repo_info_cache()]) instead of re-querying the
+#'   already looked up (see [repo_info_cache_clear()]) instead of re-querying the
 #'   OSF API. Off by default. Separate from (and in addition to) `osf_info()`'s
 #'   own in-memory, session-only cache (`options(metacheck.osf.cache = )`) --
 #'   this one is persistent on disk and survives a restart of the script.
@@ -195,7 +195,7 @@ osf_pat <- function(pat = NULL) {
   all_ids <- c(guid_ids, wb_ids)
 
   # Reuse a persistent cached entry per id when requested (see
-  # repo_info_cache()), so restarting a corpus build does not re-query OSF
+  # R/repo-info-cache.R), so restarting a corpus build does not re-query OSF
   # for a node already looked up in an earlier run. This is separate from
   # (and checked before falling through to) osf_info()'s own in-memory
   # session cache above, which does not survive a restart. A cache miss/off

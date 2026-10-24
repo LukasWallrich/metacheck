@@ -10,7 +10,20 @@ repo_info_cache_clear()
 the number of cache entries removed, invisibly
 }
 \description{
-Deletes all cached repository listings (see \code{\link[=repo_info_cache]{repo_info_cache()}}). Safe at
-any time -- a cleared entry is simply re-fetched from the host's API the
-next time it is needed.
+Deletes all cached repository listings. Safe at any time -- a cleared entry
+is simply re-fetched from the host's API the next time it is needed.
+}
+\details{
+With \code{cache = TRUE}, \code{repo_check} (and \code{code_check} and \code{data_check}, which
+pass it on), and the \verb{*_info()} functions such as \code{\link[=dryad_info]{dryad_info()}} and
+\code{\link[=zenodo_info]{zenodo_info()}}, store each repository's listing result (dataset metadata +
+file list) on disk and reuse it on a later call for the same repository,
+instead of re-querying the host's API. This is a SEPARATE cache from the
+downloaded-file-bytes cache (see \code{\link[=repo_cache_dir]{repo_cache_dir()}}) -- listing a repository
+and downloading its files are different costs, and a restart that has
+nothing new to download would otherwise still re-pay the full listing cost
+every time. A cached listing is not refreshed automatically; a published
+dataset's own metadata/file list rarely changes once public, but if a
+paper's repository has genuinely been updated, clear the cache with this
+function.
 }

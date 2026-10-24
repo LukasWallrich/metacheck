@@ -69,7 +69,7 @@ test_that("marginal", {
   # no relevant text
   paper <- test_paper("This effect is absent.")
   mod_output <- module_run(paper, module)
-  expect_equal(mod_output$traffic_light, "green")
+  expect_equal(mod_output$traffic_light, "na")
   expect_equal(nrow(mod_output$table), 0)
 
   # add marginal text

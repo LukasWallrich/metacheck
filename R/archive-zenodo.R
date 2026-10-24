@@ -98,7 +98,7 @@ zenodo_links <- function(paper) {
 #' @param id_col the index or name of the column that contains Zenodo URLs, if id is a table
 #' @param pb a progress bar passed from another function
 #' @param cache if `TRUE`, reuse a previously cached listing for a record
-#'   already looked up (see [repo_info_cache()]) instead of re-querying
+#'   already looked up (see [repo_info_cache_clear()]) instead of re-querying
 #'   Zenodo's API. Off by default.
 #'
 #' @returns a data frame of information
