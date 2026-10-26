@@ -114,9 +114,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
 
   # DOI: only flag when the reference itself printed a DOI that differs from
   # the matched record. A blank reference DOI is not a mismatch (the citer just
-  # did not include one, and CrossRef supplied it).
+  # did not include one, and CrossRef supplied it). Cited DOIs are cleaned
+  # first, so a doi.org or journal URL around the same DOI is not a mismatch.
   table$doi_mismatch <- !is.na(table$doi.orig) & nzchar(table$doi.orig) &
-    tolower(table$doi.orig) != tolower(table$doi.match)
+    tolower(doi_clean(table$doi.orig)) != tolower(doi_clean(table$doi.match))
 
   # year: only flag when more than `year_tolerance` years apart (online-first
   # vs print publication routinely differ by a year and is not an incoherence)
