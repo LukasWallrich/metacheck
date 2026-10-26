@@ -284,6 +284,19 @@ test_that("ref_accuracy counts a reference with several bib_match rows once, and
   expect_equal(after$title_mismatch, before$title_mismatch)
 })
 
+test_that("ref_accuracy accepts a cited DOI written as a URL", {
+  # a PLOS article URL around the matched DOI was flagged as a DOI mismatch
+  p <- demopaper()
+  i <- match(p$bib_match$bib_id[1], p$bib$bib_id)
+  doi <- p$bib_match$doi[1]
+  p$bib$doi[i] <- paste0("http://journals.plos.org/plosone/article?id=", doi)
+  tbl <- module_run(p, "ref_accuracy")$table
+  expect_false(tbl$doi_mismatch[tbl$bib_id == p$bib_match$bib_id[1]])
+  p$bib$doi[i] <- paste0("https://doi.org/", toupper(doi))
+  tbl <- module_run(p, "ref_accuracy")$table
+  expect_false(tbl$doi_mismatch[tbl$bib_id == p$bib_match$bib_id[1]])
+})
+
 test_that("ref_pubpeer counts a DOI cited three times once, and runs without url fields (U118)", {
   # 3 citations x 3 lookups gave 9 rows ("You cited 9 references", 18
   # comments); without a url the module stopped
