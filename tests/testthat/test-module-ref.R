@@ -294,7 +294,24 @@ test_that("ref_accuracy accepts a cited DOI written as a URL", {
   expect_false(tbl$doi_mismatch[tbl$bib_id == p$bib_match$bib_id[1]])
   p$bib$doi[i] <- paste0("https://doi.org/", toupper(doi))
   tbl <- module_run(p, "ref_accuracy")$table
-  expect_false(tbl$doi_mismatch[tbl$bib_id == p$bib_match$bib_id[1]])
+  row <- tbl$bib_id == p$bib_match$bib_id[1]
+  expect_false(tbl$doi_mismatch[row])
+  expect_false(tbl$incoherent[row])
+
+  # a genuinely different DOI is still flagged
+  p$bib$doi[i] <- "https://doi.org/10.1037/0003-066x.54.6.409"
+  tbl <- module_run(p, "ref_accuracy")$table
+  expect_true(tbl$doi_mismatch[row])
+  expect_true(tbl$incoherent[row])
+
+  # an unresolved DOI written as a URL links to doi.org once
+  p$bib_match <- p$bib_match[-1, ]
+  p$bib$doi[i] <- paste0("https://doi.org/", doi)
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(mo$table$tier[mo$table$bib_id == p$bib$bib_id[i]], "unresolved")
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_false(grepl("doi.org/https", report, fixed = TRUE))
+  expect_match(report, paste0("https://doi.org/", doi), fixed = TRUE)
 })
 
 test_that("ref_pubpeer counts a DOI cited three times once, and runs without url fields (U118)", {
