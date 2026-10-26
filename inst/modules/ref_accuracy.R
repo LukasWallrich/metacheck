@@ -397,7 +397,8 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       `What is wrong (cited → record)` =
         vapply(seq_len(nrow(inc_rows)), \(i) discrepancies(inc_rows[i, ]),
                character(1)),
-      Record = link(paste0("https://doi.org/", rec_doi), rec_doi),
+      # a cited DOI written as a URL is cleaned for the link target only
+      Record = link(paste0("https://doi.org/", doi_clean(rec_doi)), rec_doi),
       check.names = FALSE
     )
     incoherent_report <- scroll_table(out, 5, colwidths = c(.45, .4, .15))
