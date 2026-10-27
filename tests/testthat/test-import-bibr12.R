@@ -126,11 +126,9 @@ test_that("modules read citations of bibr 12.x papers", {
 
 test_that("ref_accuracy scores bibr 12.x matches 0-1", {
   paper <- read(bibr12("full"))
-  # a reference without a DOI, and a match scoring 0.98 with one (the module
-  # suggests the DOIs of matches that have no title)
+  # a reference without a DOI, and a title-search match scoring 0.98 with one
   paper$bib$doi <- NA_character_
   paper$bib$text_id <- 2L
-  paper$bib_match$title <- NA_character_
   expect_equal(paper$bib_match$score, 0.98)
 
   mo <- module_run(paper, "ref_accuracy")
