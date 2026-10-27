@@ -378,6 +378,42 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
       p$bib$title[i] <- new
       p
+    },
+    title = \(p) {
+      p$bib_match$title[m] <- "The Origins of Sex Differences in Human Behavior"
+      new <- "The Origins of Sex Differences in Human Behavior and the Long-Term Effects of Hormone Therapy"
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
+    # the record's title is found in the reference text only inside a word
+    title = \(p) {
+      p$bib_match$title[m] <- "Learning changes human behaviour"
+      new <- "Unlearning changes human behaviour: A different account of animal cognition"
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
+    # a short record title that is found in the reference text as the journal
+    title = \(p) { p$bib_match$title[m] <- "American Psychologist"; p },
+    # a DOI written as a URL that was matched by a title search, before
+    # add_bib_match() cleaned DOIs, to a work with another DOI
+    doi = \(p) {
+      p$bib$doi[i] <- "https://doi.org/10.1037/0003-066x.99.9.999"
+      p$bib_match$score[m] <- 80; p
+    },
+    # a one-word journal name that a longer one starts with
+    container = \(p) {
+      p$bib_match$container[m] <- "Cognition and Emotion"
+      p$bib$container[i] <- "Cognition"; p
+    },
+    # names without a comma ("Given Family") match on whole words only
+    author = \(p) { p$bib$authors[i] <- "Alice H Eagly; John Blackwood"; p },
+    author = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "Smith Jones"
+      p$bib$authors[i] <- "Alice Brown Jones; Wendy Wood"; p
     }
   )
   for (k in seq_along(errors)) {
@@ -414,6 +450,13 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$authors[i] <- "Eagly, Alice H; De Wood, Wendy"; p
     },
     given_name_in_family = \(p) { p$bib_match$authors[[m]]$family[1] <- "Alice Eagly"; p },
+    comma_below = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "\u021aurcanu"
+      p$bib$authors[i] <- "Turcanu, Alice H; Wood, Wendy"; p
+    },
+    given_first = \(p) { p$bib$authors[i] <- "Alice H Eagly; Wendy Wood"; p },
+    journal_subtitle = \(p) { p$bib_match$container[m] <- "American Psychologist: Official Journal"; p },
+    journal_words_lost = \(p) { p$bib_match$container[m] <- "Journal of the American Psychologist"; p },
     # the record drops the particle the citation keeps
     particle_not_in_record = \(p) { p$bib$authors[i] <- "Eagly, Alice H; Van Wood, Wendy"; p },
     no_authors_read = \(p) { p$bib$authors[i] <- ""; p },
@@ -533,4 +576,55 @@ test_that("ref_summary labels unmatched references and keeps one row per referen
   mo <- module_run(fake, "ref_summary")
   expect_equal(nrow(mo$table), length(b))
   expect_equal(mo$table$accuracy_mismatch[mo$table$bib_id == b[1]], "no match")
+})
+
+test_that("ref_accuracy reads bibr 12.x author lists and article types", {
+  # bibr 12.x keeps the author list as printed ("Adam, H., Shirako, A., &
+  # Maddux, W. W") and calls a journal article "journal_article"
+  p <- read(test_path("fixtures", "bibr12", "preprint.json"))
+  mo <- module_run(p, "ref_accuracy")
+  tbl <- mo$table[mo$table$tier == "provided", ]
+  expect_true(any(tbl$bib_type.match == "journal_article"))
+  expect_lt(sum(tbl$author_mismatch), 3)
+
+  k <- which(p$bib$bib_id == tbl$bib_id[!tbl$incoherent][1])
+  q <- p
+  q$bib$container[k] <- "A Completely Different Journal Name"
+  r <- module_run(q, "ref_accuracy")$table
+  expect_true(r$container_mismatch[r$bib_id == p$bib$bib_id[k]])
+  q <- p
+  q$bib$authors[k] <- "Nobody, A., & Else, B"
+  r <- module_run(q, "ref_accuracy")$table
+  expect_true(r$author_mismatch[r$bib_id == p$bib$bib_id[k]])
+})
+
+test_that("ref_accuracy only compares references that printed a DOI and were looked up", {
+  # a reference without a DOI is not compared, so ref_summary shows no
+  # mismatch for it
+  p <- demopaper()
+  k <- match(3, p$bib_match$bib_id)
+  p$bib_match$year[k] <- 1900L
+  tbl <- module_run(p, "ref_accuracy")$table
+  expect_equal(tbl$tier[tbl$bib_id == 3], "crossref")
+  expect_false(tbl$year_mismatch[tbl$bib_id == 3])
+
+  # a match without a DOI is not suggested, nor counted as suggested
+  p$bib_match$score[k] <- 90
+  p$bib_match$doi[k] <- NA_character_
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(mo$summary_table$doi_suggested, 0)
+
+  # in a paper list, a paper that was not looked up has no DOIs that "could
+  # not be found"
+  a <- demopaper()
+  b <- demopaper()
+  b$paper_id <- "nolookup"
+  b$bib_match <- b$bib_match[0, ]
+  mo <- module_run(paperlist(a, b), "ref_accuracy")
+  st <- mo$summary_table[mo$summary_table$paper_id == "nolookup", ]
+  expect_equal(st$refs_checked, 0)
+  expect_equal(st$incoherent, 0)
+  expect_true(all(mo$table$tier[mo$table$paper_id == "nolookup"] %in%
+                    c("not_checked", "none")))
+  expect_match(mo$summary_text, "not looked up at Crossref")
 })
