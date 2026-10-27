@@ -12,11 +12,11 @@
 #'
 #' For each checked reference we compare five fields against the DOI's record:
 #'
-#' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch).
+#' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch). DOIs are compared after removing URL wrappers (`https://doi.org/`, journal article URLs) and the old double slash after the prefix (`10.1037//`). When the record was found by looking up the cited DOI itself and carries a different DOI, the registry lists the cited DOI as an alias (for example after a journal moved publisher); this is reported as a note with the current DOI, not as an incoherence.
 #' - **Year** — flagged when the cited year is more than `year_tolerance` years from the record (online-first and print years routinely differ by one year, so this is allowed by default).
 #' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", and "the" are treated as equivalent.
-#' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits) while still catching a genuinely different title.
-#' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list. Only the leading authors are required because author lists are routinely truncated with "et al.". Diacritics are ignored, so "Gredebäck" and "Gredeback" match.
+#' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits) while still catching a genuinely different title. A cited title that begins with the record's title is accepted, because the record often holds only the main title without the subtitle.
+#' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list. Only the leading authors are required because author lists are routinely truncated with "et al.". Surnames are compared on their letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match), and a surname also matches on its last word ("Vafaei Shooshtari" cited as "Shooshtari"). A reference whose authors could not be read is not flagged.
 #'
 #' DOI, journal and year are reliable signals and flag a reference on their own. Title and author mismatches are more often caused by imperfect PDF parsing, so these are governed by `min_mismatches`: the default (1) flags a reference when either the title or the authors disagree. Set `min_mismatches = 2` to be more conservative and require both to disagree (fewer false positives, lower recall).
 #'
@@ -115,9 +115,20 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # DOI: only flag when the reference itself printed a DOI that differs from
   # the matched record. A blank reference DOI is not a mismatch (the citer just
   # did not include one, and CrossRef supplied it). Cited DOIs are cleaned
-  # first, so a doi.org or journal URL around the same DOI is not a mismatch.
-  table$doi_mismatch <- !is.na(table$doi.orig) & nzchar(table$doi.orig) &
-    tolower(doi_clean(table$doi.orig)) != tolower(doi_clean(table$doi.match))
+  # first, so a doi.org or journal URL around the same DOI is not a mismatch,
+  # and the old double slash after the prefix ("10.1037//0022-3514...", common
+  # in APA references) is the same DOI as the single slash.
+  norm_doi <- \(x) tolower(sub("^(10\\.\\d+)//", "\\1/", doi_clean(x)))
+  doi_differs <- !is.na(table$doi.orig) & nzchar(table$doi.orig) &
+    norm_doi(table$doi.orig) != norm_doi(table$doi.match)
+  # A record found by looking up the cited DOI itself (add_bib_match() gives
+  # these no search score) that carries another DOI means the registry treats
+  # the cited DOI as an alias of it, e.g. after a journal moved publisher. The
+  # citation still finds the right work, so this is a note, not an incoherence.
+  # Only a record found by a title search, because the cited DOI could not be
+  # looked up, can show that the cited DOI is wrong.
+  table$doi_alias <- (doi_differs %in% TRUE) & is.na(table$score)
+  table$doi_mismatch <- doi_differs & !table$doi_alias
 
   # year: only flag when more than `year_tolerance` years apart (online-first
   # vs print publication routinely differ by a year and is not an incoherence)
@@ -237,7 +248,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
                         grepl(pattern, x, fixed = TRUE),
                       match_clean, clean_text, USE.NAMES = FALSE)
 
-    !is.na(charsim) & charsim < title_similarity & !in_text
+    # CrossRef often holds only the main title, without the subtitle the
+    # reference cites ("Marginally significant effects as evidence for
+    # hypotheses" for "...: Changing attitudes over four decades")
+    main_title <- !is.na(a) & !is.na(b) & nchar(b) >= 20 & startsWith(a, b)
+
+    !is.na(charsim) & charsim < title_similarity & !in_text & !main_title
   }
 
   # author check: do the leading author surnames from the retrieved record
@@ -257,10 +273,25 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
        }, error = \(e) return(NA))
      })
 
+     # Surnames are compared on their letters only, so spacing in particles
+     # and compound names ("Le Doux" and "LeDoux", or CrossRef's non-breaking
+     # space in "de Lange") does not matter. A surname also matches on its last
+     # word, because CrossRef sometimes has the given name in the family field
+     # ("Mike Burton") and citations shorten compound surnames ("Vafaei
+     # Shooshtari" cited as "Shooshtari").
+     letters_only <- \(x) gsub("[^a-z]", "", clean(x))
      mapply(\(l, o) {
        if (length(l) == 0 || all(is.na(l))) return(FALSE)  # nothing to check
+       # no cited authors were read from the reference: unknown, not a mismatch
+       if (length(o) == 0 || all(is.na(o)) || !nzchar(trimws(paste(o, collapse = "")))) return(FALSE)
        l <- utils::head(l[!is.na(l)], max_authors)
-       found <- sapply(l, \(x) grepl(clean(x), clean(o), fixed = TRUE))
+       o <- letters_only(paste(o, collapse = " "))
+       found <- vapply(l, \(x) {
+         full <- letters_only(x)
+         last <- letters_only(sub(".*[[:space:]\u00a0]", "", x))
+         (nzchar(full) && grepl(full, o, fixed = TRUE)) ||
+           (nzchar(last) && grepl(last, o, fixed = TRUE))
+       }, logical(1))
        !all(found)
      }, last_names, table$authors.orig)
   }
@@ -366,7 +397,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     # an unresolved cited DOI has no record to compare against
     if (r$tier == "unresolved") {
       return(sprintf(
-        "<b>DOI:</b> the cited DOI %s could not be found in CrossRef",
+        "<b>DOI:</b> the cited DOI %s could not be found",
         strike(r$doi.orig)))
     }
     parts <- c(
@@ -404,6 +435,20 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     incoherent_report <- scroll_table(out, 5, colwidths = c(.45, .4, .15))
   }
 
+  ## cited DOIs that are aliases of the record's DOI ----
+  alias_rows <- table[table$doi_alias %in% TRUE, ]
+  alias_report <- NULL
+  if (nrow(alias_rows) > 0) {
+    out <- data.frame(
+      Reference = alias_rows$text,
+      `Cited DOI` = alias_rows$doi.orig,
+      `Current DOI` = link(paste0("https://doi.org/", alias_rows$doi.match),
+                           alias_rows$doi.match),
+      check.names = FALSE
+    )
+    alias_report <- scroll_table(out, 5, colwidths = c(.6, .2, .2))
+  }
+
   ## references without a DOI (could not be checked) ----
   nodoi_rows <- table[table$no_doi %in% TRUE & !is.na(table$text), ]
   nodoi_report <- NULL
@@ -433,6 +478,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       c("### Incoherent references\n",
         "The cited details of these references do not match the record their DOI points to.\n",
         incoherent_report),
+    if (!is.null(alias_report))
+      c("### DOIs that have a newer form\n",
+        "These references cite a DOI that the registry now lists as an alias of another DOI, for example after the journal moved to a new publisher. The cited DOI still leads to the right work, so this is not an error, but citing the current DOI is more robust.\n",
+        alias_report),
     if (!is.null(nodoi_report))
       c("### References without a DOI\n",
         "These references have no DOI, so they could not be checked here, and they also cannot be checked by the other reference modules (retraction, PubPeer, and replication checks all rely on the DOI). We searched CrossRef for a matching DOI; where a confident match was found it is suggested below. We recommend adding a DOI to every reference that has one: it lets these checks run and makes each cited work easier to find and verify.\n",
