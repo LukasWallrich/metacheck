@@ -298,8 +298,10 @@ test_that("ref_accuracy accepts a cited DOI written as a URL", {
   expect_false(tbl$doi_mismatch[row])
   expect_false(tbl$incoherent[row])
 
-  # a genuinely different DOI is still flagged
+  # a genuinely different DOI is still flagged (the record was found by a
+  # title search; a record found by the cited DOI itself is an alias)
   p$bib$doi[i] <- "https://doi.org/10.1037/0003-066x.54.6.409"
+  p$bib_match$score[1] <- 80
   tbl <- module_run(p, "ref_accuracy")$table
   expect_true(tbl$doi_mismatch[row])
   expect_true(tbl$incoherent[row])
@@ -312,6 +314,94 @@ test_that("ref_accuracy accepts a cited DOI written as a URL", {
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_false(grepl("doi.org/https", report, fixed = TRUE))
   expect_match(report, paste0("https://doi.org/", doi), fixed = TRUE)
+})
+
+test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differences", {
+  # bib 1 (Eagly & Wood 1999) cites its own DOI and matches its record; each
+  # case changes the citation or the record and runs the module on it
+  base <- demopaper()
+  i <- match(1, base$bib$bib_id)
+  m <- match(1, base$bib_match$bib_id)
+  run <- function(edit) {
+    p <- edit(base)
+    tbl <- module_run(p, "ref_accuracy")$table
+    as.list(tbl[tbl$bib_id == 1, ])
+  }
+  expect_false(run(identity)$incoherent)
+
+  # errors that should be discovered, with the field that shows them
+  errors <- list(
+    year = \(p) { p$bib$year[i] <- 2004L; p },
+    container = \(p) { p$bib$container[i] <- "Journal of Experimental Social Psychology"; p },
+    # the title as parsed and in the reference text, which the module also
+    # searches for the record's title
+    title = \(p) {
+      new <- "Gender differences in moral judgement: A meta-analysis"
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
+    author = \(p) { p$bib$authors[i] <- "Smith, John; Wood, Wendy"; p },
+    # a misspelled author, as in "Bernsten" for "Berntsen"
+    author = \(p) { p$bib$authors[i] <- "Eagley, Alice H; Wood, Wendy"; p },
+    # the DOI of another paper: its record disagrees with the citation
+    title = \(p) {
+      p$bib$doi[i] <- base$bib_match$doi[2]
+      p$bib_match[m, setdiff(names(p$bib_match), "bib_id")] <-
+        base$bib_match[2, setdiff(names(p$bib_match), "bib_id")]
+      p
+    },
+    # a DOI that was only matched by a title search and points elsewhere
+    doi = \(p) { p$bib$doi[i] <- "10.1037/0003-066x.54.6.409"; p$bib_match$score[m] <- 80; p },
+    # a fabricated DOI that does not resolve
+    unresolved = \(p) { p$bib$doi[i] <- "10.1037/0003-066x.99.9.999"; p$bib_match <- p$bib_match[-m, ]; p }
+  )
+  for (k in seq_along(errors)) {
+    field <- names(errors)[k]
+    r <- run(errors[[k]])
+    expect_true(r$incoherent, label = paste("error", k, field))
+    if (field == "unresolved") {
+      expect_equal(r$tier, "unresolved")
+    } else {
+      expect_true(r[[paste0(field, "_mismatch")]], label = paste("error", k, field))
+    }
+  }
+
+  # cosmetic differences that should not be flagged
+  fine <- list(
+    doi_url = \(p) { p$bib$doi[i] <- "https://doi.org/10.1037/0003-066X.54.6.408"; p },
+    doi_double_slash = \(p) { p$bib$doi[i] <- "10.1037//0003-066x.54.6.408"; p },
+    year_online_first = \(p) { p$bib$year[i] <- 2000L; p },
+    journal_abbreviated = \(p) { p$bib$container[i] <- "Am. Psychol."; p },
+    # the record has only the main title, and a line-break hyphen in the
+    # reference text ("Dif- ferences") hides it there
+    subtitle_not_in_record = \(p) {
+      p$bib_match$title[m] <- "The Origins of Sex Differences in Human Behavior"
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub("Differences", "Dif- ferences", p$text$text[j], fixed = TRUE)
+      p
+    },
+    particle_spacing = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "Le Eagly"
+      p$bib$authors[i] <- "LeEagly, Alice H; Wood, Wendy"; p
+    },
+    nonbreaking_space = \(p) {
+      p$bib_match$authors[[m]]$family[2] <- "de\u00a0Wood"
+      p$bib$authors[i] <- "Eagly, Alice H; De Wood, Wendy"; p
+    },
+    given_name_in_family = \(p) { p$bib_match$authors[[m]]$family[1] <- "Alice Eagly"; p },
+    no_authors_read = \(p) { p$bib$authors[i] <- ""; p }
+  )
+  for (k in names(fine)) {
+    expect_false(run(fine[[k]])$incoherent, label = k)
+  }
+
+  # a cited DOI that the registry lists as an alias of the record's DOI is a
+  # note, not an incoherence
+  r <- run(\(p) { p$bib_match$doi[m] <- "10.1037/alias-of-the-cited"; p })
+  expect_true(r$doi_alias)
+  expect_false(r$incoherent)
 })
 
 test_that("ref_pubpeer counts a DOI cited three times once, and runs without url fields (U118)", {
