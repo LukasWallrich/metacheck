@@ -14,15 +14,15 @@
 #'
 #' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch). DOIs are compared after removing URL wrappers (`https://doi.org/`, journal article URLs), spaces and trailing punctuation left by the PDF, and the old double slash after the prefix (`10.1037//`). When the record was found by looking up the cited DOI (it has no search score), a record with a different DOI means the registry lists the cited DOI as an alias (for example after a journal moved publisher); this is reported as a note with the current DOI, not as an incoherence. A DOI mismatch is therefore only flagged when the record came from a title search. Papers read from bibr 12.x exports do not record how a record was found, so for them a different DOI is always a mismatch.
 #' - **Year** — flagged when the cited year is more than `year_tolerance` years from the record (online-first and print years routinely differ by one year, so this is allowed by default).
-#' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", and "the" are treated as equivalent, and the words of the shorter name only need to appear in order in the longer one, because words are often lost in reading the PDF. A one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience"), but a longer name contained in another journal's name is accepted ("Journal of Experimental Psychology" for "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
+#' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", "the", and British and American spellings ("Behaviour" and "Behavior", "Paediatrics" and "Pediatrics") are treated as equivalent, and the words of the shorter name only need to appear in order in the longer one, because words are often lost in reading the PDF. A one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience"), but a longer name contained in another journal's name is accepted ("Journal of Experimental Psychology" for "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
 #' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits) while still catching a genuinely different title. A title is also accepted when the record's title appears in the reference text as whole words ending at a title delimiter, for references whose title was not read correctly from the PDF. A cited title that begins with the record's title, followed by a title delimiter (":", "?", "." or "!"), is accepted, because the record often holds only the main title without the subtitle; the cited subtitle is then not checked.
-#' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list. Only the leading authors are required because author lists are routinely truncated with "et al.". The cited authors are read one person at a time, and each record surname must equal one cited surname, compared on its letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match). When one of the two is a single word, it may also match the other's last word, for shortened compound surnames and particles ("Vafaei Shooshtari" cited as "Shooshtari", "Gelder" cited as "De Gelder"). A cited name without a comma is read as given name first, and the record surname must equal its last word or words. Papers read from bibr 12.x exports keep each author list as printed ("Adam, H., Shirako, A., & Maddux, W. W"), so for them each record surname only needs to appear somewhere in the cited list. A reference whose authors could not be read is not flagged. A cited list truncated with "et al." before `max_authors` authors is flagged.
+#' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list. Only the leading authors are required because author lists are routinely truncated with "et al.". The cited authors are read one person at a time, and each record surname must equal one cited surname, compared on its letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match). When one of the two is a single word, it may also match the other's last word, for shortened compound surnames and particles ("Vafaei Shooshtari" cited as "Shooshtari", "Gelder" cited as "De Gelder"); the last word is also taken after a hyphen or an elided particle ("Purdie-Vaughns" cited as "Vaughns", "O'Connell" read from the PDF as "Connell"). A cited name without a comma is read as given name first, and the record surname must equal its last word or words. Papers read from bibr 12.x exports keep each author list as printed ("Adam, H., Shirako, A., & Maddux, W. W"), so for them each record surname only needs to appear somewhere in the cited list. A reference whose authors could not be read is not flagged. A cited list truncated with "et al." before `max_authors` authors is flagged.
 #'
 #' A mismatched DOI, journal or year flags a reference on its own, although journal and year flags also often come from imperfect PDF parsing (an article number read as the journal, two references merged) or from the registry naming or dating the same work differently (a renamed journal, a handbook's series name, an online-first year). Title and author mismatches are governed by `min_mismatches`: the default (1) flags a reference when either the title or the authors disagree. Set `min_mismatches = 2` to be more conservative and require both to disagree (fewer false positives, lower recall).
 #'
 #' The report lists each incoherent reference with the specific cited value struck through and the record's value beside it, so the discrepancy is visible at a glance.
 #'
-#' <validation>In an evaluation on 30 randomly sampled Psychological Science papers (October 2026; 1,269 references, 554 of which printed their own DOI), the module flagged 14 references in 11 papers (2.5% of the checked references; 8 at min_mismatches = 2). Checked by hand, 2 were genuine citation errors (a misspelled and a wrong author name), 2 were unclear, and the rest came from imperfect reading of the reference from the PDF (two references merged, "O'Connell" read as "Connell", a DOI cut short, a note read as the journal), from the registry naming or dating the same work differently (a renamed journal, an online-first year), or from a correct data DOI registered with DataCite rather than CrossRef, which therefore could not be found. A flag should therefore be read as "check this reference against the original source", not as a confirmed error. This evaluation cannot show how many citation errors the module misses. The package tests change one field of a correct reference at a time (year, journal, title, authors, another paper's DOI, a DOI that does not resolve) and the module flags each of these, but that does not establish a detection rate for real errors. An earlier validation of a previous version reported that about 8% of checked references were flagged at min_mismatches = 1 and 3% at min_mismatches = 2, and that 96-100% of deliberately corrupted journals and years were caught. In the 30 papers, CrossRef found a match confident enough to suggest its DOI for 525 of the 715 references that printed no DOI.</validation>
+#' <validation>In an evaluation on 30 randomly sampled Psychological Science papers (October 2026; 1,269 references, 554 of which printed their own DOI), the module flagged 11 references in 11 papers (2.0% of the checked references; 8 at min_mismatches = 2). Checked by hand, 2 were genuine citation errors (a misspelled and a wrong author name), 2 were unclear, and the rest came from imperfect reading of the reference from the PDF (two references merged, a DOI cut short, a note read as the journal), from the registry naming or dating the same work differently (a renamed journal, an online-first year), or from a correct data DOI registered with DataCite rather than CrossRef, which therefore could not be found. A flag should therefore be read as "check this reference against the original source", not as a confirmed error. This evaluation cannot show how many citation errors the module misses. The package tests change one field of a correct reference at a time (year, journal, title, authors, another paper's DOI, a DOI that does not resolve) and the module flags each of these, but that does not establish a detection rate for real errors. An earlier validation of a previous version reported that about 8% of checked references were flagged at min_mismatches = 1 and 3% at min_mismatches = 2, and that 96-100% of deliberately corrupted journals and years were caught. In the 30 papers, CrossRef found a match confident enough to suggest its DOI for 525 of the 715 references that printed no DOI.</validation>
 #'
 #' @keywords reference
 #'
@@ -147,35 +147,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   year_diff <- abs(as.numeric(table$year.orig) - as.numeric(table$year.match))
   table$year_mismatch <- !is.na(year_diff) & year_diff > year_tolerance
 
-  # fold accented Latin letters to plain ASCII so that e.g. "Gredebäck" and
-  # "Gredeback" are treated as the same name and diacritics never cause a
-  # mismatch on their own. Done in base R (no locale-dependent iconv): multi-
-  # character cases first, then a 1:1 chartr table built so the from/to strings
-  # cannot drift out of sync.
-  accent_map <- c(
-    a = "àáâãäåāăą",
-    c = "çćčĉċ", d = "ďð",
-    e = "èéêëēėęě",
-    g = "ğĝġģ", i = "ìíîïįĩ",
-    l = "ĺļľ", n = "ñńňņ",
-    o = "òóôõöōőŏ",
-    r = "ŕřŗ", s = "śšşŝș",
-    t = "ťţț", u = "ùúûüūůűŭ",
-    y = "ýÿŷ", z = "źżž"
-  )
-  accent_from <- paste(accent_map, collapse = "")
-  accent_to <- paste(mapply(\(base, ch) strrep(base, nchar(ch)),
-                            names(accent_map), accent_map), collapse = "")
-  deaccent <- \(x) {
-    x <- gsub("ß", "ss", x)   # eszett
-    x <- gsub("æ", "ae", x)   # ae ligature
-    x <- gsub("œ", "oe", x)   # oe ligature
-    x <- gsub("đ", "d", x)    # d with stroke
-    x <- gsub("ł", "l", x)    # l with stroke
-    x <- gsub("ø", "o", x)    # o with stroke
-    x <- gsub("ı", "i", x)    # dotless i
-    chartr(accent_from, accent_to, x)
-  }
+  # fold accented Latin letters to plain ASCII ("Gredebäck" and "Gredeback",
+  # "Nguyễn" and "Nguyen", "Þórsson" and "Thorsson"), so that diacritics never
+  # cause a mismatch on their own
+  deaccent <- \(x) stringi::stri_trans_general(x, "Latin-ASCII")
 
   # clean up text to prevent irrelevant mismatches
   clean <- \(x) {
@@ -202,11 +177,24 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # longer one: "Nature" is not "Nature Neuroscience". A two-word name that
   # another journal's name contains ("Psychological Science" in "Current
   # Directions in Psychological Science") is still accepted.
+  # British and American spellings of the same word ("Behaviour" and
+  # "Behavior", "Paediatrics" and "Pediatrics", "Organisation" and
+  # "Organization", "Centre" and "Center", "Modelling" and "Modeling") are
+  # folded the same way on both sides, so an abbreviation stays a prefix
+  uk_us <- \(w) {
+    w <- gsub("our", "or", w, fixed = TRUE)
+    w <- gsub("(?<=[a-z])(ae|oe)", "e", w, perl = TRUE)
+    w <- gsub("is(e|ed|es|ing|ation|ations)$", "iz\\1", w)
+    w <- gsub("tre$", "ter", w)
+    w <- gsub("ll", "l", w, fixed = TRUE)
+    sub("^programme", "program", w)
+  }
   journal_tokens <- \(x) {
     x <- clean(x)
     x <- gsub("&amp;|&", " and ", x)
     x <- gsub("[^a-z ]", " ", x)
     toks <- strsplit(trimws(gsub("\\s+", " ", x)), " ")[[1]]
+    toks <- uk_us(toks)
     toks[!toks %in% c("of","and","the","for","in","on","a","an","de","") &
            nchar(toks) > 0]
   }
@@ -268,7 +256,8 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     # also accept when the record title appears verbatim in the reference text
     # (handles cases where GROBID failed to split the title out of the
     # citation), as whole words ("behavior" is not found in "behaviorism" or
-    # "misbehavior") and ending at a title delimiter, so that a cited title
+    # "misbehavior") and ending at a title delimiter or at the bracket of an
+    # APA description ("(Version 1.0.0) [Computer code]"), so that a cited title
     # that continues ("Origins" in "The origins of ...") or a journal name
     # followed by its volume is not taken for the title.
     clean_text <- clean(table$text)
@@ -277,7 +266,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     in_text <- mapply(\(pattern, x) !is.na(pattern) && nzchar(pattern) &&
                         grepl(pattern, x, fixed = TRUE) &&
                         grepl(paste0("(^|[^a-z0-9])", escape(pattern),
-                                     if (grepl("[:?.!]$", pattern)) "" else "\\s*($|[:?.!])"),
+                                     if (grepl("[:?.!]$", pattern)) "" else "\\s*($|[:?.!(\\[])"),
                               x, perl = TRUE),
                       match_clean, clean_text, USE.NAMES = FALSE)
 
@@ -335,13 +324,18 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
      # people reliably, so there each record surname is looked for anywhere in
      # the cited list.
      letters_only <- \(x) gsub("[^a-z]", "", clean(x))
+     # the last part of a surname, after a space, a hyphen or an elided
+     # particle: "O'Connell" read from the PDF as "Connell", "Purdie-Vaughns"
+     # cited as "Vaughns"
+     last_part <- \(x) letters_only(
+       sub(".*([[:space:]\u00a0\u2010-]|\\b[DdLlOo]['\u2019])", "", x, perl = TRUE))
      cited_surnames <- \(o) {
        people <- trimws(strsplit(paste(o, collapse = ";"), ";", fixed = TRUE)[[1]])
        people <- people[nzchar(people)]
        family <- trimws(sub(",.*", "", people))
        has_comma <- grepl(",", people, fixed = TRUE)
        list(name = letters_only(family),
-            last = letters_only(sub(".*[[:space:]\u00a0]", "", family)),
+            last = last_part(family),
             one_word = has_comma & !grepl("[[:space:]\u00a0]", family),
             given_first = !has_comma,
             # "Alice Brown Jones" ends in "jones", "brownjones", ...
@@ -365,7 +359,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
        cs <- cited_surnames(o)
        found <- vapply(l, \(x) {
          full <- letters_only(x)
-         last <- letters_only(sub(".*[[:space:]\u00a0]", "", x))
+         last <- last_part(x)
          if (!nzchar(full)) return(TRUE)
          record_one_word <- !grepl("[[:space:]\u00a0]", trimws(x))
          any(cs$name == full) ||
@@ -407,11 +401,6 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # no_match: the reference could not be matched to a retrieved record (kept for
   # downstream modules such as ref_summary that group on it)
   table$no_match <- !has_record
-  # only a reference that printed its own DOI is compared with its record, so
-  # the field mismatches are FALSE for the others (ref_summary reports them)
-  for (col in grep("_mismatch$", names(table), value = TRUE)) {
-    table[[col]] <- table[[col]] %in% TRUE & table$tier == "provided"
-  }
 
   # incoherence: cited details disagree with the record the reference's OWN DOI
   # points to. We only flag references in the "provided" tier (the reference
@@ -448,6 +437,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
                       suggest_score, suggest_score / 100)
   table$doi_suggested <- table$tier == "crossref" & !is.na(table$score) &
     table$score >= min_score & !is.na(table$doi.match) & nzchar(table$doi.match)
+  # only a reference that printed its own DOI is compared with its record, so
+  # the field mismatches are FALSE for the others (ref_summary reports them)
+  for (col in grep("_mismatch$", names(table), value = TRUE)) {
+    table[[col]] <- table[[col]] %in% TRUE & table$tier == "provided"
+  }
   summary_table <- dplyr::summarise(table,
     .by = paper_id,
     refs_checked  = sum(tier %in% c("provided", "unresolved"), na.rm = TRUE),

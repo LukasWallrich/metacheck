@@ -455,6 +455,39 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$authors[i] <- "Turcanu, Alice H; Wood, Wendy"; p
     },
     given_first = \(p) { p$bib$authors[i] <- "Alice H Eagly; Wendy Wood"; p },
+    vietnamese = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "Nguy\u1ec5n"
+      p$bib$authors[i] <- "Nguyen, Alice H; Wood, Wendy"; p
+    },
+    icelandic = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "\u00de\u00f3rsson"
+      p$bib$authors[i] <- "Thorsson, Alice H; Wood, Wendy"; p
+    },
+    # "O'Connell" read from the PDF as "Connell"
+    elided_particle = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "O\u2019Eagly"
+      p$bib$authors[i] <- "Eagly, Alice H; Wood, Wendy"; p
+    },
+    hyphen_part = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "Purdie-Eagly"
+      p$bib$authors[i] <- "Eagly, Alice H; Wood, Wendy"; p
+    },
+    # the record's title in the reference text, followed by an APA description
+    software_version = \(p) {
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$bib_match$title[m] <- "The origins of sex differences in human behavior"
+      p$text$text[j] <- sub(p$bib$title[i], "The origins of sex differences in human behavior (Version 1.0.0) [Computer code]", p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- "The origins of sex differences in human behavior (Version 1.0.0) [Computer code]. Zenodo"
+      p
+    },
+    british_spelling = \(p) {
+      p$bib_match$container[m] <- "Nature Human Behaviour"
+      p$bib$container[i] <- "Nat. Hum. Behav."; p
+    },
+    american_spelling = \(p) {
+      p$bib_match$container[m] <- "Journal of Paediatric Behaviour and Organisation"
+      p$bib$container[i] <- "Journal of Pediatric Behavior and Organization"; p
+    },
     journal_subtitle = \(p) { p$bib_match$container[m] <- "American Psychologist: Official Journal"; p },
     journal_words_lost = \(p) { p$bib_match$container[m] <- "Journal of the American Psychologist"; p },
     # the record drops the particle the citation keeps

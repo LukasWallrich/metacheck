@@ -86,6 +86,7 @@ Imports:
     rappdirs,
     tidytext,
     statcheck,
+    stringi,
     base64enc,
     gitcreds, 
     roxygen2, 
