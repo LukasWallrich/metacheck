@@ -124,6 +124,18 @@ test_that(".file_tree_from_report and .file_tree", {
   expect_null(.file_tree(list()))
 })
 
+test_that(".file_tree_drop_from_report", {
+  report <- c("Intro", "#### Data Tree", "legend", "tree", "#### Data Files", "x")
+  expect_equal(.file_tree_drop_from_report(report), c("Intro", "#### Data Files", "x"))
+  # a tree at the end, and a heading with nothing under it
+  expect_equal(.file_tree_drop_from_report(c("Intro", "#### Data Tree", "tree")), "Intro")
+  expect_equal(.file_tree_drop_from_report(c("Intro", "#### Data Tree")), "Intro")
+  # nothing to drop
+  expect_equal(.file_tree_drop_from_report(c("Intro", "#### Data Files")),
+               c("Intro", "#### Data Files"))
+  expect_null(.file_tree_drop_from_report(NULL))
+})
+
 test_that(".file_tree_block names a local folder by its own name (Lakens/tue_datamanager_check#5, item 2)", {
   files <- data.frame(
     repo_url = "/data/metacheck_storage/metacheck-api-jobs/1a2b3c/repo/my_study",

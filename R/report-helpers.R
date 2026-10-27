@@ -45,7 +45,10 @@
 #' (markdown) gets a section of its own, under its title, after the results
 #' and before "More detail", with its report folded at the end; its check
 #' then links to that section instead of folding the report.
-#' `reproducibility_check` gives one when it ran the code.
+#' `reproducibility_check` gives one when it ran the code. When
+#' `data_check` or `repo_check` ran, the repository's file tree follows in a
+#' section "Files in the repository", shown open; `data_check`'s folded
+#' report then leaves the tree out.
 #'
 #' @param report_type if one of `"full"`, `"brief"`, `"simple"`,
 #'   `"simple_brief"` or `"checklist"`, sets the report type; `NULL` (the
