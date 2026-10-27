@@ -99,6 +99,7 @@ Imports:
     rvest,
     tidytext,
     statcheck,
+    stringi,
     base64enc,
     gitcreds, 
     roxygen2, 
