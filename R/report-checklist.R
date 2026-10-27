@@ -36,7 +36,10 @@
       checks <- as.data.frame(checks)
     } else {
       tl <- mo$traffic_light %||% "info"
-      report <- paste(mo$report %||% "", collapse = "\n\n")
+      report <- mo$report %||% ""
+      # data_check's file tree has a section of its own (.checklist_file_tree())
+      if (identical(mo$module, "data_check")) report <- .file_tree_drop_from_report(report)
+      report <- paste(report, collapse = "\n\n")
       summary <- paste(mo$summary_text %||% "", collapse = "\n\n")
       details <- if (tl == "fail" || report == summary) "" else report
       found <- if (tl == "fail") {
@@ -108,6 +111,15 @@
           collapse = "\n\n")
   }, character(1))
   secs[nzchar(secs)]
+}
+
+# The repository's file tree, open in a section of its own: data_check's tree,
+# else one drawn from repo_check's files (see .file_tree()), as in the
+# repository apps' brief report. NULL when no repository was checked.
+.checklist_file_tree <- function(module_output) {
+  tree <- .file_tree(module_output)
+  if (is.null(tree)) return(NULL)
+  paste(c("## Files in the repository {#files}", tree), collapse = "\n\n")
 }
 
 # A check's folded details: <details> with its summary line. `title` falls
@@ -280,6 +292,7 @@
     .checklist_counts(checks),
     unlist(sections),
     .checklist_module_sections(module_output),
+    .checklist_file_tree(module_output),
     more
   )
   paste(head,

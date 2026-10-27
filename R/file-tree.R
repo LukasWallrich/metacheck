@@ -296,9 +296,10 @@
     unlist(sections))
 }
 
-# The "#### Data Tree" part of a report (data_check's), without its heading.
-# NULL when the report has no tree.
-.file_tree_from_report <- function(report) {
+# Where the "#### Data Tree" part of a report (data_check's) starts and ends:
+# the index of its heading and of its last element. NULL when the report has
+# no tree.
+.file_tree_report_range <- function(report) {
   if (is.null(report)) return(NULL)
   start <- which(report == "#### Data Tree")
   if (length(start) == 0) return(NULL)
@@ -306,8 +307,23 @@
   is_heading <- grepl("^#{1,4} ", report)
   after <- which(is_heading & seq_along(report) > start)
   end <- if (length(after) > 0) after[[1]] - 1 else length(report)
-  if (end <= start) return(NULL)
-  report[(start + 1):end]
+  c(start = start, end = end)
+}
+
+# The "#### Data Tree" part of a report (data_check's), without its heading.
+# NULL when the report has no tree.
+.file_tree_from_report <- function(report) {
+  range <- .file_tree_report_range(report)
+  if (is.null(range) || range[["end"]] <= range[["start"]]) return(NULL)
+  report[(range[["start"]] + 1):range[["end"]]]
+}
+
+# A report (data_check's) without its "#### Data Tree" part, heading
+# included: the checklist report shows the tree in a section of its own.
+.file_tree_drop_from_report <- function(report) {
+  range <- .file_tree_report_range(report)
+  if (is.null(range)) return(report)
+  report[-(range[["start"]]:range[["end"]])]
 }
 
 # The file tree of a run, without its heading: data_check's (which also lists
