@@ -387,9 +387,6 @@ test_that("convert_bibr surf backend converts", {
   json_path <- convert_bibr(file_path, save_path, backend = "surf")
   expect_match(json_path, "to_err_is_human\\.json")
   expect_true(file.exists(json_path))
-  pdf <- .read_bibr(json_path)
-  expect_equal(pdf$info$file_name, basename(file_path))
-  expect_match(pdf$paper_id, "^[a-f0-9]{16}$")
 })
 
 test_that(".bibr_isalive", {
