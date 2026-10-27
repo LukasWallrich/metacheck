@@ -134,8 +134,9 @@ test_that("ref_accuracy scores bibr 12.x matches 0-1", {
   mo <- module_run(paper, "ref_accuracy")
   expect_match(paste(mo$report, collapse = "\n"), "10.1234/prior", fixed = TRUE)
 
-  # for an older paper, 0.98 is far below the default suggest_score of 70
-  paper$info$schema_version <- NA_character_
+  # after add_bib_match() refreshes the paper, its scores are CrossRef
+  # relevance scores: 60 is below the default suggest_score of 70
+  paper$bib_match$score <- 60
   mo <- module_run(paper, "ref_accuracy")
   expect_no_match(paste(mo$report, collapse = "\n"), "10.1234/prior",
                   fixed = TRUE)

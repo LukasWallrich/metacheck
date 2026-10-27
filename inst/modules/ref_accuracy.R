@@ -8,21 +8,21 @@
 #'
 #' The module uses the `bib_match` table, which holds the metadata retrieved from CrossRef for each reference (added or refreshed with `add_bib_match()`, which makes live network calls).
 #'
-#' **Only references that supply their own DOI are checked.** For these, we look up the record that exact DOI points to and compare it field by field against what the paper cites. A reference with no DOI is *not* checked: the only record we could find for it comes from a CrossRef title search, which often returns the wrong paper, so any "mismatch" would be CrossRef's error rather than the citation's. References without a DOI are instead listed separately, with a recommendation to add a DOI where one exists. For those, a suggested DOI is offered only when CrossRef found a high-confidence match (controlled by `suggest_score`).
+#' **Only references that supply their own DOI are checked.** For these, we compare what the paper cites field by field against the record found for that DOI. `add_bib_match()` looks up a cited DOI directly when it is valid as printed; a DOI that is not (for example one broken by a space from the PDF) is matched by a title search instead. A cited DOI with no record at all is flagged as a DOI that could not be found: `bib_match` does not record why a lookup found nothing, so this includes lookups that failed for network reasons (`add_bib_match()` reports those when it runs) and DOIs registered outside CrossRef. References in papers that were not looked up at all are not checked. A reference with no DOI is *not* checked: the only record we could find for it comes from a CrossRef title search, which often returns the wrong paper, so any "mismatch" would be CrossRef's error rather than the citation's. References without a DOI are instead listed separately, with a recommendation to add a DOI where one exists. For those, a suggested DOI is offered only when CrossRef found a high-confidence match (controlled by `suggest_score`).
 #'
 #' For each checked reference we compare five fields against the DOI's record:
 #'
-#' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch). DOIs are compared after removing URL wrappers (`https://doi.org/`, journal article URLs), spaces and trailing punctuation left by the PDF, and the old double slash after the prefix (`10.1037//`). When the cited DOI is a valid DOI, `add_bib_match()` looked up the record by that DOI, so a record with a different DOI means the registry lists the cited DOI as an alias (for example after a journal moved publisher); this is reported as a note with the current DOI, not as an incoherence. A DOI mismatch is therefore only flagged when the cited DOI could not be looked up and the record came from a title search. Papers read from bibr 12.x exports do not record how a record was found, so for them a different DOI is always a mismatch.
+#' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch). DOIs are compared after removing URL wrappers (`https://doi.org/`, journal article URLs), spaces and trailing punctuation left by the PDF, and the old double slash after the prefix (`10.1037//`). When the record was found by looking up the cited DOI (it has no search score), a record with a different DOI means the registry lists the cited DOI as an alias (for example after a journal moved publisher); this is reported as a note with the current DOI, not as an incoherence. A DOI mismatch is therefore only flagged when the record came from a title search. Papers read from bibr 12.x exports do not record how a record was found, so for them a different DOI is always a mismatch.
 #' - **Year** — flagged when the cited year is more than `year_tolerance` years from the record (online-first and print years routinely differ by one year, so this is allowed by default).
-#' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", and "the" are treated as equivalent. The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
-#' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits) while still catching a genuinely different title. A cited title that begins with the record's title, followed by a title delimiter (":", "?", "." or "!"), is accepted, because the record often holds only the main title without the subtitle; the cited subtitle is then not checked.
-#' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list. Only the leading authors are required because author lists are routinely truncated with "et al.". The cited authors are read one person at a time, and each record surname must equal one cited surname, compared on its letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match). When one of the two is a single word, it may also match the other's last word, for shortened compound surnames and particles ("Vafaei Shooshtari" cited as "Shooshtari", "Gelder" cited as "De Gelder"). A reference whose authors could not be read is not flagged. A cited list truncated with "et al." before `max_authors` authors is flagged.
+#' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", and "the" are treated as equivalent, and the words of the shorter name only need to appear in order in the longer one, because words are often lost in reading the PDF. A one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience"), but a longer name contained in another journal's name is accepted ("Journal of Experimental Psychology" for "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
+#' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits) while still catching a genuinely different title. A title is also accepted when the record's title appears in the reference text as whole words ending at a title delimiter, for references whose title was not read correctly from the PDF. A cited title that begins with the record's title, followed by a title delimiter (":", "?", "." or "!"), is accepted, because the record often holds only the main title without the subtitle; the cited subtitle is then not checked.
+#' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list. Only the leading authors are required because author lists are routinely truncated with "et al.". The cited authors are read one person at a time, and each record surname must equal one cited surname, compared on its letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match). When one of the two is a single word, it may also match the other's last word, for shortened compound surnames and particles ("Vafaei Shooshtari" cited as "Shooshtari", "Gelder" cited as "De Gelder"). A cited name without a comma is read as given name first, and the record surname must equal its last word or words. Papers read from bibr 12.x exports keep each author list as printed ("Adam, H., Shirako, A., & Maddux, W. W"), so for them each record surname only needs to appear somewhere in the cited list. A reference whose authors could not be read is not flagged. A cited list truncated with "et al." before `max_authors` authors is flagged.
 #'
 #' A mismatched DOI, journal or year flags a reference on its own, although journal and year flags also often come from imperfect PDF parsing (an article number read as the journal, two references merged) or from the registry naming or dating the same work differently (a renamed journal, a handbook's series name, an online-first year). Title and author mismatches are governed by `min_mismatches`: the default (1) flags a reference when either the title or the authors disagree. Set `min_mismatches = 2` to be more conservative and require both to disagree (fewer false positives, lower recall).
 #'
 #' The report lists each incoherent reference with the specific cited value struck through and the record's value beside it, so the discrepancy is visible at a glance.
 #'
-#' <validation>In an evaluation on 30 randomly sampled Psychological Science papers (October 2026; 1,269 references, 554 of which printed their own DOI), the module flagged 14 references in 11 papers (2.5% of the checked references; 8 at min_mismatches = 2). Checked by hand, 2 were genuine citation errors (a misspelled and a wrong author name), 2 were unclear, and the rest came from imperfect reading of the reference from the PDF (two references merged, "O'Connell" read as "Connell", a DOI cut short) or from the registry naming or dating the same work differently (a renamed journal, an online-first year). A flag should therefore be read as "check this reference against the original source", not as a confirmed error. This evaluation cannot show how many citation errors the module misses. The package tests change one field of a correct reference at a time (year, journal, title, authors, another paper's DOI, a DOI that does not resolve) and the module flags each of these, but that does not establish a detection rate for real errors. An earlier validation of a previous version reported that about 8% of checked references were flagged at min_mismatches = 1 and 3% at min_mismatches = 2, and that 96-100% of deliberately corrupted journals and years were caught. In the 30 papers, CrossRef found a match confident enough to suggest its DOI for 525 of the 715 references that printed no DOI.</validation>
+#' <validation>In an evaluation on 30 randomly sampled Psychological Science papers (October 2026; 1,269 references, 554 of which printed their own DOI), the module flagged 14 references in 11 papers (2.5% of the checked references; 8 at min_mismatches = 2). Checked by hand, 2 were genuine citation errors (a misspelled and a wrong author name), 2 were unclear, and the rest came from imperfect reading of the reference from the PDF (two references merged, "O'Connell" read as "Connell", a DOI cut short, a note read as the journal), from the registry naming or dating the same work differently (a renamed journal, an online-first year), or from a correct data DOI registered with DataCite rather than CrossRef, which therefore could not be found. A flag should therefore be read as "check this reference against the original source", not as a confirmed error. This evaluation cannot show how many citation errors the module misses. The package tests change one field of a correct reference at a time (year, journal, title, authors, another paper's DOI, a DOI that does not resolve) and the module flags each of these, but that does not establish a detection rate for real errors. An earlier validation of a previous version reported that about 8% of checked references were flagged at min_mismatches = 1 and 3% at min_mismatches = 2, and that 96-100% of deliberately corrupted journals and years were caught. In the 30 papers, CrossRef found a match confident enough to suggest its DOI for 525 of the 715 references that printed no DOI.</validation>
 #'
 #' @keywords reference
 #'
@@ -57,8 +57,8 @@
 #'   relevance score for a DOI found by title search to be offered as a
 #'   suggested DOI. Low-scoring matches are usually the wrong paper, so they are
 #'   not suggested. Raise to be more conservative, lower to suggest more.
-#'   Papers read from bibr 12.x exports score their matches 0-1, so for them
-#'   the score is compared with `suggest_score / 100`.
+#'   Scores of 1 or less, as bibr 12.x exports give, are on a 0-1 scale and
+#'   are compared with `suggest_score / 100`.
 #'
 #' @returns report list
 ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
@@ -105,16 +105,13 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # record. A reference that printed a DOI which does not resolve produces no
   # bib_match row; an inner join would silently drop it (and lose its cited
   # DOI), mislabelling it as a reference without a DOI.
+  # The CrossRef relevance score comes along: only a title search gives one.
   table <- dplyr::left_join(
-    bib[, cols], bib_match[, cols],
+    bib[, cols], bib_match[, c(cols, "score")],
     by = c("paper_id", "bib_id"),
     suffix = c(".orig", ".match")
   ) |>
-    dplyr::left_join(ref_table, by = c("paper_id", "bib_id")) |>
-    # carry the CrossRef relevance score, used to decide whether a DOI found by
-    # title search is trustworthy enough to suggest for a reference with no DOI
-    dplyr::left_join(bib_match[, c("paper_id", "bib_id", "score")],
-                     by = c("paper_id", "bib_id"))
+    dplyr::left_join(ref_table, by = c("paper_id", "bib_id"))
 
   # DOI: only flag when the reference itself printed a DOI that differs from
   # the matched record. A blank reference DOI is not a mismatch (the citer just
@@ -130,15 +127,17 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   }
   doi_differs <- !is.na(table$doi.orig) & nzchar(table$doi.orig) &
     norm_doi(table$doi.orig) != norm_doi(table$doi.match)
-  # add_bib_match() looks up every cited DOI that is valid once cleaned by that
-  # DOI. A record found that way that carries another DOI means the registry
-  # treats the cited DOI as an alias of it, e.g. after a journal moved
-  # publisher: the citation still finds the right work, so this is a note, not
-  # an incoherence. Only a record found by a title search, because the cited
-  # DOI could not be looked up, can show that the cited DOI is wrong. bibr 12.x
-  # exports do not record how a record was found, so there a different DOI
-  # stays a mismatch.
-  looked_up_by_doi <- doi_valid_format(doi_clean(table$doi.orig)) %in% TRUE &
+  # A record that add_bib_match() found by looking up the cited DOI has no
+  # search score. If it carries another DOI, the registry treats the cited DOI
+  # as an alias of it, e.g. after a journal moved publisher: the citation still
+  # finds the right work, so this is a note, not an incoherence. A record from
+  # a title search (it has a score) can show that the cited DOI is wrong; that
+  # is the route for a cited DOI that is not valid as printed, such as a DOI
+  # written as a URL before add_bib_match() cleaned DOIs. bibr 12.x exports do
+  # not record how a record was found (writing one drops the score), so there
+  # a different DOI stays a mismatch.
+  looked_up_by_doi <- is.na(table$score) &
+    doi_valid_format(doi_clean(table$doi.orig)) %in% TRUE &
     !table$paper_id %in% .bibr12_paper_ids(paper)
   table$doi_alias <- (doi_differs %in% TRUE) & looked_up_by_doi
   table$doi_mismatch <- doi_differs & !table$doi_alias
@@ -161,7 +160,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     l = "ĺļľ", n = "ñńňņ",
     o = "òóôõöōőŏ",
     r = "ŕřŗ", s = "śšşŝș",
-    t = "ťţ", u = "ùúûüūůűŭ",
+    t = "ťţț", u = "ùúûüūůűŭ",
     y = "ýÿŷ", z = "źżž"
   )
   accent_from <- paste(accent_map, collapse = "")
@@ -197,7 +196,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # "Journal of Personality and Social Psychology"), so a plain string compare
   # over-flags. We drop stop-words, then accept a name as coherent if its
   # significant tokens match the other name's tokens in sequence, allowing each
-  # abbreviated token to be a prefix of the full token.
+  # abbreviated token to be a prefix of the full token. Skipped words allow for
+  # words lost in reading the PDF ("Identity & Education" for "Journal of
+  # Language, Identity & Education"), but a one-word name does not match a
+  # longer one: "Nature" is not "Nature Neuroscience". A two-word name that
+  # another journal's name contains ("Psychological Science" in "Current
+  # Directions in Psychological Science") is still accepted.
   journal_tokens <- \(x) {
     x <- clean(x)
     x <- gsub("&amp;|&", " and ", x)
@@ -206,12 +210,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     toks[!toks %in% c("of","and","the","for","in","on","a","an","de","") &
            nchar(toks) > 0]
   }
-  # do the (possibly abbreviated) tokens of `a` match, in order, a subsequence-
-  # by-prefix of `b`'s tokens?
   journal_coherent <- \(a, b) {
     ta <- journal_tokens(a); tb <- journal_tokens(b)
     if (!length(ta) || !length(tb)) return(TRUE)        # unknown, don't flag
     if (length(ta) > length(tb)) { tmp <- ta; ta <- tb; tb <- tmp }
+    if (length(ta) == 1 && length(tb) > 1) return(FALSE)
     j <- 1L
     for (tok in ta) {
       hit <- FALSE
@@ -231,7 +234,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # article number read as the journal ("Article e17018") is not compared
   # either.
   article_number <- grepl("^(article\\s*)?e?\\d+$", trimws(tolower(table$container.orig)))
-  is_article <- table$bib_type.match %in% "article" | is.na(table$bib_type.match)
+  # bibr 12.x calls a journal article "journal_article"
+  is_article <- table$bib_type.match %in% c("article", "journal_article") |
+    is.na(table$bib_type.match)
   table$container_mismatch <- mapply(\(a, b, check) {
     if (!check || is.na(a) || is.na(b) || !nzchar(trimws(a)) || !nzchar(trimws(b)))
       return(FALSE)
@@ -248,8 +253,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     # footnote superscripts first: clean() removes the tags but keeps their
     # text, so this never matched after it and the markers stayed (U114)
     x <- gsub("<sup>.*?</sup>", "", x, ignore.case = TRUE, perl = TRUE)
-    x <- clean(x)                                 # lowercases, folds diacritics
-    x <- gsub("</?[a-z]+>", "", x)                # any other tags
+    x <- clean(x)                 # lowercases, strips tags, folds diacritics
     x <- gsub("[^a-z0-9]", "", x)                 # keep only alphanumerics
     x
   }
@@ -263,13 +267,18 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
 
     # also accept when the record title appears verbatim in the reference text
     # (handles cases where GROBID failed to split the title out of the
-    # citation), as whole words: "behavior" is not found in "behaviorism"
+    # citation), as whole words ("behavior" is not found in "behaviorism" or
+    # "misbehavior") and ending at a title delimiter, so that a cited title
+    # that continues ("Origins" in "The origins of ...") or a journal name
+    # followed by its volume is not taken for the title.
     clean_text <- clean(table$text)
     match_clean <- clean(table$title.match)
     escape <- \(x) gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
     in_text <- mapply(\(pattern, x) !is.na(pattern) && nzchar(pattern) &&
                         grepl(pattern, x, fixed = TRUE) &&
-                        grepl(paste0(escape(pattern), "($|[^a-z0-9])"), x, perl = TRUE),
+                        grepl(paste0("(^|[^a-z0-9])", escape(pattern),
+                                     if (grepl("[:?.!]$", pattern)) "" else "\\s*($|[:?.!])"),
+                              x, perl = TRUE),
                       match_clean, clean_text, USE.NAMES = FALSE)
 
     # CrossRef often holds only the main title, without the subtitle the
@@ -319,8 +328,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
      # field ("Mike Burton"), citations shorten compound surnames ("Vafaei
      # Shooshtari" cited as "Shooshtari"), and CrossRef sometimes drops the
      # particle that the citation keeps ("Gelder" cited as "De Gelder"). A
-     # cited name without a comma is taken as "Given Family" and matched on
-     # its end.
+     # cited name without a comma is taken as "Given Family": the record
+     # surname must equal its last word or words ("Wood" is not found in
+     # "John Blackwood"). bibr 12.x exports keep the author list as printed
+     # ("Adam, H., Shirako, A., & Maddux, W. W"), which cannot be split into
+     # people reliably, so there each record surname is looked for anywhere in
+     # the cited list.
      letters_only <- \(x) gsub("[^a-z]", "", clean(x))
      cited_surnames <- \(o) {
        people <- trimws(strsplit(paste(o, collapse = ";"), ";", fixed = TRUE)[[1]])
@@ -330,13 +343,25 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
        list(name = letters_only(family),
             last = letters_only(sub(".*[[:space:]\u00a0]", "", family)),
             one_word = has_comma & !grepl("[[:space:]\u00a0]", family),
-            given_first = !has_comma)
+            given_first = !has_comma,
+            # "Alice Brown Jones" ends in "jones", "brownjones", ...
+            ends = lapply(family, \(f) {
+              w <- letters_only(strsplit(f, "[[:space:]\u00a0]+")[[1]])
+              w <- w[nzchar(w)]
+              vapply(seq_along(w), \(k) paste(utils::tail(w, k), collapse = ""), "")
+            }))
      }
-     mapply(\(l, o) {
+     bibr <- table$paper_id %in% .bibr12_paper_ids(paper)
+     mapply(\(l, o, as_printed) {
        if (length(l) == 0 || all(is.na(l))) return(FALSE)  # nothing to check
        # no cited authors were read from the reference: unknown, not a mismatch
        if (length(o) == 0 || all(is.na(o)) || !nzchar(trimws(paste(o, collapse = "")))) return(FALSE)
        l <- utils::head(l[!is.na(l)], max_authors)
+       if (as_printed) {
+         cited <- letters_only(paste(o, collapse = " "))
+         return(!all(vapply(l, \(x) grepl(letters_only(x), cited, fixed = TRUE),
+                            logical(1))))
+       }
        cs <- cited_surnames(o)
        found <- vapply(l, \(x) {
          full <- letters_only(x)
@@ -346,37 +371,47 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
          any(cs$name == full) ||
            any(cs$one_word & cs$name == last) ||
            (record_one_word && any(!cs$given_first & cs$last == full)) ||
-           any(cs$given_first & (endsWith(cs$name, full) |
-                                   (nzchar(last) & endsWith(cs$name, last))))
+           any(cs$given_first & vapply(cs$ends, \(e) full %in% e, logical(1)))
        }, logical(1))
        !all(found)
-     }, last_names, table$authors.orig)
+     }, last_names, table$authors.orig, bibr)
   }
 
   # tier: how did we get the record we are checking against?
   #  "provided"   - the reference printed its own DOI and CrossRef returned a
   #                 record for it; we compare the cited details against that
   #                 exact record. Firm.
-  #  "unresolved" - the reference printed a DOI, but CrossRef returned no record
-  #                 for it, so the cited DOI could not be found. Flagged.
-  #                 add_bib_match() warns separately if any lookup failed for
-  #                 network reasons, so a missing record here is taken to mean
-  #                 the DOI genuinely does not resolve, not a connection problem.
+  #  "unresolved" - the reference printed a DOI, but there is no record for
+  #                 it. Flagged as a DOI that could not be found. bib_match
+  #                 does not record why a lookup found nothing, so this also
+  #                 catches a lookup that failed for network reasons (which
+  #                 add_bib_match() only reports as a message at the time) and
+  #                 a DOI that is not valid as printed and whose title search
+  #                 found nothing.
+  #  "not_checked" - the reference printed a DOI, but its paper has no
+  #                 bib_match rows at all: it was not looked up.
   #  "crossref"   - the reference had no DOI and CrossRef supplied one via fuzzy
   #                 title/author search; the match may be wrong, so we do not
   #                 flag it.
   #  "none"       - no DOI at all.
   has_own_doi <- !is.na(table$doi.orig) & nzchar(table$doi.orig)
   has_record  <- !is.na(table$title.match) & nzchar(table$title.match)
+  looked_up   <- table$paper_id %in% bib_match$paper_id
   table$tier <- dplyr::case_when(
     has_own_doi & has_record   ~ "provided",
-    has_own_doi                ~ "unresolved",
+    has_own_doi & looked_up    ~ "unresolved",
+    has_own_doi                ~ "not_checked",
     has_record                 ~ "crossref",
     .default                   = "none"
   )
   # no_match: the reference could not be matched to a retrieved record (kept for
   # downstream modules such as ref_summary that group on it)
   table$no_match <- !has_record
+  # only a reference that printed its own DOI is compared with its record, so
+  # the field mismatches are FALSE for the others (ref_summary reports them)
+  for (col in grep("_mismatch$", names(table), value = TRUE)) {
+    table[[col]] <- table[[col]] %in% TRUE & table$tier == "provided"
+  }
 
   # incoherence: cited details disagree with the record the reference's OWN DOI
   # points to. We only flag references in the "provided" tier (the reference
@@ -405,13 +440,14 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # checked; every other reference printed no DOI (tiers "crossref" and
   # "none") and is listed so the user can add one. A DOI is suggested when the
   # CrossRef title search found a match that scored high enough to be
-  # trustworthy; a low score is usually the wrong paper. bibr 12.x papers score
-  # their matches 0-1.
+  # trustworthy; a low score is usually the wrong paper. bibr 12.x exports
+  # score their matches 0-1; a CrossRef score that low never passes
+  # add_bib_match()'s minimum, so the scale can be read from the score itself.
   table$no_doi <- table$tier %in% c("crossref", "none")
-  min_score <- ifelse(table$paper_id %in% .bibr12_paper_ids(paper),
-                      suggest_score / 100, suggest_score)
+  min_score <- ifelse(table$score %in% NA | table$score > 1,
+                      suggest_score, suggest_score / 100)
   table$doi_suggested <- table$tier == "crossref" & !is.na(table$score) &
-    table$score >= min_score
+    table$score >= min_score & !is.na(table$doi.match) & nzchar(table$doi.match)
   summary_table <- dplyr::summarise(table,
     .by = paper_id,
     refs_checked  = sum(tier %in% c("provided", "unresolved"), na.rm = TRUE),
@@ -421,22 +457,28 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   )
 
   # summary_text
-  n_checked  <- sum(table$tier %in% c("provided", "unresolved"), na.rm = TRUE)
-  n_inc      <- sum(table$incoherent, na.rm = TRUE)
-  n_nodoi    <- sum(table$no_doi, na.rm = TRUE)
-  n_suggest  <- sum(table$doi_suggested, na.rm = TRUE)
+  n_checked  <- sum(summary_table$refs_checked)
+  n_inc      <- sum(summary_table$incoherent)
+  n_nodoi    <- sum(summary_table$no_doi)
+  n_suggest  <- sum(summary_table$doi_suggested)
+  n_unlooked <- sum(table$tier == "not_checked")
   summary_text <- sprintf(
-    "We checked the %d reference%s that supplied a DOI against the record that DOI points to, and found %d incoherent reference%s to check for parsing errors or mistakes. %d reference%s had no DOI and could not be checked%s. Incoherent references are mostly PDF parsing errors (we are working on improving reference parsing).",
+    "We checked the %d reference%s that supplied a DOI against the record that DOI points to, and found %d incoherent reference%s to check for parsing errors or mistakes.%s %d reference%s had no DOI and could not be checked%s.%s",
     n_checked, plural(n_checked), n_inc, plural(n_inc),
+    if (n_inc > 0) " Incoherent references are mostly PDF parsing errors (we are working on improving reference parsing)." else "",
     n_nodoi, plural(n_nodoi),
-    if (n_suggest > 0) sprintf("; for %d of them CrossRef found a likely DOI, suggested in the report", n_suggest) else ""
+    if (n_suggest > 0) sprintf("; for %d of them CrossRef found a likely DOI, suggested in the report", n_suggest) else "",
+    if (n_unlooked > 0) sprintf(" %d reference%s with a DOI %s not checked, because %s paper was not looked up at Crossref.",
+                                n_unlooked, plural(n_unlooked),
+                                if (n_unlooked == 1) "was" else "were",
+                                if (n_unlooked == 1) "its" else "their") else ""
   )
 
   # traffic_light ----
   # nothing to check when no reference supplied a DOI
   tl <- if (n_checked == 0) "na" else if (any(table$incoherent %in% TRUE)) "yellow" else "green"
 
-  guidance <- "The references below supplied a DOI, but one or more of the cited details (title, authors, journal, or year) does not match the record that DOI points to. Such an incoherence is most often an error in reading the reference from the PDF, but it could be a mistake, or an AI-generated reference. Check each against the original source. Incoherent references are mostly PDF parsing errors (we are working on improving reference parsing)."
+  guidance <- "The references below supplied a DOI, but either that DOI could not be found, or one or more of the cited details (title, authors, journal, or year) does not match the record that DOI points to. Such an incoherence is most often an error in reading the reference from the PDF, but it could be a mistake, or an AI-generated reference. Check each against the original source."
 
   if (n_inc == 0) guidance <- ""
 
@@ -537,7 +579,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     guidance,
     if (!is.null(incoherent_report))
       c("### Incoherent references\n",
-        "The cited details of these references do not match the record their DOI points to.\n",
+        "The DOI of these references could not be found, or their cited details do not match the record their DOI points to.\n",
         incoherent_report),
     if (!is.null(alias_report))
       c("### DOIs that have a newer form\n",
