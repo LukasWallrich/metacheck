@@ -298,9 +298,10 @@ test_that("ref_accuracy accepts a cited DOI written as a URL", {
   expect_false(tbl$doi_mismatch[row])
   expect_false(tbl$incoherent[row])
 
-  # a genuinely different DOI is still flagged (the record was found by a
-  # title search; a record found by the cited DOI itself is an alias)
-  p$bib$doi[i] <- "https://doi.org/10.1037/0003-066x.54.6.409"
+  # a genuinely different DOI is still flagged (the cited DOI could not be
+  # looked up, so the record was found by a title search; a record found by
+  # the cited DOI itself is an alias)
+  p$bib$doi[i] <- "https://doi.org/10.1037/0003-066x.54.6.4 09"
   p$bib_match$score[1] <- 80
   tbl <- module_run(p, "ref_accuracy")$table
   expect_true(tbl$doi_mismatch[row])
@@ -352,10 +353,31 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
         base$bib_match[2, setdiff(names(p$bib_match), "bib_id")]
       p
     },
-    # a DOI that was only matched by a title search and points elsewhere
-    doi = \(p) { p$bib$doi[i] <- "10.1037/0003-066x.54.6.409"; p$bib_match$score[m] <- 80; p },
+    # a DOI that could not be looked up, so the record came from a title
+    # search, and that points elsewhere
+    doi = \(p) { p$bib$doi[i] <- "10.1037/0003-066x.54.6.4 09"; p$bib_match$score[m] <- 80; p },
     # a fabricated DOI that does not resolve
-    unresolved = \(p) { p$bib$doi[i] <- "10.1037/0003-066x.99.9.999"; p$bib_match <- p$bib_match[-m, ]; p }
+    unresolved = \(p) { p$bib$doi[i] <- "10.1037/0003-066x.99.9.999"; p$bib_match <- p$bib_match[-m, ]; p },
+    # a changed compound surname shares only its last word with the record
+    author = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "Smith Jones"
+      p$bib$authors[i] <- "Brown Jones, Alice H; Wood, Wendy"; p
+    },
+    # a surname is not found across the boundary to the given name
+    author = \(p) { p$bib$authors[i] <- "Eag, Ly; Wood, Wendy"; p },
+    author = \(p) {
+      p$bib_match$authors[[m]]$family[1] <- "St. John"
+      p$bib$authors[i] <- "Smith, John; Wood, Wendy"; p
+    },
+    # the record's title continues without a title delimiter
+    title = \(p) {
+      p$bib_match$title[m] <- "The Origins of Sex Differences in Human Behavior"
+      new <- "The Origins of Sex Differences in Human Behaviorism and the Long-Term Effects of Hormone Therapy"
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    }
   )
   for (k in seq_along(errors)) {
     field <- names(errors)[k]
@@ -391,7 +413,15 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$authors[i] <- "Eagly, Alice H; De Wood, Wendy"; p
     },
     given_name_in_family = \(p) { p$bib_match$authors[[m]]$family[1] <- "Alice Eagly"; p },
-    no_authors_read = \(p) { p$bib$authors[i] <- ""; p }
+    # the record drops the particle the citation keeps
+    particle_not_in_record = \(p) { p$bib$authors[i] <- "Eagly, Alice H; Van Wood, Wendy"; p },
+    no_authors_read = \(p) { p$bib$authors[i] <- ""; p },
+    # a line-break space in a DOI that was then matched by a title search
+    doi_space_title_search = \(p) {
+      p$bib$doi[i] <- "10.1037/0003-066x.54.6.4 08"; p$bib_match$score[m] <- 80; p
+    },
+    # a bib_match table without a score column
+    no_score_column = \(p) { p$bib_match$score <- NULL; p }
   )
   for (k in names(fine)) {
     expect_false(run(fine[[k]])$incoherent, label = k)
