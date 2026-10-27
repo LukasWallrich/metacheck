@@ -79,10 +79,11 @@ test_that("ref_accuracy", {
   expect_equal(nrow(mod_output$table), nrow(paper$bib))
 
   # references that supplied a DOI are checked; the demo paper includes two
-  # references with a DOI that does not resolve, which are flagged as incoherent
+  # references with a DOI that does not resolve, which are flagged as incoherent,
+  # and one without a DOI, which CrossRef matched by title (#528)
   st <- mod_output$summary_table
   expect_equal(st$refs_checked, 4)
-  expect_equal(st$no_doi, 0)
+  expect_equal(st$no_doi, 1)
   expect_equal(st$incoherent, 2)
   expect_equal(mod_output$traffic_light, "yellow")
 
@@ -421,7 +422,14 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$doi[i] <- "10.1037/0003-066x.54.6.4 08"; p$bib_match$score[m] <- 80; p
     },
     # a bib_match table without a score column
-    no_score_column = \(p) { p$bib_match$score <- NULL; p }
+    no_score_column = \(p) { p$bib_match$score <- NULL; p },
+    # an article number read as the journal
+    article_number_as_journal = \(p) { p$bib$container[i] <- "Article e17018"; p },
+    # a book chapter, whose registry container is a series or platform name
+    chapter_container = \(p) {
+      p$bib_match$bib_type[m] <- "incollection"
+      p$bib_match$container[m] <- "Oxford Handbooks Online"; p
+    }
   )
   for (k in names(fine)) {
     expect_false(run(fine[[k]])$incoherent, label = k)
@@ -432,6 +440,34 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
   r <- run(\(p) { p$bib_match$doi[m] <- "10.1037/alias-of-the-cited"; p })
   expect_true(r$doi_alias)
   expect_false(r$incoherent)
+})
+
+test_that("ref_accuracy counts references without a DOI and suggests a DOI for confident matches (#528)", {
+  # a reference with no printed DOI that CrossRef matched by title search was
+  # counted neither as checked nor as without a DOI, and no DOI was suggested
+  p <- demopaper()
+  k <- match(3, p$bib_match$bib_id)   # bib 3 printed no DOI; CrossRef found one
+  p$bib_match$score[k] <- 85
+  mo <- module_run(p, "ref_accuracy")
+  tbl <- mo$table
+  expect_equal(tbl$tier[tbl$bib_id == 3], "crossref")
+  expect_true(tbl$no_doi[tbl$bib_id == 3])
+  expect_true(tbl$doi_suggested[tbl$bib_id == 3])
+  expect_equal(mo$summary_table$no_doi, sum(tbl$tier %in% c("crossref", "none")))
+  expect_equal(mo$summary_table$doi_suggested, 1)
+  expect_equal(mo$summary_table$refs_checked + mo$summary_table$no_doi, nrow(tbl))
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(report, paste0("https://doi.org/", p$bib_match$doi[k]), fixed = TRUE)
+
+  # a low-scoring match is counted but not suggested
+  p$bib_match$score[k] <- 40
+  mo <- module_run(p, "ref_accuracy")
+  expect_true(mo$table$no_doi[mo$table$bib_id == 3])
+  expect_equal(mo$summary_table$doi_suggested, 0)
+
+  # nothing to check when no reference supplied a DOI
+  p$bib$doi <- ""
+  expect_equal(module_run(p, "ref_accuracy")$traffic_light, "na")
 })
 
 test_that("ref_pubpeer counts a DOI cited three times once, and runs without url fields (U118)", {
