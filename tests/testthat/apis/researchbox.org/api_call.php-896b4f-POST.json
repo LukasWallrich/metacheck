@@ -1,0 +1,40 @@
+{
+    "ok": true,
+    "type": "data",
+    "query": "happi*",
+    "total": 123,
+    "offset": 0,
+    "limit": 3,
+    "hits": [
+        {
+            "box_id": 9614,
+            "file_id": 3,
+            "var_id": 4,
+            "var_name": "Happiness.Score",
+            "var_description": "sentiment rating (from human annotators)",
+            "original_name": "Hedonometer.csv",
+            "upload_time": 1790158310,
+            "formatted_reference": "Lelia Glass, 'Bad things are sudden, good things are static: Explaining the negative collocation of \"get\"', <I>Language<\/I>"
+        },
+        {
+            "box_id": 9614,
+            "file_id": 8,
+            "var_id": 5,
+            "var_name": "hedon_rating",
+            "var_description": "sentiment rating (i.e., Happiness Score) from Hedonometer",
+            "original_name": "filtered_hedon_with_pos.csv",
+            "upload_time": 1790158440,
+            "formatted_reference": "Lelia Glass, 'Bad things are sudden, good things are static: Explaining the negative collocation of \"get\"', <I>Language<\/I>"
+        },
+        {
+            "box_id": 8204,
+            "file_id": 39,
+            "var_id": 42,
+            "var_name": "GenSysJust6",
+            "var_description": "Please rate your level of agreement with the following statements. - Everyone (male or female) has a fair shot at wealth and happiness",
+            "original_name": "Data_Supplemental Study1.sav",
+            "upload_time": 1783950237,
+            "formatted_reference": ""
+        }
+    ]
+}

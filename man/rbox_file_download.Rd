@@ -4,16 +4,73 @@
 \alias{rbox_file_download}
 \title{Retrieve files from ResearchBox by URL}
 \usage{
-rbox_file_download(rb_url, pb = NULL)
+rbox_file_download(
+  rb_url,
+  pb = NULL,
+  file_ids = "all",
+  subfolders = c("type", "section"),
+  cache = FALSE
+)
 }
 \arguments{
 \item{rb_url}{a vector of ResearchBox URLs}
 
 \item{pb}{a progress bar passed from another function}
+
+\item{file_ids}{the ids of the files to download (the \code{file_id} column of
+\code{\link[=rbox_files]{rbox_files()}}), or \code{"all"} (the default). ResearchBox adds a data file's
+codebook to the download. Needs an API key.}
+
+\item{subfolders}{how the files are put into folders: \code{"type"} (the
+default; "Data", "Code", "Materials", ...) or \code{"section"} ("Study 1",
+...). Anything other than the default needs an API key.}
+
+\item{cache}{if \code{TRUE}, reuse a previously cached file list for the
+checksums of a download without a table of contents (see \code{\link[=rbox_files]{rbox_files()}})
+instead of asking ResearchBox again. The downloaded files themselves are
+always reused.}
 }
 \value{
-a data frame of information
+a data frame with one row per file (\code{rb_url}, \code{name},
+\code{file_location}, \code{size}, \code{isdir}, \code{checksum_ok}, plus the file type
+columns of \link{file_types}), and a \code{"failed"} attribute: a data frame with
+\code{rb_url}, \code{name} (\code{NA} when the whole box failed) and \code{error} for each box
+or file that could not be retrieved. An error starting "API rate limit
+exhausted: " is expected to succeed when run again later.
 }
 \description{
-Retrieve files from ResearchBox by URL
+Downloads the boxes as zips and unpacks them into the repository cache (see
+\code{\link[=repo_cache_dir]{repo_cache_dir()}}), so a later call for the same box reuses the files
+without asking ResearchBox again.
+}
+\details{
+With an API key set (see \code{\link[=rbox_token]{rbox_token()}}), each box costs one API request:
+the download. A peer-review link's passcode is sent along. The zip holds a
+table of contents with each file's MD5 checksum; every file that arrives is
+checked against it (\code{checksum_ok}), and a file that is listed but does not
+arrive, or does not match its checksum, is recorded in the \code{"failed"}
+attribute; that box is downloaded again on the next call. The table of
+contents is not returned as one of the box's files.
+
+Without a key, or when the API cannot download the box, the download is
+made through the box's web page, as before. That zip has no table of
+contents, so with a key the box's file list is then asked for (one more
+request, skipped with \code{cache = TRUE} when the list is already cached) to
+check the files; without one, or when ResearchBox refuses the file list,
+\code{checksum_ok} is \code{NA}. After several downloads, the web page asks for a
+captcha, which metacheck cannot answer; that box is then recorded as
+failed.
+
+ResearchBox blocks a key for two days when the same file is downloaded 10
+times in 30 days, so a box is downloaded once and then reused from the
+cache.
+}
+\examples{
+\dontrun{
+rbox_file_download("https://researchbox.org/801")
+
+# only two files, in folders by section
+rbox_file_download("https://researchbox.org/801", file_ids = c(10, 16),
+                   subfolders = "section")
+}
 }

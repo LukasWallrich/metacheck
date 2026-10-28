@@ -1,0 +1,107 @@
+{
+    "ok": true,
+    "box_id": 801,
+    "status": "public",
+    "files": [
+        {
+            "section": "Study 1",
+            "type": "Data",
+            "description": "csv",
+            "basename": "Anonymized Data.csv",
+            "extension": "csv",
+            "size": 3768991,
+            "file_id": 10,
+            "md5": "c18ac0a6eae3df592bacecaa11ad5214"
+        },
+        {
+            "section": "Study 1",
+            "type": "Codebook",
+            "description": "csv",
+            "basename": "Anonymized Data.csv___CODEBOOK.csv",
+            "extension": "csv",
+            "size": 24559,
+            "file_id": 11,
+            "md5": "89d0fdab0617508406a4cd39405621ed"
+        },
+        {
+            "section": "Study 1",
+            "type": "Materials",
+            "description": "pdf - Qualtrics survey for focal participants",
+            "basename": "Participant Survey_Redacted.pdf",
+            "extension": "pdf",
+            "size": 3344144,
+            "file_id": 9,
+            "md5": "02c4ccf1f47704246c37889e3d9121df"
+        },
+        {
+            "section": "Study 1",
+            "type": "Materials",
+            "description": "pdf - Qualtrics survey for informants",
+            "basename": "Informant Survey_Redacted.pdf",
+            "extension": "pdf",
+            "size": 89682,
+            "file_id": 6,
+            "md5": "c3f0cc19ef5e082a46961fad7ae565c8"
+        },
+        {
+            "section": "Study 1",
+            "type": "Other",
+            "description": "Pre-registration",
+            "basename": "AsPredicted (for peer-review only) #50249.pdf",
+            "extension": "pdf",
+            "size": 188369,
+            "file_id": 1,
+            "md5": "1c5abb663c95abde554e8f3718bd3701"
+        },
+        {
+            "section": "Study 1",
+            "type": "Materials",
+            "description": "qsf - Qualtrics survey for focal participants",
+            "basename": "Emotional_Intelligence_Survey_-_Subject_Pool_-_Participants.qsf",
+            "extension": "qsf",
+            "size": 515020,
+            "file_id": 5,
+            "md5": "62ad6780ab1d5194c389e17a228ce8ca"
+        },
+        {
+            "section": "Study 1",
+            "type": "Materials",
+            "description": "qsf - Qualtrics survey for informants",
+            "basename": "Emotional_Intelligence_Survey_-_Subject_Pool_-_Informants.qsf",
+            "extension": "qsf",
+            "size": 91094,
+            "file_id": 3,
+            "md5": "16c4099f1259e9ba140a57d1b74d1146"
+        },
+        {
+            "section": "Study 1",
+            "type": "Code",
+            "description": "R Code",
+            "basename": "Code for Analysis.R",
+            "extension": "r",
+            "size": 325968,
+            "file_id": 18,
+            "md5": "18a90ac793a15cf6e311760d98c40dfa"
+        },
+        {
+            "section": "Read Me",
+            "type": "Other",
+            "description": "Read-me file",
+            "basename": "READ ME.rtf",
+            "extension": "rtf",
+            "size": 2055,
+            "file_id": 7,
+            "md5": "8f39ed91a2e31566545b0ce8341b99b8"
+        },
+        {
+            "section": "Supplement",
+            "type": "Other",
+            "description": "Supplemental Materials",
+            "basename": "Supplementary Materials 052923.docx",
+            "extension": "docx",
+            "size": 941541,
+            "file_id": 16,
+            "md5": "95a4aa551b2e365be9645b9f6f3b7720"
+        }
+    ]
+}

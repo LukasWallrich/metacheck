@@ -56,7 +56,8 @@
 #'   platform (Dryad, Zenodo, Dataverse, Figshare, ReShare, GitHub, GitLab,
 #'   PsychArchives) already fetches its own licence as part of a request
 #'   this module makes anyway, so `repo_metadata` has their licence
-#'   populated regardless of this parameter.
+#'   populated regardless of this parameter. ResearchBox's licence costs one
+#'   extra request per downloaded box, which is always made.
 #' @param cache if TRUE, reuse a previously cached Dryad/Zenodo listing (see
 #'   [repo_info_cache_clear()]) instead of re-querying the host's API for a
 #'   repository already looked up. FALSE (the default) always queries fresh.
@@ -701,18 +702,28 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
     _$repo_url |>
     unique()
   rb_files_df <- data.frame(repo_name = character(0))
+  rb_meta_df <- data.frame(repo_url = character(0), doi = character(0),
+                           license = character(0))
   if (length(rb_urls) > 0) {
     tryCatch({
-      rb_file_list <- rbox_file_download(rb_urls, pb = pb)
-      # NULL when no box could be retrieved (refused, removed); filter() on
-      # it stopped and the error text became the reason (U43)
-      if (is.null(rb_file_list))
-        stop("ResearchBox did not serve the box", call. = FALSE)
+      rb_file_list <- rbox_file_download(rb_urls, pb = pb, cache = cache)
+      # Each box that could not be retrieved (refused, removed, ResearchBox's
+      # hourly limit) gets its own reason. Only a failure of every box was
+      # reported before; one failed box among several lost its files silently.
+      rb_failed <- attr(rb_file_list, "failed") %||%
+        data.frame(rb_url = character(0), name = character(0), error = character(0))
+      rb_failed <- rb_failed[is.na(rb_failed$name), , drop = FALSE]
+      if (nrow(rb_failed) > 0) {
+        hit <- match(repos$repo_url, rb_failed$rb_url)
+        fill <- !is.na(hit) & is.na(repos$repo_error)
+        repos$repo_error[fill] <- paste("ResearchBox did not serve the box:",
+                                         rb_failed$error[hit[fill]])
+      }
       rb_file_list <- dplyr::filter(rb_file_list, !isdir)
       rb_files_df <- data.frame(
         repo_url = rb_file_list$rb_url,
         # rb_file_list$name is the RELATIVE PATH within the unzipped
-        # ResearchBox archive (e.g. "ResearchBox 801/Materials/foo.pdf" —
+        # ResearchBox archive (e.g. "Materials/foo.pdf" —
         # list.files(..., recursive = TRUE) in rbox_file_download()), not a
         # bare basename. Every OTHER source (OSF, GitHub, PsychArchives)
         # keeps file_name as the basename and file_path as the full relative
@@ -733,6 +744,19 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
       # See the OSF block above for why every url is flagged on failure.
       repos$repo_error[repos$repo_url %in% rb_urls] <<- conditionMessage(e)
     })
+
+    # The licence of each box that was downloaded (one box_meta request per
+    # box; a box that could not be downloaded is not asked about again).
+    # ResearchBox puts every box under CC BY 4.0, but names it in each box's
+    # metadata since 2026-10.
+    rb_ok <- setdiff(rb_urls, repos$repo_url[!is.na(repos$repo_error)])
+    if (length(rb_ok) > 0) {
+      rb_license <- vapply(rb_ok, \(u) {
+        tryCatch(.rbox_license(u, cache = cache), error = \(e) NA_character_)
+      }, character(1))
+      rb_meta_df <- data.frame(repo_url = rb_ok, doi = NA_character_,
+                               license = unname(rb_license))
+    }
   }
 
   ## DSpace (legacy REST API: PsychArchives and other installations in
@@ -1606,12 +1630,10 @@ repo_check <- function(paper, local_path = NULL, local_only = FALSE,
   # different licences, so collapsing to one value per paper here would
   # lose information -- callers that want a single per-paper answer can
   # derive it from this the same way build_master_comparison.R derives
-  # mc_repo_types from repo_url. ResearchBox and local paths are excluded:
-  # neither has a doi/license concept to surface (ResearchBox's "LICENSE
-  # FOR USE" field is a fixed platform-wide reuse notice, not a per-dataset
-  # licence).
+  # mc_repo_types from repo_url. Local paths are excluded: they have no
+  # doi/license to surface. ResearchBox gives a licence but no DOI.
   repo_metadata <- dplyr::bind_rows(
-    osf_meta_df, github_meta_df, gitlab_meta_df, pa_meta_df, dspace7_meta_df,
+    osf_meta_df, github_meta_df, gitlab_meta_df, rb_meta_df, pa_meta_df, dspace7_meta_df,
     zenodo_meta_df, dv_meta_df, fs_meta_df, dryad_meta_df, reshare_meta_df,
     fourtu_meta_df, mendeley_meta_df, dataone_meta_df, ldbase_meta_df
   )
