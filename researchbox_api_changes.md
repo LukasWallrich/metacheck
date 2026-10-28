@@ -2,7 +2,7 @@
 
 ResearchBox functions moved from reading the box's web page to ResearchBox's
 API (`https://researchbox.org/api_call.php`), with the web page kept as the
-fallback. Version 0.4.1.9.
+fallback. Version 0.4.1.10.
 
 ## Preexisting bugs fixed
 

@@ -107,6 +107,34 @@ test_that(".report_checklist_qmd", {
   report_type("full")
 })
 
+test_that(".report_checklist_qmd: the file tree once, after the module sections", {
+  report_type("checklist")
+  dc <- checklist_mo("data_check", "Data Check", "yellow",
+    summary_text = "Some data files.",
+    report = c("The data files.", "#### Data Tree", "Where the files sit.", "TREE-LINES"))
+  rp <- checklist_mo("reproducibility_check", "Reproducibility Check", "green",
+    summary_text = "The code ran.", report = "Ran.", checklist_section = "The scripts.")
+  other <- checklist_mo("other", "Other", "green", summary_text = "Fine.", report = "Other details.")
+  mos <- list(data_check = dc, reproducibility_check = rp, other = other)
+  txt <- .report_checklist_qmd(mos, test_paper())
+
+  # in a section of its own, after the reproducibility section, before "More detail"
+  tree_at <- regexpr("## Files in the repository {#files}", txt, fixed = TRUE)
+  repro_at <- regexpr("## Reproducibility Check {#section-reproducibility_check}", txt, fixed = TRUE)
+  more_at <- regexpr("## More detail", txt, fixed = TRUE)
+  expect_true(repro_at > 0 && tree_at > repro_at && more_at > tree_at)
+  expect_match(txt, "Where the files sit.", fixed = TRUE)
+  # shown once: data_check's folded details keep the rest of its report only
+  expect_equal(lengths(gregexpr("TREE-LINES", txt, fixed = TRUE)), 1)
+  expect_false(grepl("#### Data Tree", txt, fixed = TRUE))
+  expect_match(txt, "The data files.", fixed = TRUE)
+
+  # without a repository, no section
+  txt <- .report_checklist_qmd(list(reproducibility_check = rp, other = other), test_paper())
+  expect_false(grepl("Files in the repository", txt, fixed = TRUE))
+  report_type("full")
+})
+
 test_that("collapse_section folds in a checklist report", {
   report_type("checklist")
   obs <- collapse_section(c("One.", "Two."), "How It Works")
