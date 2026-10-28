@@ -166,7 +166,9 @@ usage_summary <- function() {
 
 ## normalise a pasted URL or bare ID to a full ResearchBox URL ----
 # Accepts "6018", "researchbox.org/6018", or a full "https://researchbox.org/
-#6018" (with or without a trailing slash). Returns NA_character_ when the
+#6018" (with or without a trailing slash). A peer-review link's passcode
+# ("researchbox.org/6018&PEER_REVIEW_passcode=ABCDEF") is kept: without it a
+# box that is not public cannot be read. Returns NA_character_ when the
 # input matches none of these.
 normalize_rbox_url <- function(x) {
   x <- trimws(x %||% "")
@@ -174,7 +176,7 @@ normalize_rbox_url <- function(x) {
   if (grepl("^[0-9]+$", x)) {
     return(paste0("https://researchbox.org/", x))
   }
-  m <- regmatches(x, regexpr("(?:https?://)?researchbox\\.org/[0-9]+",
+  m <- regmatches(x, regexpr("(?:https?://)?researchbox\\.org/[0-9]+(?:&PEER_REVIEW_passcode=[A-Za-z0-9]+)?",
                              x, perl = TRUE, ignore.case = TRUE))
   if (length(m) == 0 || !nzchar(m)) return(NA_character_)
   if (!grepl("^https?://", m, ignore.case = TRUE)) m <- paste0("https://", m)

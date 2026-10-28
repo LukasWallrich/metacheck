@@ -15,6 +15,10 @@
 a data frame of information
 }
 \description{
-Retrieve info from ResearchBox by URL
+Uses the API when a key is set (see \code{\link[=rbox_token]{rbox_token()}}) and reads the box's web
+page otherwise. When the API fails (most often ResearchBox's hourly limit
+for one box), the web page is read instead. The API answers alike for a box
+that does not exist and one that is not public; the web page tells them
+apart, so its answer is the one reported.
 }
 \keyword{internal}

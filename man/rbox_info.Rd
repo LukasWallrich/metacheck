@@ -4,7 +4,7 @@
 \alias{rbox_info}
 \title{Retrieve info from ResearchBox by URL}
 \usage{
-rbox_info(rb_url, id_col = 1, pb = NULL)
+rbox_info(rb_url, id_col = 1, pb = NULL, cache = FALSE)
 }
 \arguments{
 \item{rb_url}{an ResearchBox URL, or a table containing them (e.g., as created by \code{rbox_links()})}
@@ -12,16 +12,33 @@ rbox_info(rb_url, id_col = 1, pb = NULL)
 \item{id_col}{the index or name of the column that contains ResearchBox URLs, if id is a table}
 
 \item{pb}{a progress bar passed from another function}
+
+\item{cache}{if \code{TRUE}, reuse a previously cached result for a box already
+looked up (see \code{\link[=repo_info_cache_clear]{repo_info_cache_clear()}}) instead of asking ResearchBox
+again. Off by default.}
 }
 \value{
 a data frame of information
 }
 \description{
-Retrieve info from ResearchBox by URL
+With an API key set (see \code{\link[=rbox_token]{rbox_token()}}), each box costs two API requests:
+its details and its file list. A peer-review link's passcode is sent along.
+Without a key, or when the API refuses (ResearchBox limits how often the
+same box can be requested per hour), the box's web page is read instead.
+}
+\details{
+\code{RB_license} is the licence's SPDX identifier (such as \code{"CC-BY-4.0"}) and
+\code{RB_public} the date the box became public (\code{"2023-06-09"}), from either
+route. The web page does not give the title, status, DOIs, licence link or
+date of the last change (\code{RB_title}, \code{RB_status}, \code{RB_paper_doi},
+\code{RB_zenodo_doi}, \code{RB_paper_authors}, \code{RB_license_url}, \code{RB_last_modified}),
+so these are \code{NA} when the page was read. The \code{files} column holds a table
+of the box's files; from the API it also has each file's section, type,
+description, extension, size and MD5 checksum.
 }
 \examples{
 \dontrun{
-# get info on one OSF node
+# get info on one box
 rbox_info("https://researchbox.org/801")
 }
 }
