@@ -166,9 +166,11 @@ skip_if_quick <- function() {
 }
 
 # skip if the psychsci test corpus couldn't be downloaded (see setup.R)
+# (psychsci is looked up where the test runs: setup.R's objects are not
+# visible from this file's own environment, so a bare exists() always skipped)
 skip_no_psychsci <- function() {
-  skip_if_not(exists("psychsci") && !is.null(get("psychsci")),
-              "psychsci test corpus not available")
+  skip_if(is.null(get0("psychsci", envir = parent.frame())),
+          "psychsci test corpus not available")
 }
 
 # codebook_check / data_check local-fixture helpers --------------------------
