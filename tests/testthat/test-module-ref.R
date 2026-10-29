@@ -422,6 +422,11 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$container[i] <- "Current Directions in Psychological Science"; p
     },
     container = \(p) { p$bib$container[i] <- "Journal of the American Psychologist"; p },
+    # an abbreviated short form is not an acronym that may be left out
+    container = \(p) {
+      p$bib_match$container[m] <- "Psychological Science"
+      p$bib$container[i] <- "Curr. Dir. Psychol. Sci."; p
+    },
     # the first author is not cited first
     author = \(p) { p$bib$authors[i] <- "Wood, Wendy; Eagly, Alice H"; p },
     author = \(p) { p$bib$authors[i] <- "Smith, John; Eagly, Alice H; Wood, Wendy"; p },
@@ -520,6 +525,11 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib_match$container[m] <- "Philosophical Transactions of the Royal Society B: Biological Sciences"
       p$bib$container[i] <- "Philosophical Transactions of the Royal Society of London B: Biological Sciences"; p
     },
+    # an acronym before the full name
+    journal_acronym = \(p) {
+      p$bib_match$container[m] <- "MMWR. Morbidity and Mortality Weekly Report"
+      p$bib$container[i] <- "Morbidity and Mortality Weekly Report"; p
+    },
     journal_wires = \(p) {
       p$bib_match$container[m] <- "Wiley Interdisciplinary Reviews: Cognitive Science"
       p$bib$container[i] <- "WIREs Cognitive Science"; p
@@ -591,8 +601,15 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
 test_that("ref_accuracy counts references without a DOI and suggests a DOI for confident matches (#528)", {
   # a reference with no printed DOI that CrossRef matched by title search was
   # counted neither as checked nor as without a DOI, and no DOI was suggested
-  p <- demopaper()
-  k <- match(3, p$bib_match$bib_id)   # bib 3 printed no DOI; CrossRef found one
+  # bib 3 printed no DOI; CrossRef found one. The demo cites only its first
+  # author, which would be flagged
+  demo3 <- \() {
+    p <- demopaper()
+    p$bib$authors[p$bib$bib_id == 3] <- "Lakens, Daniël; Scheel, Anne M; Isager, Peder M"
+    p
+  }
+  p <- demo3()
+  k <- match(3, p$bib_match$bib_id)
   p$bib_match$score[k] <- 85
   mo <- module_run(p, "ref_accuracy")
   tbl <- mo$table
@@ -619,7 +636,7 @@ test_that("ref_accuracy counts references without a DOI and suggests a DOI for c
 
   # a match with another title is another work: no DOI is suggested. A title
   # that only adds or drops words at the end is close enough.
-  p <- demopaper()
+  p <- demo3()
   p$bib_match$score[k] <- 85
   p$bib_match$title[k] <- "A different paper by the same authors"
   mo <- module_run(p, "ref_accuracy")
@@ -829,15 +846,46 @@ test_that("ref_accuracy reads bibr 12.x author lists and article types", {
   expect_false(check(printed(c("Le Doux", fam[-1])), c("LeDoux", fam[-1])))
 })
 
-test_that("ref_accuracy only compares references that printed a DOI and were looked up", {
-  # a reference without a DOI is not compared, so ref_summary shows no
+test_that("ref_accuracy compares a reference without a DOI only with a record it would suggest", {
+  # an uncertain title-search match is not compared, so ref_summary shows no
   # mismatch for it
   p <- demopaper()
   k <- match(3, p$bib_match$bib_id)
   p$bib_match$year[k] <- 1900L
+  p$bib_match$score[k] <- 40
   tbl <- module_run(p, "ref_accuracy")$table
   expect_equal(tbl$tier[tbl$bib_id == 3], "crossref")
   expect_false(tbl$year_mismatch[tbl$bib_id == 3])
+  expect_false(tbl$incoherent[tbl$bib_id == 3])
+
+  # a confident match with the same title but other authors, journal or year
+  # is flagged, with the record, and its DOI is not suggested
+  p$bib_match$score[k] <- 85
+  mo <- module_run(p, "ref_accuracy")
+  tbl <- mo$table
+  expect_true(tbl$incoherent[tbl$bib_id == 3])
+  expect_true(tbl$year_mismatch[tbl$bib_id == 3])
+  expect_false(tbl$doi_suggested[tbl$bib_id == 3])
+  expect_true(tbl$no_doi[tbl$bib_id == 3])
+  expect_equal(mo$traffic_light, "yellow")
+  expect_match(mo$summary_text, "1 reference without a DOI, CrossRef found a work with the same title")
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(report, "No DOI cited; the work with the same title differs", fixed = TRUE)
+  expect_match(report, paste0("https://doi.org/", p$bib_match$doi[k]), fixed = TRUE)
+  p$bib_match$year[k] <- tbl$year.orig[tbl$bib_id == 3]
+  p$bib_match$authors[[k]] <- data.frame(given = "Ann", family = "Other")
+  tbl <- module_run(p, "ref_accuracy")$table
+  expect_true(tbl$author_mismatch[tbl$bib_id == 3])
+  expect_false(tbl$doi_suggested[tbl$bib_id == 3])
+  # differing authors alone need min_mismatches = 1, as the title is not
+  # compared; the demo cites only the first of the record's three authors
+  p <- demopaper()
+  p$bib_match$score[k] <- 85
+  tbl <- module_run(p, "ref_accuracy")$table
+  expect_equal(tbl$author_note[tbl$bib_id == 3], "Scheel, Isager not found among the cited authors")
+  tbl <- module_run(p, "ref_accuracy", min_mismatches = 2)$table
+  expect_false(tbl$incoherent[tbl$bib_id == 3])
+  expect_true(tbl$doi_suggested[tbl$bib_id == 3])
 
   # a match without a DOI is not suggested, nor counted as suggested
   p$bib_match$score[k] <- 90
