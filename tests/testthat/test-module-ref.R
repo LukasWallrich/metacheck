@@ -65,13 +65,16 @@ test_that("ref_accuracy", {
   expect_equal(mod_output$traffic_light, "na")
   expect_null(mod_output$table)
 
-  # no bib_match
+  # no bib_match: nothing is checked, but references without a DOI are
+  # counted
   paper <- demopaper()
   paper$bib_match <- NULL
   mod_output <- module_run(paper, module)
   expect_equal(mod_output$traffic_light, "na")
-  expect_null(mod_output$table)
   expect_match(mod_output$summary_text, "not looked up at Crossref")
+  expect_equal(mod_output$summary_table$refs_checked, 0)
+  expect_equal(mod_output$summary_table$no_doi, 1)
+  expect_match(mod_output$summary_text, "1 reference had no DOI")
 
   # relevant references
   paper <- demopaper()
@@ -409,6 +412,19 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib_match$container[m] <- "Cognition and Emotion"
       p$bib$container[i] <- "Cognition"; p
     },
+    # a journal whose name contains the cited one, and the reverse
+    container = \(p) {
+      p$bib_match$container[m] <- "Current Directions in Psychological Science"
+      p$bib$container[i] <- "Psychological Science"; p
+    },
+    container = \(p) {
+      p$bib_match$container[m] <- "Psychological Science"
+      p$bib$container[i] <- "Current Directions in Psychological Science"; p
+    },
+    container = \(p) { p$bib$container[i] <- "Journal of the American Psychologist"; p },
+    # the first author is not cited first
+    author = \(p) { p$bib$authors[i] <- "Wood, Wendy; Eagly, Alice H"; p },
+    author = \(p) { p$bib$authors[i] <- "Smith, John; Eagly, Alice H; Wood, Wendy"; p },
     # names without a comma ("Given Family") match on whole words only
     author = \(p) { p$bib$authors[i] <- "Alice H Eagly; John Blackwood"; p },
     author = \(p) {
@@ -489,7 +505,40 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$container[i] <- "Journal of Pediatric Behavior and Organization"; p
     },
     journal_subtitle = \(p) { p$bib_match$container[m] <- "American Psychologist: Official Journal"; p },
-    journal_words_lost = \(p) { p$bib_match$container[m] <- "Journal of the American Psychologist"; p },
+    # words of the journal lost in reading the PDF, which the reference text
+    # has ("Perception, & Psychophysics" for "Attention, Perception, &
+    # Psychophysics")
+    journal_words_lost = \(p) {
+      p$bib_match$container[m] <- "Journal of the American Psychologist"
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub("American Psychologist", "Journal of the American Psychologist", p$text$text[j], fixed = TRUE)
+      p
+    },
+    # a word split at a line break, and a longer form of the name
+    journal_word_split = \(p) { p$bib$container[i] <- "Ameri can Psychologist"; p },
+    journal_longer_form = \(p) {
+      p$bib_match$container[m] <- "Philosophical Transactions of the Royal Society B: Biological Sciences"
+      p$bib$container[i] <- "Philosophical Transactions of the Royal Society of London B: Biological Sciences"; p
+    },
+    journal_wires = \(p) {
+      p$bib_match$container[m] <- "Wiley Interdisciplinary Reviews: Cognitive Science"
+      p$bib$container[i] <- "WIREs Cognitive Science"; p
+    },
+    # the citation omits a subtitle that the record has
+    record_subtitle = \(p) {
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(": Evolved Dispositions Versus Social Roles", "", p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- "The Origins of Sex Differences in Human Behavior"
+      p
+    },
+    # a title in another language with its English translation in brackets
+    translated_title = \(p) {
+      new <- "Les origines des différences sexuelles [The origins of sex differences in human behavior: Evolved dispositions versus social roles]"
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
     # the record drops the particle the citation keeps
     particle_not_in_record = \(p) { p$bib$authors[i] <- "Eagly, Alice H; Van Wood, Wendy"; p },
     no_authors_read = \(p) { p$bib$authors[i] <- ""; p },
@@ -509,6 +558,27 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
   )
   for (k in names(fine)) {
     expect_false(run(fine[[k]])$incoherent, label = k)
+  }
+
+  # known misses: errors the module does not find, recorded so that a change
+  # in them is deliberate
+  misses <- list(
+    one_word_title = \(p) {
+      new <- sub("Human", "Animal", p$bib$title[i], fixed = TRUE)
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
+    journal_continues_record = \(p) {
+      p$bib_match$container[m] <- "Journal of Experimental Social Psychology"
+      p$bib$container[i] <- "Journal of Experimental Psychology"; p
+    },
+    extra_author = \(p) { p$bib$authors[i] <- "Eagly, Alice H; Smith, John; Wood, Wendy"; p },
+    given_name = \(p) { p$bib$authors[i] <- "Eagly, John; Wood, Wendy"; p }
+  )
+  for (k in names(misses)) {
+    expect_false(run(misses[[k]])$incoherent, label = k)
   }
 
   # a cited DOI that the registry lists as an alias of the record's DOI is a
@@ -541,9 +611,119 @@ test_that("ref_accuracy counts references without a DOI and suggests a DOI for c
   expect_true(mo$table$no_doi[mo$table$bib_id == 3])
   expect_equal(mo$summary_table$doi_suggested, 0)
 
-  # nothing to check when no reference supplied a DOI
+  # nothing to check when no reference supplied a DOI, in its DOI field or
+  # its text
   p$bib$doi <- ""
+  p$text$text <- gsub("(https?://doi\\.org/|doi:)\\S+", "", p$text$text)
   expect_equal(module_run(p, "ref_accuracy")$traffic_light, "na")
+
+  # a match with another title is another work: no DOI is suggested. A title
+  # that only adds or drops words at the end is close enough.
+  p <- demopaper()
+  p$bib_match$score[k] <- 85
+  p$bib_match$title[k] <- "A different paper by the same authors"
+  mo <- module_run(p, "ref_accuracy")
+  expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
+  p$bib_match$title[k] <- "Equivalence testing for psychological research in practice"
+  mo <- module_run(p, "ref_accuracy")
+  expect_true(mo$table$doi_suggested[mo$table$bib_id == 3])
+  # the suggestion shows the record it points to
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(report, "Equivalence testing for psychological research in practice (2018)", fixed = TRUE)
+})
+
+test_that("ref_accuracy reads DOIs from the reference text and lists entries it could not read", {
+  run <- function(p, id = 3) {
+    tbl <- module_run(p, "ref_accuracy")$table
+    as.list(tbl[tbl$bib_id == id, ])
+  }
+  set_text <- function(p, id, text) {
+    p$text$text[p$text$text_id == p$bib$text_id[p$bib$bib_id == id]] <- text
+    p
+  }
+  base <- demopaper()
+  i <- match(3, base$bib$bib_id)
+  k <- match(3, base$bib_match$bib_id)
+  base$bib_match$score[k] <- 85
+  ref <- "Lakens, D., Scheel, A. M., & Isager, P. M. (2018). Equivalence testing for psychological research: A tutorial. Advances in Methods and Practices in Psychological Science, 1(2), 259-269."
+  base$bib$container[i] <- "Advances in Methods and Practices in Psychological Science"
+  base$bib$authors[i] <- "Lakens, Daniel; Scheel, Anne M; Isager, Peder M"
+
+  # a DOI printed as a URL with "%2F" that the PDF reader did not take as the
+  # DOI is the cited DOI, and the reference is checked
+  p <- set_text(base, 3, paste(ref, "https://doi.org/10.1177%2F2515245918770963"))
+  r <- run(p)
+  expect_equal(r$tier, "provided")
+  expect_false(r$incoherent)
+
+  # a malformed printed DOI that is the DOI found by the title search, without
+  # its prefix or punctuation, is a DOI mismatch
+  for (bad in c("https://doi.org/2515245918770963", "https://doi.org/101177/2515245918770963")) {
+    r <- run(set_text(base, 3, paste(ref, bad)))
+    expect_true(r$doi_mismatch, label = bad)
+    expect_true(r$incoherent, label = bad)
+  }
+
+  # another printed DOI was not looked up: a reading problem, not a flag
+  mo <- module_run(set_text(base, 3, paste(ref, "https://doi.org/10.1177/0000000000000001")), "ref_accuracy")
+  r <- as.list(mo$table[mo$table$bib_id == 3, ])
+  expect_equal(r$tier, "unreadable")
+  expect_false(r$incoherent)
+  expect_equal(mo$summary_table$unreadable, 1)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "Entries that could not be read reliably")
+
+  # two references read as one entry are listed, not compared, and do not
+  # change the traffic light
+  p <- demopaper()
+  j <- match(1, p$bib$bib_id)
+  p$bib$container[j] <- "Nature Reviews Neuroscience"
+  p <- set_text(p, 1, "Eagly, A. H., & Wood, W. (1999). The origins of sex differences in human behavior: Evolved dispositions versus social roles. American Psychologist, 54(6), 408-423. https://doi.org/10.1037/ 0003-066x.54.6.408 Bar, M. (2004). Visual objects in context. Nature Reviews Neuroscience, 5(8), 617-629.")
+  r <- run(p, 1)
+  expect_equal(r$tier, "unreadable")
+  expect_false(r$incoherent)
+  expect_false(r$container_mismatch)
+
+  # only a DOI was read: when the entry before has no DOI and its title search
+  # found this DOI, the DOI is given to it
+  p <- base
+  frag <- p$bib[i, ]
+  frag$bib_id <- 99L
+  frag$text_id <- max(p$text$text_id) + 1L
+  frag[c("title", "authors", "container")] <- ""
+  frag$year <- NA
+  frag$doi <- base$bib_match$doi[k]
+  p$bib <- rbind(p$bib[1:i, ], frag, p$bib[-(1:i), ])
+  tx <- p$text[p$text$text_id == p$bib$text_id[i], ]
+  tx$text_id <- frag$text_id
+  tx$text <- paste0("https://doi.org/", frag$doi)
+  p$text <- rbind(p$text, tx)
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(mo$table$tier[mo$table$bib_id == 3], "provided")
+  expect_equal(mo$table$tier[mo$table$bib_id == 99], "fragment")
+  expect_equal(mo$summary_table$unreadable, 0)
+  # without such an entry before it, it is a reading problem
+  p$bib$doi[i] <- "10.1177/0956797614520714"
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(mo$table$tier[mo$table$bib_id == 99], "unreadable")
+})
+
+test_that("ref_accuracy names the missing author, and ref_summary reports the same references", {
+  p <- demopaper()
+  i <- match(1, p$bib$bib_id)
+  p$bib$authors[i] <- "Eagley, Alice H; Wood, Wendy"
+  mo <- module_run(p, "ref_accuracy")
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(report, "Eagly not found among the cited authors", fixed = TRUE)
+  p$bib$authors[i] <- "Wood, Wendy; Eagly, Alice H"
+  report <- paste(unlist(module_run(p, "ref_accuracy")$report), collapse = "\n")
+  expect_match(report, "the first author is Eagly", fixed = TRUE)
+
+  # at min_mismatches = 2 a lone author mismatch is not flagged, and its
+  # mismatch column is FALSE, so that ref_summary does not report it
+  mo <- module_run(p, "ref_accuracy", min_mismatches = 2)
+  r <- mo$table[mo$table$bib_id == 1, ]
+  expect_false(r$incoherent)
+  expect_false(r$author_mismatch)
 })
 
 test_that("ref_pubpeer counts a DOI cited three times once, and runs without url fields (U118)", {
@@ -629,6 +809,24 @@ test_that("ref_accuracy reads bibr 12.x author lists and article types", {
   q$bib$authors[k] <- "Nobody, A., & Else, B"
   r <- module_run(q, "ref_accuracy")$table
   expect_true(r$author_mismatch[r$bib_id == p$bib$bib_id[k]])
+
+  # record surnames are whole words of the printed list, the first one first,
+  # and a compound surname may be cited by its last part
+  fam <- tbl$authors.match[!tbl$incoherent][[1]]$family
+  m <- match(p$bib$bib_id[k], p$bib_match$bib_id)
+  check <- function(authors, family = fam) {
+    q <- p
+    q$bib$authors[k] <- authors
+    q$bib_match$authors[[m]]$family <- family
+    r <- module_run(q, "ref_accuracy")$table
+    r$incoherent[r$bib_id == p$bib$bib_id[k]]
+  }
+  printed <- \(f) paste0(f, ", A.", collapse = ", ")
+  expect_false(check(printed(fam)))
+  expect_true(check(printed(paste0("Mc", fam))))
+  expect_true(check(printed(rev(fam))))
+  expect_false(check(printed(c("Vaughns", fam[-1])), c("Purdie-Vaughns", fam[-1])))
+  expect_false(check(printed(c("Le Doux", fam[-1])), c("LeDoux", fam[-1])))
 })
 
 test_that("ref_accuracy only compares references that printed a DOI and were looked up", {
