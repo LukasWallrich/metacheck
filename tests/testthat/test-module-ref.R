@@ -314,11 +314,182 @@ test_that("ref_accuracy accepts a cited DOI written as a URL", {
   # an unresolved DOI written as a URL links to doi.org once
   p$bib_match <- p$bib_match[-1, ]
   p$bib$doi[i] <- paste0("https://doi.org/", doi)
+  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = NA))
   mo <- module_run(p, "ref_accuracy")
   expect_equal(mo$table$tier[mo$table$bib_id == p$bib$bib_id[i]], "unresolved")
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_false(grepl("doi.org/https", report, fixed = TRUE))
   expect_match(report, paste0("https://doi.org/", doi), fixed = TRUE)
+})
+
+test_that("ref_accuracy asks doi.org about a cited DOI without a record", {
+  p <- demopaper()
+  i <- match(1, p$bib$bib_id)
+  p$bib_match <- p$bib_match[p$bib_match$bib_id != 1, ]
+  ra <- NULL
+  # the answer for bib 1; the demo's other unresolved DOIs get none
+  local_mocked_bindings(doi_ra = \(doi) {
+    own <- doi == p$bib$doi[i]
+    data.frame(doi = doi, ra = ifelse(own, ra$ra, NA_character_),
+               exists = ifelse(own, ra$exists, NA))
+  })
+  row <- \(mo) mo$table[mo$table$bib_id == 1, ]
+
+  # doi.org: the DOI does not exist
+  ra <- list(ra = NA_character_, exists = FALSE)
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(row(mo)$tier, "unresolved")
+  expect_true(row(mo)$incoherent)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "does not exist (doi.org)", fixed = TRUE)
+
+  # doi.org could not be asked: flagged as not found
+  ra <- list(ra = NA_character_, exists = NA)
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(row(mo)$tier, "unresolved")
+  expect_true(row(mo)$incoherent)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "could not be found", fixed = TRUE)
+
+  # the DOI is registered with another agency: listed, not flagged
+  ra <- list(ra = "mEDRA", exists = TRUE)
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(row(mo)$tier, "registered")
+  expect_false(row(mo)$incoherent)
+  expect_equal(row(mo)$doi_ra, "mEDRA")
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(report, "DOIs that could not be checked", fixed = TRUE)
+  expect_match(report, "mEDRA", fixed = TRUE)
+  expect_match(mo$summary_text, "1 cited DOI is registered, but no record was retrieved for it", fixed = TRUE)
+})
+
+test_that("ref_accuracy lists references without a DOI that no registry holds", {
+  # bib 3 (Lakens 2018) has no DOI; without its CrossRef match it is searched
+  # by title in CrossRef, then in DataCite
+  p <- demopaper()
+  p$bib_match <- p$bib_match[p$bib_match$bib_id != 3, ]
+  title <- p$bib$title[p$bib$bib_id == 3]
+  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = NA))
+  cr_title <- dc_title <- NULL
+  dc_called <- FALSE
+  local_mocked_bindings(
+    crossref_query = \(ref, ...) {
+      q <- unlist(ref)
+      if (is.na(cr_title)) return(data.frame(ref = q, DOI = NA_character_, error = "request failed"))
+      data.frame(ref = q, DOI = "10.1/x", title = cr_title, score = 20)
+    },
+    datacite_query = \(title, ...) {
+      dc_called <<- TRUE
+      if (is.null(dc_title)) return(data.frame(query = integer(0), doi = character(0),
+        title = character(0), year = integer(0), authors = character(0), error = logical(0)))
+      data.frame(query = 1L, doi = "10.2/y", title = dc_title, year = 2018L,
+                 authors = "Lakens", error = FALSE)
+    })
+  nf <- \(mo) mo$table$not_found[mo$table$bib_id == 3]
+
+  # found nowhere: listed, with the summary
+  cr_title <- "Equivalence of something else entirely"
+  mo <- module_run(p, "ref_accuracy")
+  expect_true(nf(mo))
+  expect_true(dc_called)
+  expect_equal(mo$summary_table$not_found, 1)
+  expect_match(mo$summary_text, "No work with the cited title was found in CrossRef or DataCite for 1 of them", fixed = TRUE)
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(report, "### References not found", fixed = TRUE)
+  # a reference not found does not change the traffic light
+  p2 <- p; p2$bib_match <- p2$bib_match[0, ]
+  expect_equal(module_run(p2, "ref_accuracy")$traffic_light, "na")
+
+  # CrossRef holds the title, with a score too low for add_bib_match()
+  cr_title <- paste0(title, ": A Tutorial")
+  dc_called <- FALSE
+  mo <- module_run(p, "ref_accuracy")
+  expect_false(nf(mo))
+  expect_false(dc_called)
+
+  # DataCite holds it
+  cr_title <- "Equivalence of something else entirely"
+  dc_title <- title
+  expect_false(nf(module_run(p, "ref_accuracy")))
+
+  # the search failed: not listed
+  cr_title <- NA
+  dc_title <- NULL
+  expect_false(nf(module_run(p, "ref_accuracy")))
+})
+
+test_that("ref_accuracy accepts author lists truncated with et al.", {
+  # bib 3 (Lakens, Scheel & Isager 2018) cites only Lakens; its record has
+  # all three. A confident match, so the record is compared.
+  p <- demopaper()
+  i <- p$bib$bib_id == 3
+  m <- p$bib_match$bib_id == 3
+  p$bib_match$score[m] <- 90
+  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = NA))
+  row <- \(p) { t <- module_run(p, "ref_accuracy")$table; t[t$bib_id == 3, ] }
+  expect_true(row(p)$author_mismatch)
+
+  # "et al." in the author list, or "others" as BibTeX gives it
+  p1 <- p; p1$bib$authors[i] <- "Lakens, Daniël; et al."
+  expect_false(row(p1)$incoherent)
+  p2 <- p; p2$bib$authors[i] <- "Lakens, Daniël; others"
+  expect_false(row(p2)$incoherent)
+  # "et al." only in the reference text, before the title
+  p3 <- p
+  ti <- p3$text$text_id == p3$bib$text_id[i]
+  p3$text$text[ti] <- sub("Lakens, Daniël.", "Lakens, Daniël, et al.", p3$text$text[ti], fixed = TRUE)
+  expect_false(row(p3)$incoherent)
+  # the cited authors must still be the record's first authors
+  p4 <- p; p4$bib$authors[i] <- "Scheel, Anne M; et al."
+  expect_true(row(p4)$author_mismatch)
+})
+
+test_that("ref_accuracy compares a record that a title search finds", {
+  # bib 3 without its CrossRef match is searched by title; a record with the
+  # same title whose authors or year differ flags it
+  p <- demopaper()
+  p$bib_match <- p$bib_match[p$bib_match$bib_id != 3, ]
+  title <- p$bib$title[p$bib$bib_id == 3]
+  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = NA))
+  cr_authors <- "Lakens"
+  cr_year <- 2018L
+  local_mocked_bindings(
+    crossref_query = \(ref, ...) {
+      x <- data.frame(ref = unlist(ref), DOI = "10.1177/2515245918770963",
+                      title = title, score = 20, year = cr_year,
+                      type = "journal-article")
+      x$author <- list(data.frame(given = "A", family = cr_authors))
+      x
+    },
+    datacite_query = \(title, ...) stop("not searched"))
+  row <- \(mo) mo$table[mo$table$bib_id == 3, ]
+
+  mo <- module_run(p, "ref_accuracy")
+  expect_false(row(mo)$incoherent)
+  expect_false(row(mo)$not_found)
+
+  cr_authors <- c("Smith", "Jones")
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(row(mo)$tier, "search")
+  expect_true(row(mo)$incoherent)
+  # ref_summary reports the mismatch, not "no match"
+  expect_false(row(mo)$no_match)
+  expect_true(row(mo)$author_mismatch)
+  expect_equal(row(mo)$doi.match, "10.1177/2515245918770963")
+  report <- paste(unlist(mo$report), collapse = "\n")
+  expect_match(report, "the work with the same title in CrossRef differs", fixed = TRUE)
+  expect_equal(mo$traffic_light, "yellow")
+
+  cr_authors <- "Lakens"
+  cr_year <- 2012L
+  mo <- module_run(p, "ref_accuracy")
+  expect_true(row(mo)$year_mismatch)
+  expect_false(row(mo)$author_mismatch)
+
+  # a book cited, or a record that is not an article, is not compared
+  p2 <- p
+  p2$bib$bib_type[p2$bib$bib_id == 3] <- "book"
+  mo <- module_run(p2, "ref_accuracy")
+  expect_false(row(mo)$incoherent)
+  expect_false(row(mo)$not_found)
 })
 
 test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differences", {
@@ -427,6 +598,11 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib_match$container[m] <- "Psychological Science"
       p$bib$container[i] <- "Curr. Dir. Psychol. Sci."; p
     },
+    # another conference's acronym
+    container = \(p) {
+      p$bib_match$container[m] <- "Proceedings of the AAAI Conference on Artificial Intelligence"
+      p$bib$container[i] <- "IJCAI"; p
+    },
     # the first author is not cited first
     author = \(p) { p$bib$authors[i] <- "Wood, Wendy; Eagly, Alice H"; p },
     author = \(p) { p$bib$authors[i] <- "Smith, John; Eagly, Alice H; Wood, Wendy"; p },
@@ -529,6 +705,14 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
     journal_acronym = \(p) {
       p$bib_match$container[m] <- "MMWR. Morbidity and Mortality Weekly Report"
       p$bib$container[i] <- "Morbidity and Mortality Weekly Report"; p
+    },
+    journal_proceedings = \(p) {
+      p$bib_match$container[m] <- "Proceedings of the AAAI Conference on Artificial Intelligence"
+      p$bib$container[i] <- "AAAI Conference on Artificial Intelligence"; p
+    },
+    journal_conference_acronym = \(p) {
+      p$bib_match$container[m] <- "Proceedings of the AAAI Conference on Artificial Intelligence"
+      p$bib$container[i] <- "AAAI"; p
     },
     journal_wires = \(p) {
       p$bib_match$container[m] <- "Wiley Interdisciplinary Reviews: Cognitive Science"
@@ -812,6 +996,11 @@ test_that("ref_accuracy reads bibr 12.x author lists and article types", {
   # bibr 12.x keeps the author list as printed ("Adam, H., Shirako, A., &
   # Maddux, W. W") and calls a journal article "journal_article"
   p <- read(test_path("fixtures", "bibr12", "preprint.json"))
+  # no searches for the references without a DOI
+  local_mocked_bindings(
+    crossref_query = \(ref, ...) data.frame(ref = unlist(ref), DOI = NA_character_, error = "offline"),
+    datacite_query = \(title, ...) data.frame(query = seq_along(title), doi = NA_character_,
+      title = NA_character_, year = NA_integer_, authors = NA_character_, error = TRUE))
   mo <- module_run(p, "ref_accuracy")
   tbl <- mo$table[mo$table$tier == "provided", ]
   expect_true(any(tbl$bib_type.match == "journal_article"))
@@ -868,7 +1057,7 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   expect_false(tbl$doi_suggested[tbl$bib_id == 3])
   expect_true(tbl$no_doi[tbl$bib_id == 3])
   expect_equal(mo$traffic_light, "yellow")
-  expect_match(mo$summary_text, "1 reference without a DOI, CrossRef found a work with the same title")
+  expect_match(mo$summary_text, "1 reference without a DOI, a title search found a work with the same title")
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_match(report, "No DOI cited; the work with the same title differs", fixed = TRUE)
   expect_match(report, paste0("https://doi.org/", p$bib_match$doi[k]), fixed = TRUE)

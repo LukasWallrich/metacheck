@@ -91,6 +91,119 @@ datacite_doi <- function(doi) {
   bib_table
 }
 
+#' Registration agency of DOIs from doi.org
+#'
+#' Asks doi.org which registration agency (Crossref, DataCite, mEDRA, ...)
+#' registered each DOI, which also tells whether the DOI exists at all.
+#'
+#' @param doi the DOI(s) to check
+#'
+#' @returns a data frame with the DOI as given, the registration agency
+#'   (`ra`, NA when there is none) and `exists`: TRUE for a registered DOI,
+#'   FALSE for a DOI that doi.org reports as not existing or invalid, NA when
+#'   the DOI was missing or the lookup failed
+#' @keywords internal
+#'
+#' @examples
+#' \dontrun{
+#' doi_ra(c("10.1037/0033-2909.126.1.78", "10.1037/0033-2909.1261.7"))
+#' }
+doi_ra <- function(doi) {
+  out <- data.frame(doi = doi, ra = NA_character_, exists = NA)
+  cleaned <- doi_clean(doi)
+  todo <- unique(cleaned[!is.na(cleaned) & nzchar(cleaned)])
+  if (!length(todo) || !online("doi.org")) return(out)
+  # doi.org answers several comma-separated DOIs at once
+  res <- lapply(split(todo, ceiling(seq_along(todo) / 20)), \(dois) {
+    url <- paste0("https://doi.org/ra/",
+                  paste(utils::URLencode(dois, reserved = TRUE), collapse = ","))
+    tryCatch({
+      j <- .mc_request(url) |> httr2::req_timeout(30) |>
+        httr2::req_retry(max_tries = 2) |>
+        httr2::req_perform() |> httr2::resp_body_json()
+      data.frame(
+        doi = dois,
+        ra = vapply(j, \(x) x$RA %||% NA_character_, ""),
+        status = vapply(j, \(x) x$status %||% NA_character_, ""))
+    }, error = \(e) data.frame(doi = dois, ra = NA_character_, status = NA_character_))
+  }) |> dplyr::bind_rows()
+  m <- match(cleaned, res$doi)
+  out$ra <- res$ra[m]
+  out$exists <- ifelse(!is.na(res$ra[m]), TRUE,
+    ifelse(res$status[m] %in% c("DOI does not exist", "Invalid DOI"), FALSE, NA))
+  out
+}
+
+#' Search DataCite by title
+#'
+#' Searches DataCite's records (which include arXiv, Zenodo, OSF and many data
+#' repositories) for works whose titles share words with each title, most
+#' relevant first.
+#'
+#' @param title the title(s) to search for
+#' @param n how many records to return per title
+#'
+#' @returns a data frame with the index of the title searched for (`query`),
+#'   and the `doi`, `title`, `year`, `authors` (family names separated by
+#'   "; ") and `type` (DataCite's resourceTypeGeneral) of each record found. A title whose search failed has a row with
+#'   `doi` NA and `error` TRUE; a title with no records has no rows.
+#' @keywords internal
+#'
+#' @examples
+#' \dontrun{
+#' datacite_query("Deep residual learning for image recognition")
+#' }
+datacite_query <- function(title, n = 5) {
+  empty <- data.frame(query = integer(0), doi = character(0),
+                      title = character(0), year = integer(0),
+                      authors = character(0), type = character(0),
+                      error = logical(0))
+  words <- lapply(title, \(x) {
+    if (is.na(x)) return(character(0))
+    w <- strsplit(gsub("[^[:alnum:] ]", " ", x), "\\s+")[[1]]
+    w[nchar(w) >= 2]
+  })
+  todo <- which(lengths(words) > 0)
+  if (!length(todo)) return(empty)
+  if (!online("api.datacite.org")) {
+    return(data.frame(query = todo, doi = NA_character_, title = NA_character_,
+                      year = NA_integer_, authors = NA_character_,
+                      type = NA_character_, error = TRUE))
+  }
+  # words joined with OR and sorted by relevance, so a title misread from the
+  # PDF ("ulti- matum") still finds the work; the caller compares the titles
+  urls <- vapply(todo, \(i) paste0(
+    "https://api.datacite.org/dois?sort=relevance&page[size]=", n,
+    "&fields[dois]=titles,publicationYear,creators,types&query=",
+    utils::URLencode(sprintf("titles.title:(%s)",
+                             paste(words[[i]], collapse = " OR ")), reserved = TRUE)),
+    character(1))
+  resps <- .batch_query(urls, msg = NULL)
+  lapply(seq_along(todo), \(j) {
+    resp <- resps[[j]]
+    failed <- is.null(resp) || inherits(resp, "error") ||
+      httr2::resp_status(resp) >= 400
+    data <- if (!failed) tryCatch(httr2::resp_body_json(resp)$data,
+                                  error = \(e) NULL)
+    if (failed || is.null(data)) {
+      return(data.frame(query = todo[j], doi = NA_character_,
+                        title = NA_character_, year = NA_integer_,
+                        authors = NA_character_, type = NA_character_,
+                        error = TRUE))
+    }
+    if (!length(data)) return(empty)
+    data.frame(
+      query = todo[j],
+      doi = vapply(data, \(d) d$id %||% NA_character_, ""),
+      title = vapply(data, \(d) d$attributes$titles[[1]]$title %||% NA_character_, ""),
+      year = vapply(data, \(d) as.integer(d$attributes$publicationYear %||% NA), 1L),
+      authors = vapply(data, \(d) paste(vapply(d$attributes$creators, \(a)
+        a$familyName %||% sub(",.*", "", a$name %||% ""), ""), collapse = "; "), ""),
+      type = vapply(data, \(d) d$attributes$types$resourceTypeGeneral %||% NA_character_, ""),
+      error = FALSE)
+  }) |> dplyr::bind_rows(empty)
+}
+
 #' Convert crossref/doi types to bibtex types
 #'
 #' @param type a vector of crossref types
