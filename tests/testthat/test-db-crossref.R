@@ -410,3 +410,15 @@ test_that("datacite_query finds a title misread from the PDF", {
   expect_false(2 %in% dc$query)
   expect_true(all(c("title", "year", "authors", "type") %in% names(dc)))
 })
+
+test_that("datacite_query reads a record without a title, and searches operators as words", {
+  urls <- NULL
+  local_mocked_bindings(online = \(...) TRUE, .batch_query = \(u, ...) {
+    urls <<- u
+    list(httr2::response(200, headers = list(`Content-Type` = "application/json"),
+      body = charToRaw('{"data":[{"id":"10.5281/x","attributes":{"titles":[],"publicationYear":2020,"creators":[]}}]}')))
+  })
+  dc <- datacite_query("To be or NOT to be")
+  expect_true(is.na(dc$title))
+  expect_false(grepl("NOT", utils::URLdecode(urls)))
+})

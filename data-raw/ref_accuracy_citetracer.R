@@ -7,13 +7,18 @@
 # fabricated or changed by an LLM (H1 title, H2 authors, H3 venue, H4 year,
 # H5 DOI, H6 pages, volume or publisher). Each citation becomes a reference
 # in a paper of 50 (shuffled across subtypes), is looked up with
-# add_bib_match(), and is counted as caught when ref_accuracy flags it or
-# lists it as not found. Network calls only (CrossRef, DataCite, doi.org);
-# about 30 minutes.
+# add_bib_match(), and ref_accuracy's flags (incoherent) and not-found notes
+# are counted separately. CiteTracer has no entry types, so every citation is
+# an article. Network calls only (CrossRef, DataCite, doi.org); about 30
+# minutes. The looked-up papers are saved to `cache`, so a rerun of the
+# module after a change needs no lookups.
 
 devtools::load_all(".")
 
-url <- "https://raw.githubusercontent.com/aaFrostnova/CiteTracer/main/data/synthetic_data/v2/"
+# the last commit that changed the v2 data (9 May 2026)
+sha <- "5dfe2dd71c5c9d9a946653bbabb34ee0e61e6efc"
+url <- sprintf("https://raw.githubusercontent.com/aaFrostnova/CiteTracer/%s/data/synthetic_data/v2/", sha)
+cache <- file.path(tools::R_user_dir("metacheck", "cache"), "citetracer_bib_match.rds")
 cites <- jsonlite::fromJSON(paste0(url, "_all_test.json"), simplifyVector = FALSE)
 meta <- jsonlite::fromJSON(paste0(url, "meta.json"), simplifyVector = FALSE)
 
@@ -67,11 +72,18 @@ papers <- lapply(split(refs, refs$paper_id), \(r) {
   p
 }) |> paperlist()
 
-papers <- add_bib_match(papers)
+if (file.exists(cache)) {
+  papers <- readRDS(cache)
+} else {
+  papers <- add_bib_match(papers)
+  dir.create(dirname(cache), recursive = TRUE, showWarnings = FALSE)
+  saveRDS(papers, cache)
+}
 mo <- module_run(papers, "ref_accuracy")
 
 res <- merge(refs[, c("paper_id", "bib_id", "label", "subtype")], mo$table,
              by = c("paper_id", "bib_id"))
-res$caught <- res$incoherent | res$not_found
-table(res$label, res$caught) |> prop.table(1) |> round(3)
-table(res$subtype, res$caught)
+res$outcome <- ifelse(res$incoherent, "flagged",
+                      ifelse(res$not_found, "not found", "neither"))
+table(res$label, res$outcome) |> prop.table(1) |> round(3)
+table(res$subtype, res$outcome)

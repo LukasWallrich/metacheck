@@ -162,7 +162,9 @@ datacite_query <- function(title, n = 5) {
                       error = logical(0))
   words <- lapply(title, \(x) {
     if (is.na(x)) return(character(0))
-    w <- strsplit(gsub("[^[:alnum:] ]", " ", x), "\\s+")[[1]]
+    # lower case, so that "AND", "OR", "NOT" and "TO" in a title are words,
+    # not search operators (DataCite answered 400 to them)
+    w <- strsplit(gsub("[^[:alnum:] ]", " ", tolower(x)), "\\s+")[[1]]
     w[nchar(w) >= 2]
   })
   todo <- which(lengths(words) > 0)
@@ -197,7 +199,11 @@ datacite_query <- function(title, n = 5) {
     data.frame(
       query = todo[j],
       doi = vapply(data, \(d) d$id %||% NA_character_, ""),
-      title = vapply(data, \(d) d$attributes$titles[[1]]$title %||% NA_character_, ""),
+      # a record may have no title
+      title = vapply(data, \(d) {
+        t <- d$attributes$titles
+        if (length(t)) t[[1]]$title %||% NA_character_ else NA_character_
+      }, ""),
       year = vapply(data, \(d) as.integer(d$attributes$publicationYear %||% NA), 1L),
       authors = vapply(data, \(d) paste(vapply(d$attributes$creators, \(a)
         a$familyName %||% sub(",.*", "", a$name %||% ""), ""), collapse = "; "), ""),
@@ -394,10 +400,10 @@ crossref_doi <- function(doi, select = c(
     item$`container-title` <- NULL
   }
 
-  if (length(item$`journal-issue`$`published-print`$`date-parts`) &
+  if (length(item$`journal-issue`$`published-print`$`date-parts`) &&
       length(item$`journal-issue`$`published-print`$`date-parts`[[1]])) {
     item$year <- item$`journal-issue`$`published-print`$`date-parts`[[1]][[1]]
-  } else if (length(item$published$`date-parts`) &
+  } else if (length(item$published$`date-parts`) &&
     length(item$published$`date-parts`[[1]])) {
     item$year <- item$published$`date-parts`[[1]][[1]]
   }
@@ -628,7 +634,9 @@ add_bib_match <- function(paper, min_score = 50) {
   }
 
   # look up by doi
-  has_doi <- doi_valid_format(bib$doi) %in% TRUE
+  # cleaned first, so a DOI written as a URL or read with a space or a full
+  # stop from the PDF is looked up as a DOI
+  has_doi <- doi_valid_format(doi_clean(bib$doi)) %in% TRUE
 
   # look up papers with DOI
   cr_data_doi <- data.frame()

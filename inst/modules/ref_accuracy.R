@@ -1,16 +1,16 @@
 #' Reference Accuracy
 #'
 #' @description
-#' This module checks whether each reference with a DOI is internally coherent: it compares the details the paper cites for a reference against the authoritative record that the reference's DOI points to, and flags any reference whose cited details do not match. For a reference without a DOI, it suggests the DOI of a work with the same title, or flags the reference when that work's authors, journal or year differ.
+#' This module compares the details each reference cites with the record for its DOI and flags references whose details disagree. For a reference without a DOI, it looks for a work with the same title, and suggests its DOI or flags the reference when the work's authors, journal or year differ.
 #'
 #' @details
-#' This module looks for *incoherent* references: a reference is incoherent when the title, authors, journal, or year that the paper cites disagree with the record that the reference's own DOI points to. This is often an error in reading the reference list from the PDF, but the module also finds mistakes in citations and can point out AI-generated references. You will need to check the original source.
+#' A flagged reference is *incoherent*: its cited details disagree with the record. This may be an error in reading the reference list from the PDF, a citation mistake, or an AI-generated reference, so check the original source.
 #'
 #' The module uses the `bib_match` table, which holds the metadata retrieved from CrossRef for each reference (added or refreshed with `add_bib_match()`, which makes live network calls). The module itself also makes network calls: to doi.org for cited DOIs without a record, and to CrossRef and DataCite for title searches of references without a DOI.
 #'
-#' **Only references that supply their own DOI are checked.** For these, we compare what the paper cites field by field against the record found for that DOI. `add_bib_match()` looks up a cited DOI directly when it is valid as printed; a DOI that is not (for example one broken by a space from the PDF) is matched by a title search instead. A DOI printed in the reference text that the PDF reader did not take as the reference's DOI (a link with "%2F" for "/", or a malformed DOI such as "doi.org/1073191116659134") counts as the cited DOI when it is the DOI the title search found, apart from lost punctuation or prefix; a malformed one is then a DOI mismatch. For a cited DOI with no record at all, doi.org is asked whether the DOI exists: one that does not exist is flagged; one that is registered (a lookup that failed for network reasons, or a DOI registered with an agency whose records are not looked up, such as mEDRA) is listed as not checked; when doi.org cannot be reached, the DOI is flagged as one that could not be found. References in papers that were not looked up at all are not checked. References without a DOI are listed separately, with a recommendation to add a DOI where one exists. The only record for them comes from a CrossRef title search, which often returns the wrong paper, so they are compared only with a high-confidence match (controlled by `suggest_score`) whose title agrees with the cited title. When that match's authors, journal or year disagree with the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise its DOI is suggested, and the report shows the record it points to.
+#' For a reference with a DOI, the module compares the cited details field by field with the record found for that DOI. `add_bib_match()` looks up a cited DOI directly when it is valid after `doi_clean()`, which removes a doi.org or journal URL around it and the spaces, punctuation and brackets that reading the PDF adds; a DOI that is still not valid is matched by a title search instead. A DOI printed in the reference text that the PDF reader did not take as the reference's DOI (a link with "%2F" for "/", or a malformed DOI such as "doi.org/1073191116659134") counts as the cited DOI when it is the DOI the title search found, apart from lost punctuation or prefix; a malformed one is then a DOI mismatch. For a cited DOI with no record, the module asks doi.org whether it exists. A DOI that does not exist is flagged. A registered DOI, or one doi.org could not be asked about, is listed as not checked: its record is missing because a lookup failed, or because its agency's records are not looked up (DataCite, mEDRA). References in papers that were not looked up at all are not checked. References without a DOI are listed separately, with a recommendation to add a DOI where one exists. Their record comes from a CrossRef title search, which can return the wrong work, so a reference is compared only with a record whose title agrees with the cited title. The match must be confident (a score of at least `suggest_score`), or have almost the same title (a character similarity of at least 0.9): a wrong year or author lowers CrossRef's score. When the match's authors, journal or year disagree with the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise the DOI of a confident match is suggested, and the report shows the record it points to. Unless both are articles, only a confident match is compared, and only on its authors, because the editions of a book or report share its title; its DOI is not suggested when the year differs by more than `year_tolerance`. A reference whose title was not read is neither compared nor given a DOI.
 #'
-#' A reference without a DOI whose title is not that of CrossRef's match is searched by its title alone, first in CrossRef (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories. When none of the first five records of either search has the cited title (by the title rules below), the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9), and both the reference and the record are articles or preprints, its authors and year are compared as for CrossRef's confident match, and the reference is flagged when they disagree. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. Most such references are works these registries do not hold (books, reports, theses, software, web pages) or titles misread from the PDF, so they do not change the traffic light; but a journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words are not searched.
+#' A reference without a DOI whose title is not that of CrossRef's match is searched by its title alone, first in CrossRef (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories. When none of the first five records of either search has the cited title (by the title rules below), the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9), and both the reference and the record are articles or preprints, its authors, year and (for a CrossRef journal article) journal are compared as for CrossRef's confident match, and the reference is flagged when they disagree. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. Most such references are works these registries do not hold (books, reports, theses, software, web pages) or titles misread from the PDF, so they do not change the traffic light; but a journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
 #'
 #' Entries that were not read correctly from the PDF are listed separately and not compared: two references read as one entry (a second APA author-year start, as in "... Bar, M. (2004). ..."), an entry of which only the DOI was read, and a reference whose printed DOI was not read and so not looked up. When only the DOI was read and the entry before it has no DOI but its title search found that DOI, the DOI is given to that reference. These entries do not change the traffic light.
 #'
@@ -18,15 +18,23 @@
 #'
 #' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch). DOIs are compared after removing URL wrappers (`https://doi.org/`, journal article URLs), spaces and trailing punctuation left by the PDF, and the old double slash after the prefix (`10.1037//`). When the record was found by looking up the cited DOI (it has no search score), a record with a different DOI means the registry lists the cited DOI as an alias (for example after a journal moved publisher); this is reported as a note with the current DOI, not as an incoherence. A DOI mismatch is therefore only flagged when the record came from a title search. Papers read from bibr 12.x exports do not record how a record was found, so for them a different DOI is always a mismatch.
 #' - **Year** — flagged when the cited year is more than `year_tolerance` years from the record (online-first and print years routinely differ by one year, so this is allowed by default).
-#' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", "the", "WIREs" for "Wiley Interdisciplinary Reviews", an acronym before the full name ("MMWR. Morbidity and Mortality Weekly Report"), and British and American spellings ("Behaviour" and "Behavior") are treated as equivalent. The words of the shorter name must appear in order in the longer one, starting with its first word, so a subtitle or section may be left out, but a name that starts inside another is another journal ("Psychological Science" is not "Current Directions in Psychological Science"), and a one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience"). Words that the parsed journal lost are accepted when the record's name is in the reference text ("Perception, & Psychophysics" for "Attention, Perception, & Psychophysics"), also when a word in it is hyphenated at a line break. A name that continues another is still accepted ("Journal of Experimental Psychology" for "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
-#' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits), but also a change of one or two words in a long title. A title is also accepted when the record's title appears in the reference text as whole words ending at a title delimiter, for references whose title was not read correctly from the PDF. A title that begins with the other one followed by a title delimiter (":", "?", "." or "!") is accepted, because the record or the citation often holds only the main title; the subtitle is then not checked. A translated title in square brackets, as APA gives for a work in another language, is compared too.
+#' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", "the", "WIREs" for "Wiley Interdisciplinary Reviews", an acronym before the full name ("MMWR. Morbidity and Mortality Weekly Report"), the conference name or acronym for a proceedings record registered as a journal article ("AAAI" for "Proceedings of the AAAI Conference on Artificial Intelligence"), and British and American spellings ("Behaviour" and "Behavior") are treated as equivalent. The words of the shorter name must appear in order in the longer one, starting with its first word, so a subtitle or section may be left out, but a name that starts inside another is another journal ("Psychological Science" is not "Current Directions in Psychological Science"), and a one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience"). Words that the parsed journal lost are accepted when the record's name is in the reference text ("Perception, & Psychophysics" for "Attention, Perception, & Psychophysics"), also when a word in it is hyphenated at a line break. A name that continues another is still accepted ("Journal of Experimental Psychology" for "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
+#' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits), but also a change of one or two words in a long title. A title is also accepted when the record's title appears in the reference text as whole words ending at a title delimiter, for references whose title was not read correctly from the PDF. A title that begins with the other one followed by a title delimiter (":", "?", "." or "!") is accepted, because the record or the citation often holds only the main title; the subtitle is then not checked. A translated title in square brackets, as APA gives for a work in another language, is compared too. Letters of every script count, so titles in Cyrillic or Chinese are compared like others.
 #' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list, or when the record's first author is not cited first. Only the leading authors are required because author lists are routinely truncated with "et al.". The cited authors are read one person at a time, and each record surname must equal one cited surname, compared on its letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match). When one of the two is a single word, it may also match the other's last word, for shortened compound surnames and particles ("Vafaei Shooshtari" cited as "Shooshtari", "Gelder" cited as "De Gelder"); the last word is also taken after a hyphen or an elided particle ("Purdie-Vaughns" cited as "Vaughns", "O'Connell" read from the PDF as "Connell"). A cited name without a comma is read as given name first, and the record surname must equal its last word or words. Papers read from bibr 12.x exports keep each author list as printed ("Adam, H., Shirako, A., & Maddux, W. W"), so for them each record surname must equal one or more consecutive whole words of the list, with the same tolerance for compound surnames. A reference whose authors could not be read is not flagged. Extra cited authors after the first and given names are not checked. A cited list truncated with "et al." (or "and others", as BibTeX gives it), in the parsed authors or in the reference text before the title, needs only as many record authors as it cites, in order: truncation is a citation style, not an error.
 #'
 #' A mismatched DOI, journal or year flags a reference on its own. Title and author mismatches are governed by `min_mismatches`: the default (1) flags a reference when either the title or the authors disagree. For a reference without a DOI the title is not compared, so its authors alone flag it only at the default. In the validation below, all genuine author errors were single author mismatches, so `min_mismatches = 2` removed them while keeping most flags that were not errors; it is not recommended.
 #'
-#' The report lists each incoherent reference with the specific cited value struck through and the record's value beside it, or the record's author surnames missing from the citation, so the discrepancy is visible at a glance.
+#' The report shows each disagreeing cited value struck through beside the record's value, or lists the record's author surnames missing from the citation.
 #'
-#' <validation>In an evaluation on 30 randomly sampled Psychological Science papers (October 2026; 1,269 references, 556 of which printed their own DOI), the module flagged 7 of the references that printed a DOI, in 5 papers (1.3%). Checked by hand, 5 were citation errors: a misspelled and a wrong author name ("Bernsten" for Berntsen, "Lund" for Yund), and three printed DOIs that do not work ("doi.org/1073191116659134" without its prefix, "doi.org/101016/jcomppsych201006008" without its dots, and "10.1037//0033-2909.1261.7" for 10.1037//0033-2909.126.1.78; all three appear so in the reference lists the publishers deposited at CrossRef). 1 was unclear (a diacritic in "Teder-Sälejärvi"), and 1 was not an error (an online-first year two years before the print year). A data DOI registered with DataCite, which CrossRef does not hold, is listed as not checked. Among the 706 references that printed no DOI, CrossRef found a confident match with the same title for 518; for 508 its DOI is suggested, and 10 were flagged because the match disagrees. Checked by hand, 5 were citation errors (four misspelled author names, such as "Sonuga-Burke" for Sonuga-Barke, and "Nature Neuroscience Reviews" for Nature Reviews Neuroscience), 1 was a different version of the work (the 1897 abstract in the Proceedings of the Royal Society of a 1898 Philosophical Transactions paper, whose DOI would have been suggested before), 1 was unclear (a compound surname cited by its first part), and 3 were not errors (authors misread from the PDF, an online-first year, and a journal that has since been renamed). At min_mismatches = 2, the 9 author flags drop, leaving 9 flags, 4 of them errors. No reference was flagged by the title-only searches. 55 references in 24 papers were listed as not found: 19 books and chapters, 12 reports and other documents of organisations, 10 web pages, news and data pages, 4 software, 7 theses, manuscripts, conference contributions and abstracts, 1 statement of author contributions read as a reference, and 2 journal articles that have no DOI. A further 6 entries were two references read as one and were listed as not read reliably. A flag should be read as "check this reference against the original source", not as a confirmed error. This evaluation cannot show how many citation errors the module misses. The package tests change one field of a correct reference at a time and check that each change is flagged, and record known misses (a one-word change in a long title, a cited journal name that continues the record's), but that does not establish a detection rate for real errors. On CiteTracer's synthetic benchmark (2,450 machine-learning citations built from real BibTeX entries, October 2026; `data-raw/ref_accuracy_citetracer.R`), the module flagged or listed as not found 62% of the 1,156 citations with a fabricated or changed field: every fabricated DOI, 95% of wrong years, 73% of wrong author lists, 68% of fabricated or paraphrased titles, 24% of fabricated venues, and 1% of wrong pages, volumes or publishers, which it does not compare. It flagged or listed 4.1% of the 1,023 real citations (most of them not found: conference and workshop papers at ICML, ICLR and NeurIPS, which have no DOIs and were not on arXiv) and 3.7% of the 271 borderline ones (name variants, fields no source has). The benchmark's references are machine-learning citations without reading errors, so these rates are not those of references read from PDFs.</validation>
+#' <validation>In 30 randomly sampled Psychological Science papers (1,269 references, matched with `add_bib_match()` in November 2026), the module flagged 7 of the 555 references that printed a DOI and 12 of the 706 that did not (the other 8 were 6 entries not read reliably, a DOI read as an entry of its own, and a DOI registered with DataCite). Checked by hand, 12 of the 19 flags were citation errors: six misspelled author names (such as "Bernsten" for Berntsen and "Sonuga-Burke" for Sonuga-Barke), three printed DOIs that do not work (all three appear so in the reference lists the publishers deposited at CrossRef), and three wrong or misspelled journal names ("Nature Neuroscience Reviews" for Nature Reviews Neuroscience, "Cortex" for Neuropsychologia, and "Neuropsychophamacology"). Two were unclear (a diacritic in "Teder-Sälejärvi" and a compound surname cited by its first part), one was another version of the work (an 1897 abstract of an 1898 paper), and four were not errors (two online-first years, a renamed journal, and authors misread from the PDF). At `min_mismatches = 2`, 10 flags remain, 6 of them errors: the six author errors are lost.
+#'
+#' The module suggested a DOI for 507 references. For 443, the record agreed with the citation on title (character similarity of at least 0.95), first author, year (within one) and journal; a random 15 of these, checked by hand, were all the cited work. The other 64 were checked by hand: 63 were the cited work (most differed only by a subtitle or by "&amp;" in the record's journal), and 1 was unclear (an ICCV paper, with the title, authors and year of a cited ICLR workshop paper). The module listed 57 references as not found. All were works these registries do not hold (books and chapters, reports, web pages and news, software, a conference paper and three journal articles without a DOI) or entries misread from the PDF, such as two statements of author contributions.
+#'
+#' For each kind of error, one error was added to each of 30 references, in the parsed reference and its text; these references had passed the check or had a suggested DOI. They were then looked up again with `add_bib_match()`. Of references with a DOI, the module flagged all 30 with a wrong year, 28 of 28 with a misspelled author (one of the first six), 29 of 29 with another journal, 29 of 30 with a changed digit in the DOI, and 28 of 30 with another reference's title; the 2 titles it missed were printed differently in the reference text, so the seeding left the original title there. Of references without a DOI, it flagged all 30 with a wrong year, 28 of 29 with a misspelled author and 23 of 30 with another journal. It flagged or listed as not found 26 of 30 titles with half their words replaced, and 24 of 30 titles taken from another reference. For 2 of the changed titles it suggested the DOI of the real work, because the changed title kept 70% of its characters (`title_similarity`). No other reference's result changed. These errors were added to references that were read correctly, so these rates exclude errors hidden by reading the PDF, and they do not estimate how often citation errors occur.
+#'
+#' On CiteTracer's synthetic benchmark (2,450 machine-learning citations built from real BibTeX entries; `data-raw/ref_accuracy_citetracer.R`, data version of 9 May 2026), the module flagged or listed as not found 65% of the 1,156 citations with a fabricated or changed field: 98% of fabricated DOIs (the other 3 could not be checked at doi.org), 96% of wrong years, 75% of wrong author lists, 68% of fabricated or paraphrased titles, 41% of fabricated venues, and 1% of citations with wrong pages, volumes or publishers (fields it does not compare). It flagged or listed 4.2% of the 1,023 real citations (most of them not found: conference and workshop papers without DOIs) and 3.3% of the 271 borderline ones (name variants, fields no source has). The benchmark has no PDF reading errors, and all its references are cited as articles.
+#'
+#' A flag should be read as "check this reference against the original source", not as a confirmed error.</validation>
 #'
 #' @keywords reference
 #'
@@ -62,7 +70,34 @@
 #'   Scores of 1 or less, as bibr 12.x exports give, are on a 0-1 scale and
 #'   are compared with `suggest_score / 100`.
 #'
-#' @returns report list
+#' @returns a module output list. Its `table` has one row per reference, with
+#'   the cited (`.orig`) and record (`.match`) values and these columns:
+#'   - `tier`: how the reference was checked. "provided": compared with the
+#'     record of its own DOI. "unresolved": its DOI has no record, and doi.org
+#'     reports that it does not exist (flagged). "registered": its DOI exists
+#'     but has no record; "unconfirmed": doi.org could not be asked; "not_checked":
+#'     its paper was not looked up (these three are not checked). "crossref": no
+#'     DOI, and `add_bib_match()` found a record. "search": no DOI, and a title
+#'     search found a record that disagrees (flagged). "none": no DOI and no
+#'     record. "unreadable": not read reliably from the PDF (see
+#'     `read_problem`). "fragment": a DOI read as an entry of its own.
+#'   - `incoherent`: the reference is flagged.
+#'   - `doi_mismatch`, `title_mismatch`, `author_mismatch`, `year_mismatch`,
+#'     `container_mismatch`: which fields disagree, for flagged references only.
+#'     FALSE does not mean the field was compared.
+#'   - `author_note`: the record's authors missing from the citation.
+#'   - `doi_alias`: the cited DOI is an alias of the record's DOI (a note).
+#'   - `no_doi`, `doi_suggested`: no DOI was cited; a DOI is suggested.
+#'   - `not_found`, `search_failed`: the title search found the work in neither
+#'     CrossRef nor DataCite; the search failed.
+#'   - `no_match`: no record was retrieved, for whatever reason (see `tier`).
+#'   - `doi_exists`, `doi_ra`: doi.org's answer for a DOI without a record.
+#'   - `record_source`: where the compared record comes from.
+#'
+#'   `summary_table` counts per paper the references with a DOI checked (`refs_checked`,
+#'   tiers "provided" and "unresolved"), flagged, without a DOI, with a
+#'   suggested DOI, not found and unreadable; a reference without a DOI may be
+#'   counted as flagged, as suggested or as not found, but in only one of them.
 ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
                          min_mismatches = 1, year_tolerance = 1,
                          suggest_score = 70) {
@@ -94,6 +129,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # (U114); the match with the highest score is kept
   # matches read from elsewhere may have no score column
   if (!"score" %in% names(bib_match)) bib_match$score <- NA_real_
+  if (!"service" %in% names(bib_match)) bib_match$service <- NA_character_
   bib_match <- bib_match[order(-bib_match$score), , drop = FALSE]
   bib_match <- bib_match[!duplicated(bib_match[, c("paper_id", "bib_id")]), , drop = FALSE]
   ref_table <- ref_table[!duplicated(ref_table[, c("paper_id", "bib_id")]), , drop = FALSE]
@@ -103,7 +139,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # DOI), mislabelling it as a reference without a DOI.
   # The CrossRef relevance score comes along: only a title search gives one.
   table <- dplyr::left_join(
-    bib[, cols], bib_match[, c(cols, "score")],
+    bib[, cols], bib_match[, c(cols, "score", "service")],
     by = c("paper_id", "bib_id"),
     suffix = c(".orig", ".match")
   ) |>
@@ -124,8 +160,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     m <- regmatches(x, regexpr(
       "(?i)(doi\\.org/|\\bdoi:\\s*)\\S+|10\\.\\d{4,9}(/|%2F)\\S+", x, perl = TRUE))
     if (!length(m)) return(NA_character_)
-    m <- gsub("%2F", "/", m, ignore.case = TRUE)
-    sub("[.,;]+$", "", sub("(?i)^.*?(doi\\.org/|doi:\\s*)", "", m, perl = TRUE))
+    doi_clean(sub("(?i)^.*?(doi\\.org/|doi:\\s*)", "", m, perl = TRUE))
   }, character(1), USE.NAMES = FALSE)
   in_text_doi <- blank(table$doi.orig) & !is.na(text_doi) &
     nchar(alnum(text_doi)) >= 8
@@ -168,12 +203,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # first, so a doi.org or journal URL around the same DOI is not a mismatch,
   # and the old double slash after the prefix ("10.1037//0022-3514...", common
   # in APA references) is the same DOI as the single slash.
-  # Spaces and trailing punctuation from the PDF ("10.1037/0003-066x.54.6.4 08",
-  # "...408.") are dropped too.
-  norm_doi <- \(x) {
-    x <- sub("[.,;]+$", "", gsub("[[:space:]]+", "", doi_clean(x)))
-    tolower(sub("^(10\\.\\d+)//", "\\1/", x))
-  }
+  # doi_clean() also drops what reading the PDF adds ("10.1037/0003-066x.54.6.4 08",
+  # "...408.", "<https://doi.org/...>").
+  norm_doi <- \(x) tolower(sub("^(10\\.\\d+)//", "\\1/", doi_clean(x)))
   doi_differs <- !is.na(table$doi.orig) & nzchar(table$doi.orig) &
     norm_doi(table$doi.orig) != norm_doi(table$doi.match)
   # A record that add_bib_match() found by looking up the cited DOI has no
@@ -332,8 +364,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     # text, so this never matched after it and the markers stayed (U114)
     x <- gsub("<sup>.*?</sup>", "", x, ignore.case = TRUE, perl = TRUE)
     x <- clean(x)                 # lowercases, strips tags, folds diacritics
-    x <- gsub("[^a-z0-9]", "", x)                 # keep only alphanumerics
-    x
+    # letters and digits of every script: keeping only a-z emptied a title
+    # in Cyrillic or Chinese, which then agreed with any record
+    gsub("[^\\p{L}\\p{N}]", "", x, perl = TRUE)
   }
   # does a cited title agree with a record's title? Vectorised over the three
   # arguments; also used for the DataCite records found for a reference
@@ -404,13 +437,18 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       nchar(short) >= 20 && startsWith(if (nchar(x) < nchar(y)) y else x, short)
     }, a, b, USE.NAMES = FALSE)
 
-    list(mismatch = !is.na(charsim) & charsim < title_similarity & !in_text &
-           !main_title & !translated,
-         starts_same = starts_same)
+    # A title that was not read (or a record without one) neither agrees nor
+    # disagrees: it is not a mismatch, but no DOI is suggested for it.
+    known <- !is.na(charsim)
+    agrees <- (known & charsim >= title_similarity) | in_text | main_title | translated
+    list(mismatch = known & !agrees, agrees = agrees, starts_same = starts_same,
+         charsim = charsim)
   }
   tc <- title_check(table$title.orig, table$title.match, table$text)
   table$title_mismatch <- tc$mismatch
   table$title_starts_same <- tc$starts_same
+  table$title_agrees <- tc$agrees
+  title_charsim <- tc$charsim
 
 
   # author check: do the leading author surnames from the retrieved record
@@ -498,9 +536,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # before the cited title is read too.
   etal <- "(?i)\\bet\\.?\\s*al\\b|(^|[;,&]\\s*|\\band\\s+)others\\b"
   truncated <- \(o, text, title) {
+    # compared after clean(), so a title read with other capitals than the
+    # reference text ("The Origins of" in "The origins of") is still found
     before <- if (is.na(text)) "" else {
+      text <- clean(text)
       at <- if (is.na(title) || !nzchar(title)) -1L else
-        regexpr(substr(title, 1, 20), text, fixed = TRUE)
+        regexpr(substr(clean(title), 1, 20), text, fixed = TRUE)
       if (at > 0) substr(text, 1, at - 1) else ""
     }
     grepl(etal, paste(o, collapse = "; "), perl = TRUE) ||
@@ -548,10 +589,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   #                 add_bib_match() only reports as a message at the time) and
   #                 a DOI that is not valid as printed and whose title search
   #                 found nothing. doi.org is then asked whether the DOI
-  #                 exists; when it cannot answer, the DOI stays here.
+  #                 exists; only a DOI it reports as not existing stays here.
   #  "registered" - an unresolved DOI that doi.org knows: no record was
   #                 retrieved for it (a lookup that failed, or an agency whose
   #                 records are not looked up), so it is not checked.
+  #  "unconfirmed" - an unresolved DOI that doi.org could not be asked about
+  #                 (offline, a timeout, a server error): not checked.
   #  "not_checked" - the reference printed a DOI, but its paper has no
   #                 bib_match rows at all: it was not looked up.
   #  "crossref"   - the reference had no DOI and CrossRef supplied one via fuzzy
@@ -586,6 +629,8 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     table$doi_exists[unres] <- ra$exists
     table$doi_ra[unres] <- ra$ra
     table$tier[unres[ra$exists %in% TRUE]] <- "registered"
+    # a failed doi.org request says nothing about the DOI
+    table$tier[unres[is.na(ra$exists)]] <- "unconfirmed"
   }
   # no_match: the reference could not be matched to a retrieved record (kept for
   # downstream modules such as ref_summary that group on it)
@@ -632,19 +677,36 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
                       suggest_score, suggest_score / 100)
   table$doi_suggested <- table$tier == "crossref" & !is.na(table$score) &
     table$score >= min_score & !blank(table$doi.match) &
-    (!table$title_mismatch | table$title_starts_same)
-  # a would-be suggestion whose record disagrees with the citation is flagged,
-  # with the record shown, and not suggested
+    (table$title_agrees | table$title_starts_same)
   # does CrossRef's record have the cited title, whatever its score?
   cr_same_title <- table$tier == "crossref" & !blank(table$doi.match) &
-    (!table$title_mismatch | table$title_starts_same)
+    (table$title_agrees | table$title_starts_same)
   table$title_mismatch[table$tier == "crossref"] <- FALSE
+  # A record with the cited title is compared with the citation when the
+  # match is confident, or, below `suggest_score`, when the titles are almost
+  # the same (a wrong year or author lowers CrossRef's score, so these matches
+  # were neither compared nor suggested). Unless both are articles, only a
+  # confident match is compared, and only on its authors: books and reports
+  # have editions and reprints with the same title in other years and with
+  # other series names. One that disagrees is flagged, with the record shown,
+  # and not suggested; a DOI is not suggested either for a book or report
+  # whose record has another year.
+  article_set <- c("article", "journal_article", "inproceedings")
+  article_pair <- (is.na(table$bib_type.match) | table$bib_type.match %in% article_set) &
+    (is.na(table$bib_type.orig) | table$bib_type.orig %in% article_set)
+  near_same <- !is.na(title_charsim) & title_charsim >= 0.9
+  compared <- cr_same_title & article_pair & (table$doi_suggested | near_same)
+  authors_compared <- cr_same_title & !article_pair & table$doi_suggested
   # (the title is not compared, so authors alone reach min_mismatches only at 1)
   nodoi_strong <- (table$year_mismatch %in% TRUE) | (table$container_mismatch %in% TRUE)
   nodoi_authors <- (table$author_mismatch %in% TRUE) & min_mismatches <= 1
-  table$incoherent <- table$incoherent |
-    (table$doi_suggested & (nodoi_strong | nodoi_authors))
-  table$doi_suggested <- table$doi_suggested & !table$incoherent
+  table$incoherent <- table$incoherent | (compared & (nodoi_strong | nodoi_authors)) |
+    (authors_compared & nodoi_authors)
+  other_year <- table$year_mismatch %in% TRUE
+  table$year_mismatch[authors_compared] <- FALSE
+  table$container_mismatch[authors_compared] <- FALSE
+  table$doi_suggested <- table$doi_suggested & !table$incoherent &
+    !(!compared & other_year)
 
   # A reference without a DOI whose title is not that of CrossRef's match is
   # searched by its title alone, in CrossRef (whose title search for
@@ -660,6 +722,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   searched <- which(table$tier %in% c("crossref", "none") & !cr_same_title &
                       !blank(table$title.orig) & n_words >= 3 & looked_up)
   table$not_found <- FALSE
+  table$search_failed <- FALSE
   # For each title q[i], the first record with the same title (a row of
   # hits), NA when there is none, and NA_integer_ - 1 (-1) when the search
   # failed.
@@ -670,58 +733,72 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     if (length(ok_rows)) {
       h <- hits[ok_rows, ]
       ok <- title_check(q[h$query], h$title, text[h$query])
-      same <- ok_rows[!ok$mismatch | ok$starts_same]
+      same <- ok_rows[ok$agrees | ok$starts_same]
       first[unique(hits$query[same])] <- same[!duplicated(hits$query[same])]
     }
     first
   }
   table$record_source <- ifelse(table$tier %in% c("provided", "crossref"),
-                                "crossref", NA_character_)
+                                dplyr::coalesce(table$service, "crossref"),
+                                NA_character_)
   if (length(searched)) {
-    q <- table$title.orig[searched]
+    # each title is searched once, and its result given to every reference
+    # with that title (the same work cited twice, or in several papers)
+    q_ref <- table$title.orig[searched]
+    q <- unique(q_ref)
+    qi <- match(q_ref, q)
+    q_text <- table$text[searched][match(q, q_ref)]
     cr <- crossref_query(as.list(q), min_score = 0, rows = 5,
-                         select = c("DOI", "title", "score", "author", "year", "type"))
+                         select = c("DOI", "title", "score", "author", "year", "type",
+                                    "container-title"))
     cr <- if (is.null(cr$ref)) {
       # CrossRef could not be reached
       data.frame(query = seq_along(q), doi = NA_character_,
                  title = NA_character_, year = NA_integer_,
-                 type = NA_character_, error = TRUE)
+                 type = NA_character_, container = NA_character_, error = TRUE)
     } else {
       x <- data.frame(query = match(cr$ref, q), doi = cr$DOI %||% NA_character_,
                       title = cr$title %||% NA_character_,
                       year = suppressWarnings(as.integer(cr$year %||% NA)),
                       type = cr$type %||% NA_character_,
+                      container = cr$`container-title` %||% NA_character_,
                       error = !is.na(cr$error %||% NA_character_))
       x$authors <- lapply(cr$author %||% vector("list", nrow(x)),
                           \(a) if (is.data.frame(a)) a$family else NA_character_)
       x
     }
-    first <- title_found(cr, q, table$text[searched])
-    rec <- data.frame(i = searched, source = ifelse(first > 0, "crossref", NA),
+    first <- title_found(cr, q, q_text)
+    rec <- data.frame(source = ifelse(first > 0, "crossref", NA),
                       doi = NA_character_, title = NA_character_, year = NA_integer_,
-                      type = NA_character_)
+                      type = NA_character_, container = NA_character_)
     rec$authors <- vector("list", nrow(rec))
     got <- which(first > 0)
-    rec[got, c("doi", "title", "year", "type")] <- cr[first[got], c("doi", "title", "year", "type")]
+    rec[got, c("doi", "title", "year", "type", "container")] <-
+      cr[first[got], c("doi", "title", "year", "type", "container")]
     rec$authors[got] <- cr$authors[first[got]]
-    rest <- which(is.na(first))
+    # a title CrossRef could not be searched for is still searched in DataCite
+    rest <- which(is.na(first) | first < 0)
     if (length(rest)) {
       dc <- datacite_query(q[rest])
       for (col in c("doi", "title", "year", "authors", "type"))
         if (is.null(dc[[col]])) dc[[col]] <- rep(NA, nrow(dc))
-      dfirst <- title_found(dc, q[rest], table$text[searched][rest])
-      first[rest] <- dfirst
+      dfirst <- title_found(dc, q[rest], q_text[rest])
+      # not found when neither search found it, failed when either failed
+      first[rest] <- ifelse(is.na(dfirst) & first[rest] %in% -1L, -1L, dfirst)
       got <- which(dfirst > 0)
       rec$source[rest[got]] <- "datacite"
       rec[rest[got], c("doi", "title", "year", "type")] <- dc[dfirst[got], c("doi", "title", "year", "type")]
       rec$authors[rest[got]] <- lapply(dc$authors[dfirst[got]], \(a)
         trimws(strsplit(a, ";", fixed = TRUE)[[1]]))
     }
-    table$not_found[searched[is.na(first)]] <- TRUE
+    table$not_found[searched[is.na(first[qi])]] <- TRUE
+    table$search_failed[searched[first[qi] %in% -1L]] <- TRUE
+    rec <- rec[qi, , drop = FALSE]
+    rec$i <- searched
 
     # A record found with the cited title is compared like CrossRef's
-    # confident match: when its authors or year disagree, the reference is
-    # flagged with that record. Only an article is compared with an article
+    # confident match: when its authors, year or (for a CrossRef journal
+    # article) journal disagree, the reference is flagged with that record. Only an article is compared with an article
     # or a preprint of almost the same title: books, software, reports and
     # standard titles ("Dyadic data analysis") have editions, versions,
     # reprints, chapters and reviews with the same title by other authors
@@ -744,7 +821,13 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       ydiff <- abs(table$year.orig[i] - rec$year)
       amis <- !is.na(note) & min_mismatches <= 1
       ymis <- !is.na(ydiff) & ydiff > year_tolerance
-      flag <- amis | ymis
+      # DataCite records have no journal
+      cmis <- mapply(\(a, b, text, check) {
+        check && !is.na(a) && !is.na(b) && nzchar(trimws(a)) && nzchar(trimws(b)) &&
+          !journal_coherent(a, b, text)
+      }, table$container.orig[i], rec$container, table$text[i],
+      rec$type %in% "journal-article" & !article_number[i], USE.NAMES = FALSE)
+      flag <- amis | ymis | cmis
       if (any(flag)) {
         f <- i[flag]
         table$tier[f] <- "search"
@@ -753,11 +836,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         table$doi.match[f] <- rec$doi[flag]
         table$title.match[f] <- rec$title[flag]
         table$year.match[f] <- rec$year[flag]
-        table$container.match[f] <- NA_character_
+        table$container.match[f] <- rec$container[flag]
         table$author_note[f] <- note[flag]
         table$author_mismatch[f] <- amis[flag]
         table$year_mismatch[f] <- ymis[flag]
-        table$container_mismatch[f] <- FALSE
+        table$container_mismatch[f] <- cmis[flag]
         table$doi_mismatch[f] <- FALSE
         table$incoherent[f] <- TRUE
       }
@@ -789,19 +872,23 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   n_unread   <- sum(summary_table$unreadable)
   n_unlooked <- sum(table$tier == "not_checked")
   n_reg      <- sum(table$tier == "registered")
+  n_unconf   <- sum(table$tier == "unconfirmed")
   n_nf       <- sum(table$not_found)
+  n_sfail    <- sum(table$search_failed)
   summary_text <- paste0(
     if (!any(looked_up))
       "The references were not looked up at Crossref, so their accuracy was not checked."
     else sprintf(
-      "We checked the %d reference%s that supplied a DOI against the record that DOI points to, and found %d incoherent reference%s to check for reading errors or mistakes.%s",
+      "We checked the %d reference%s that printed a DOI and found %d incoherent reference%s.%s",
       n_checked, plural(n_checked), n_inc, plural(n_inc),
-      if (n_inc > 0) " Incoherent references are often errors in reading the PDF (we are working on improving reference parsing)." else ""),
+      if (n_inc > 0) " Most are errors in reading the PDF, but check each against the original source." else ""),
     sprintf(" %d reference%s had no DOI%s.",
             n_nodoi, plural(n_nodoi),
-            if (n_suggest > 0) sprintf("; for %d of them CrossRef found a likely DOI, suggested in the report", n_suggest) else ""),
+            if (n_suggest > 0) sprintf("; the report suggests a DOI for %d of them", n_suggest) else ""),
     if (n_nf > 0) sprintf(" No work with the cited title was found in CrossRef or DataCite for %d of them; check that %s.",
                           n_nf, if (n_nf == 1) "it exists" else "they exist") else "",
+    if (n_sfail > 0) sprintf(" The title search failed for %d of them, so %s not checked; run the module again.",
+                             n_sfail, if (n_sfail == 1) "it was" else "they were") else "",
     if (n_inc_nodoi > 0) sprintf(" For %d reference%s without a DOI, a title search found a work with the same title whose authors, journal or year differ from the citation; %s listed with the incoherent references.",
                                  n_inc_nodoi, plural(n_inc_nodoi),
                                  if (n_inc_nodoi == 1) "it is" else "they are") else "",
@@ -813,6 +900,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
               n_reg, plural(n_reg), if (n_reg == 1) "is" else "are",
               if (n_reg == 1) "it" else "them",
               if (n_reg == 1) "the reference was" else "the references were") else "",
+    if (n_unconf > 0)
+      sprintf(" %d cited DOI%s had no record, and doi.org could not be reached to ask whether %s, so %s not checked.",
+              n_unconf, plural(n_unconf),
+              if (n_unconf == 1) "it exists" else "they exist",
+              if (n_unconf == 1) "the reference was" else "the references were") else "",
     if (n_unlooked > 0 && any(looked_up))
       sprintf(" %d reference%s with a DOI %s not checked, because %s paper was not looked up at Crossref.",
               n_unlooked, plural(n_unlooked),
@@ -825,7 +917,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # listed but do not change the light.
   tl <- if (any(table$incoherent %in% TRUE)) "yellow" else if (n_checked == 0) "na" else "green"
 
-  guidance <- "For the references below, either the cited DOI could not be found, or one or more of the cited details (title, authors, journal, or year) does not match the record of the cited DOI or, for a reference without a DOI, of the work with the same title. This is often an error in reading the reference from the PDF, but it could be a citation mistake, or an AI-generated reference. Check each against the original source."
+  guidance <- "Check each flagged reference against the original source. A flag may come from an error in reading the PDF, a citation mistake, or an AI-generated reference."
 
   if (n_inc + n_inc_nodoi == 0) guidance <- ""
 
@@ -919,14 +1011,16 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   }
 
   ## registered DOIs without a record ----
-  reg_rows <- table[table$tier == "registered", ]
+  reg_rows <- table[table$tier %in% c("registered", "unconfirmed"), ]
   reg_report <- NULL
   if (nrow(reg_rows) > 0) {
     out <- data.frame(
       Reference = esc(ref_text(reg_rows)),
       DOI = link(paste0("https://doi.org/", doi_clean(reg_rows$doi.orig)),
                  esc(reg_rows$doi.orig)),
-      `Registered with` = reg_rows$doi_ra,
+      `Registered with` = ifelse(reg_rows$tier == "unconfirmed",
+                                 "unknown (doi.org could not be reached)",
+                                 reg_rows$doi_ra),
       check.names = FALSE
     )
     reg_report <- scroll_table(out, 5, colwidths = c(.6, .25, .15))
@@ -981,7 +1075,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     guidance,
     if (!is.null(incoherent_report))
       c("### Incoherent references\n",
-        "The DOI of these references could not be found, or their cited details do not match the record their DOI points to. A reference without a DOI is listed here when a work with the same title differs from it; its DOI is not suggested.\n",
+        "These references cite a DOI that does not exist, or details that differ from the record. For a reference without a DOI, the record is a work with the same title whose authors, journal or year differ; its DOI is not suggested.\n",
         incoherent_report),
     if (!is.null(alias_report))
       c("### DOIs that have a newer form\n",
@@ -989,7 +1083,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         alias_report),
     if (!is.null(reg_report))
       c("### DOIs that could not be checked\n",
-        "These cited DOIs exist, but no record was retrieved for them, so the references were not checked. For a DOI registered with Crossref the lookup probably failed: run `add_bib_match()` again. DataCite records are looked up only by newer versions of `add_bib_match()`, and records of other registration agencies are not looked up.\n",
+        "No record was retrieved for these cited DOIs, so the references were not checked. For a DOI registered with Crossref the lookup probably failed: run `add_bib_match()` again. `add_bib_match()` looks up Crossref records only, so DOIs of other registration agencies, such as DataCite, are not checked. When doi.org could not be reached, it is not known whether the DOI exists: run the check again.\n",
         reg_report),
     if (!is.null(unread_report))
       c("### Entries that could not be read reliably\n",
@@ -997,11 +1091,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         unread_report),
     if (!is.null(nf_report))
       c("### References not found\n",
-        "These references have no DOI, and no work with the cited title was found in CrossRef or DataCite (which includes arXiv, Zenodo and OSF). Most works these registries do not hold are books, reports, theses, software and web pages, and a title misread from the PDF is not found either. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist: check that it does.\n",
+        "These references have no DOI, and no work with the cited title was found in CrossRef or DataCite (which includes arXiv, Zenodo and OSF). Books, reports, theses, software and web pages are often missing from these registries, and a title misread from the PDF is not found either. For a journal article or a preprint, check the title and that the work exists.\n",
         nf_report),
     if (!is.null(nodoi_report))
       c("### References without a DOI\n",
-        "These references have no DOI. Where a CrossRef title search found a confident match with the same title, and its authors, journal and year agree with the citation, its DOI is suggested with the record it points to: check that it is the same work before adding it. The other reference checks (retraction, PubPeer, and replication) use the DOI CrossRef found, so for these references they are only as reliable as that search. We recommend adding a DOI to every reference that has one: it makes each cited work easier to find and verify.\n",
+        "Where a CrossRef title search found a confident match with the same title, and the comparison found no disagreement, its DOI is suggested with the record it points to: check that it is the cited work before adding it. The retraction, PubPeer and replication checks also use the DOI CrossRef found, so for these references they are only as reliable as that search. Adding a DOI where one exists makes the cited work easier to find and verify.\n",
         nodoi_report)
   )
 
