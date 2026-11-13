@@ -1174,6 +1174,20 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   expect_equal(r$published_doi, p$bib_match$doi[k])
   expect_match(paste(unlist(mo$report), collapse = "\n"), "Cites a preprint", fixed = TRUE)
 
+  # a cited journal article whose same-title match is a preprint is flagged
+  q <- demopaper()
+  q$bib_match$score[k] <- 85
+  q$bib_match$bib_type[k] <- "misc"
+  q$bib$container[i] <- "Journal of Imaginary Results"
+  r <- module_run(q, "ref_accuracy")
+  expect_true(r$table$preprint_only[r$table$bib_id == 3])
+  expect_true(r$table$incoherent[r$table$bib_id == 3])
+  expect_match(paste(unlist(r$report), collapse = "\n"), "only a preprint was found", fixed = TRUE)
+  # not when it is cited from a conference
+  q$bib$container[i] <- "ICML"
+  r <- module_run(q, "ref_accuracy")$table
+  expect_false(r$preprint_only[r$bib_id == 3])
+
   # a cited year that is the year the DOI was created, before the work was
   # published, is a note; one near the
   # online date is neither a note nor a flag

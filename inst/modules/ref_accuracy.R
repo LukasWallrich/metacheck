@@ -17,7 +17,7 @@
 #' For each checked reference we compare five fields against the DOI's record (for a reference without a DOI, the authors, journal and year):
 #'
 #' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch). DOIs are compared after removing URL wrappers (`https://doi.org/`, journal article URLs), spaces and trailing punctuation left by the PDF, and the old double slash after the prefix (`10.1037//`). When the record was found by looking up the cited DOI (it has no search score), a record with a different DOI means the registry lists the cited DOI as an alias (for example after a journal moved publisher); this is reported as a note with the current DOI, not as an incoherence. A DOI mismatch is therefore only flagged when the record came from a title search. Papers read from bibr 12.x exports do not record how a record was found, so for them a different DOI is always a mismatch.
-#' - **Year** — flagged when the cited year is more than `year_tolerance` years from the record (online-first and print years routinely differ by one year, so this is allowed by default). Before a year is flagged, CrossRef's dates for the record are read: a cited year near its online, print, issue or posting date is not a mismatch, because some publishers (IEEE among them) print a paper years after it appears online without depositing the online date. A cited year near only the year the DOI was created or the work accepted is listed as a note, not flagged. A creation date after the publication date (a DOI deposited for an old paper) is not used. A cited preprint (its journal, or its text when no journal was read, names a preprint server such as arXiv or PsyArXiv) is not compared on its year or journal with a published version of the work, and a cited published version found as a preprint may be up to `year_tolerance` + 1 years later than the preprint. A cited preprint with a published version, and authors that agree, is listed as a note.
+#' - **Year** — flagged when the cited year is more than `year_tolerance` years from the record (online-first and print years routinely differ by one year, so this is allowed by default). Before a year is flagged, CrossRef's dates for the record are read: a cited year near its online, print, issue or posting date is not a mismatch, because some publishers (IEEE among them) print a paper years after it appears online without depositing the online date. A cited year near only the year the DOI was created or the work accepted is listed as a note, not flagged. A creation date after the publication date (a DOI deposited for an old paper) is not used. A reference cited in a journal whose work is found only as a preprint is flagged: the journal article may not exist. Conference papers are left out, because many proceedings (ICML, NeurIPS, ICLR) have no DOIs; a venue that names a conference, has an acronym or belongs to a reference typed as a conference paper is taken as one. A cited preprint (its journal, or its text when no journal was read, names a preprint server such as arXiv or PsyArXiv) is not compared on its year or journal with a published version of the work, and a cited published version found as a preprint may be up to `year_tolerance` + 1 years later than the preprint. A cited preprint with a published version, and authors that agree, is listed as a note.
 #' - **Journal** — flagged when the cited journal disagrees with the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", "the", "WIREs" for "Wiley Interdisciplinary Reviews", an acronym before the full name ("MMWR. Morbidity and Mortality Weekly Report"), the conference name or acronym for a proceedings record registered as a journal article ("AAAI" for "Proceedings of the AAAI Conference on Artificial Intelligence"), and British and American spellings ("Behaviour" and "Behavior") are treated as equivalent. The words of the shorter name must appear in order in the longer one, starting with its first word, so a subtitle or section may be left out, but a name that starts inside another is another journal ("Psychological Science" is not "Current Directions in Psychological Science"), and a one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience"). Words that the parsed journal lost are accepted when the record's name is in the reference text ("Perception, & Psychophysics" for "Attention, Perception, & Psychophysics"), also when a word in it is hyphenated at a line break. A name that continues another is still accepted ("Journal of Experimental Psychology" for "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
 #' - **Title** — flagged when the cited title is too different from the record's title, judged by character-level similarity (`title_similarity`) after stripping case, punctuation, footnote markers and diacritics. This ignores cosmetic differences (colons, question marks, em-dash spacing, line-break word splits), but also a change of one or two words in a long title. A title is also accepted when the record's title appears in the reference text as whole words ending at a title delimiter, for references whose title was not read correctly from the PDF. A title that begins with the other one followed by a title delimiter (":", "?", "." or "!") is accepted, because the record or the citation often holds only the main title; the subtitle is then not checked. A translated title in square brackets, as APA gives for a work in another language, is compared too. Letters of every script count, so titles in Cyrillic or Chinese are compared like others.
 #' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list, or when the record's first author is not cited first. Only the leading authors are required because author lists are routinely truncated with "et al.". The cited authors are read one person at a time, and each record surname must equal one cited surname, compared on its letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match). When one of the two is a single word, it may also match the other's last word, for shortened compound surnames and particles ("Vafaei Shooshtari" cited as "Shooshtari", "Gelder" cited as "De Gelder"); the last word is also taken after a hyphen or an elided particle ("Purdie-Vaughns" cited as "Vaughns", "O'Connell" read from the PDF as "Connell"). A cited name without a comma is read as given name first, and the record surname must equal its last word or words. A name whose given and family names are swapped on one side (the record's given name is the cited surname, and the record's surname starts with the cited initial, as in "Wu, K." for the record's family name "Kui" and given name "Wu") is not flagged but listed as a note. Papers read from bibr 12.x exports keep each author list as printed ("Adam, H., Shirako, A., & Maddux, W. W"), so for them each record surname must equal one or more consecutive whole words of the list, with the same tolerance for compound surnames. A reference whose authors could not be read is not flagged. Extra cited authors after the first and given names are not checked. A cited list truncated with "et al." (or "and others", as BibTeX gives it), in the parsed authors or in the reference text before the title, needs only as many record authors as it cites, in order: truncation is a citation style, not an error.
@@ -30,9 +30,9 @@
 #'
 #' The module suggested a DOI for 507 references. For 443, the record agreed with the citation on title (character similarity of at least 0.95), first author, year (within one) and journal; a random 15 of these, checked by hand, were all the cited work. The other 64 were checked by hand: 63 were the cited work (most differed only by a subtitle or by "&amp;" in the record's journal), and 1 was unclear (an ICCV paper, with the title, authors and year of a cited ICLR workshop paper). The module listed 57 references as not found. All were works these registries do not hold (books and chapters, reports, web pages and news, software, a conference paper and three journal articles without a DOI) or entries misread from the PDF, such as two statements of author contributions.
 #'
-#' For each kind of error, one error was added to each of 30 references, in the parsed reference and its text; these references had passed the check or had a suggested DOI. They were then looked up again with `add_bib_match()`. Of references with a DOI, the module flagged all 30 with a wrong year, 28 of 28 with a misspelled author (one of the first six), 29 of 29 with another journal, 29 of 30 with a changed digit in the DOI, and 28 of 30 with another reference's title; the 2 titles it missed were printed differently in the reference text, so the seeding left the original title there. Of references without a DOI, it flagged all 30 with a wrong year, 28 of 29 with a misspelled author and 23 of 30 with another journal. It flagged or listed as not found 26 of 30 titles with half their words replaced, and 24 of 30 titles taken from another reference. For 2 of the changed titles it suggested the DOI of the real work, because the changed title kept 70% of its characters (`title_similarity`). No other reference's result changed. These errors were added to references that were read correctly, so these rates exclude errors hidden by reading the PDF, and they do not estimate how often citation errors occur.
+#' For each kind of error, one error was added to each of 30 references, in the parsed reference and its text; these references had passed the check or had a suggested DOI. They were then looked up again with `add_bib_match()`. Of references with a DOI, the module flagged all 30 with a wrong year, 28 of 28 with a misspelled author (one of the first six), 29 of 29 with another journal, 29 of 30 with a changed digit in the DOI, and 28 of 30 with another reference's title; the 2 titles it missed were printed differently in the reference text, so the seeding left the original title there. Of references without a DOI, it flagged all 30 with a wrong year, 28 of 29 with a misspelled author and 25 of 30 with another journal. It flagged or listed as not found 26 of 30 titles with half their words replaced, and 24 of 30 titles taken from another reference. For 2 of the changed titles it suggested the DOI of the real work, because the changed title kept 70% of its characters (`title_similarity`). No other reference's result changed. These errors were added to references that were read correctly, so these rates exclude errors hidden by reading the PDF, and they do not estimate how often citation errors occur.
 #'
-#' On CiteTracer's synthetic benchmark (2,450 machine-learning citations built from real BibTeX entries; `data-raw/ref_accuracy_citetracer.R`, data version of 9 May 2026), the module flagged or listed as not found 64% of the 1,156 citations with a fabricated or changed field: 99.5% of fabricated DOIs, 92% of wrong years, 74% of wrong author lists, 68% of fabricated or paraphrased titles, 39% of fabricated venues, and 1% of citations with wrong pages, volumes or publishers (fields it does not compare). It flagged 6 of the 1,023 real citations (0.6%; two TPAMI papers cited with their preprint year, one conference paper cited two years before its arXiv record, and three arXiv records listing an author the citation does not) and listed 25 as not found (2.4%; conference and workshop papers without DOIs). Of the 271 borderline citations (name variants, fields no source has), it flagged 2 and listed 6 as not found. 25 real citations had a note: 20 cited preprints with a published version, 4 swapped names and 1 year of DOI creation. The benchmark has no PDF reading errors, and all its references are cited as articles.
+#' On CiteTracer's synthetic benchmark (2,450 machine-learning citations built from real BibTeX entries; `data-raw/ref_accuracy_citetracer.R`, data version of 9 May 2026), the module flagged or listed as not found 64% of the 1,156 citations with a fabricated or changed field: 99.5% of fabricated DOIs, 92% of wrong years, 74% of wrong author lists, 68% of fabricated or paraphrased titles, 41% of fabricated venues, and 1% of citations with wrong pages, volumes or publishers (fields it does not compare). It flagged 7 of the 1,023 real citations (0.7%; two TPAMI papers cited with their preprint year, one conference paper cited two years before its arXiv record, three arXiv records listing an author the citation does not, and a paper in the Journal of Machine Learning Research, which has no DOIs, found only as a preprint) and listed 25 as not found (2.4%; conference and workshop papers without DOIs, which Semantic Scholar and dblp hold). Of the 271 borderline citations (name variants, fields no source has), it flagged 2 and listed 6 as not found. 25 real citations had a note: 20 cited preprints with a published version, 4 swapped names and 1 year of DOI creation. The benchmark has no PDF reading errors, and all its references are cited as articles.
 #'
 #' A flag should be read as "check this reference against the original source", not as a confirmed error.</validation>
 #'
@@ -90,6 +90,8 @@
 #'     note).
 #'   - `name_note`: an author's given and family names are swapped in the
 #'     citation or the record (a note).
+#'   - `preprint_only`: the reference is cited in a journal, but only a
+#'     preprint with its title was found (flagged).
 #'   - `published_doi`: the cited preprint has a published version with this
 #'     DOI (a note).
 #'   - `doi_alias`: the cited DOI is an alias of the record's DOI (a note).
@@ -518,6 +520,22 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     (!blank(table$container.orig) & grepl(preprint_words, table$container.orig, perl = TRUE)) |
     (blank(table$container.orig) & grepl(preprint_words, table$text, perl = TRUE))
   table$published_doi <- NA_character_
+  # A reference cited in a journal whose work is found only as a preprint is
+  # flagged (`preprint_only`): the journal article may not exist. Conference
+  # papers are left out, because many proceedings (ICML, NeurIPS, ICLR) have
+  # no DOIs, so their papers are found only as preprints. A venue is taken as
+  # a conference when it names one ("Proceedings", "Workshop", ...), has an
+  # acronym ("ICML", "Tiny Papers @ ICLR"), or the reference is typed as a
+  # conference paper.
+  conference_words <- "(?i)\\b(proc|proceedings|conference|conf|workshops?|symposium|meeting|congress|colloquium|summit|track)\\b"
+  acronym_word <- "(^|[^[:alnum:]])[[:alnum:]]*[A-Z][[:alnum:]]*[A-Z][[:alnum:]]*($|[^[:alnum:]])"
+  journal_cited <- !cited_preprint & !blank(table$container.orig) &
+    !grepl(conference_words, table$container.orig, perl = TRUE) &
+    !grepl(acronym_word, table$container.orig) &
+    !table$bib_type.orig %in% c("inproceedings", "proceedings", "conference",
+                                "book", "inbook", "incollection", "techreport",
+                                "phdthesis", "mastersthesis", "misc", "preprint")
+  table$preprint_only <- FALSE
 
 
   # author check: do the leading author surnames from the retrieved record
@@ -804,8 +822,13 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # (the title is not compared, so authors alone reach min_mismatches only at 1)
   nodoi_strong <- (table$year_mismatch %in% TRUE) | (table$container_mismatch %in% TRUE)
   nodoi_authors <- (table$author_mismatch %in% TRUE) & min_mismatches <= 1
+  # a cited journal article whose same-title match is a preprint
+  preprint_only <- cr_same_title & (table$doi_suggested | near_same) &
+    journal_cited & table$bib_type.match %in% c("misc", "preprint")
+  table$preprint_only <- preprint_only
+  table$container_mismatch[preprint_only] <- TRUE
   table$incoherent <- table$incoherent | (compared & (nodoi_strong | nodoi_authors)) |
-    (authors_compared & nodoi_authors)
+    (authors_compared & nodoi_authors) | preprint_only
   other_year <- table$year_mismatch %in% TRUE
   table$year_mismatch[authors_compared] <- FALSE
   table$container_mismatch[authors_compared] <- FALSE
@@ -962,7 +985,8 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       }, table$container.orig[i], rec$container, table$text[i],
       rec$type %in% "journal-article" & !article_number[i] & !cited_preprint[i],
       USE.NAMES = FALSE)
-      flag <- amis | ymis | cmis
+      pmis <- pub_of_preprint & journal_cited[i]
+      flag <- amis | ymis | cmis | pmis
       named <- !is.na(an$swapped)
       table$name_note[i[named]] <- an$swapped[named]
       search_named[i[named]] <- TRUE
@@ -981,7 +1005,8 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         table$author_note[f] <- note[flag]
         table$author_mismatch[f] <- amis[flag]
         table$year_mismatch[f] <- ymis[flag]
-        table$container_mismatch[f] <- cmis[flag]
+        table$container_mismatch[f] <- cmis[flag] | pmis[flag]
+        table$preprint_only[f] <- pmis[flag]
         table$doi_mismatch[f] <- FALSE
         table$incoherent[f] <- TRUE
       }
@@ -1119,7 +1144,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       # the record surnames that are missing, rather than the whole list
       if (isTRUE(r$author_mismatch))
         sprintf("<b>authors:</b> %s", esc(r$author_note)),
-      if (isTRUE(r$container_mismatch))
+      if (isTRUE(r$preprint_only))
+        sprintf("<b>journal:</b> cited in %s, but only a preprint was found",
+                esc(r$container.orig))
+      else if (isTRUE(r$container_mismatch))
         correction("journal", r$container.orig, r$container.match),
       if (isTRUE(r$year_mismatch))
         correction("year", r$year.orig, r$year.match),
