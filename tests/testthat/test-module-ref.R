@@ -363,12 +363,12 @@ test_that("ref_accuracy asks doi.org about a cited DOI without a record", {
 
 test_that("ref_accuracy lists references without a DOI that no registry holds", {
   # bib 3 (Lakens 2018) has no DOI; without its CrossRef match it is searched
-  # by title in CrossRef, then in DataCite
+  # by title in CrossRef, then in DataCite, then in Semantic Scholar
   p <- demopaper()
   p$bib_match <- p$bib_match[p$bib_match$bib_id != 3, ]
   title <- p$bib$title[p$bib$bib_id == 3]
   local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = NA))
-  cr_title <- dc_title <- NULL
+  cr_title <- dc_title <- s2 <- NULL
   dc_called <- FALSE
   local_mocked_bindings(
     crossref_query = \(ref, ...) {
@@ -382,7 +382,11 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
         title = character(0), year = integer(0), authors = character(0), error = logical(0)))
       data.frame(query = 1L, doi = "10.2/y", title = dc_title, year = 2018L,
                  authors = "Lakens", error = FALSE)
-    })
+    },
+    semanticscholar_query = \(title) s2 %||% data.frame(query = integer(0),
+      doi = character(0), url = character(0), title = character(0),
+      year = integer(0), authors = character(0), venue = character(0),
+      type = character(0), error = logical(0)))
   nf <- \(mo) mo$table$not_found[mo$table$bib_id == 3]
 
   # found nowhere: listed, with the summary
@@ -391,7 +395,7 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   expect_true(nf(mo))
   expect_true(dc_called)
   expect_equal(mo$summary_table$not_found, 1)
-  expect_match(mo$summary_text, "No work with the cited title was found in CrossRef or DataCite for 1 of them", fixed = TRUE)
+  expect_match(mo$summary_text, "No work with the cited title was found in CrossRef, DataCite or Semantic Scholar for 1 of them", fixed = TRUE)
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_match(report, "### References not found", fixed = TRUE)
   # a reference not found does not change the traffic light
@@ -409,6 +413,18 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   cr_title <- "Equivalence of something else entirely"
   dc_title <- title
   expect_false(nf(module_run(p, "ref_accuracy")))
+
+  # Semantic Scholar holds it, with other authors: flagged, linking its page
+  dc_title <- NULL
+  s2 <- data.frame(query = 1L, doi = NA_character_, url = "https://www.semanticscholar.org/paper/abc",
+                   title = title, year = 2018L, authors = "Smith, John; Jones, Ann",
+                   venue = "Some Conference", type = "Conference", error = FALSE)
+  mo <- module_run(p, "ref_accuracy")
+  expect_false(nf(mo))
+  expect_true(mo$table$incoherent[mo$table$bib_id == 3])
+  expect_match(paste(unlist(mo$report), collapse = "\n"),
+               "https://www.semanticscholar.org/paper/abc", fixed = TRUE)
+  s2 <- NULL
 
   # the search failed: not listed, but counted as not checked
   cr_title <- NA
@@ -477,7 +493,8 @@ test_that("ref_accuracy compares a record that a title search finds", {
       x$author <- list(data.frame(given = "A", family = cr_authors))
       x
     },
-    datacite_query = \(title, ...) stop("not searched"))
+    datacite_query = \(title, ...) stop("not searched"),
+    semanticscholar_query = \(title) stop("not searched"))
   row <- \(mo) mo$table[mo$table$bib_id == 3, ]
 
   mo <- module_run(p, "ref_accuracy")
@@ -1033,7 +1050,10 @@ test_that("ref_accuracy reads bibr 12.x author lists and article types", {
   local_mocked_bindings(
     crossref_query = \(ref, ...) data.frame(ref = unlist(ref), DOI = NA_character_, error = "offline"),
     datacite_query = \(title, ...) data.frame(query = seq_along(title), doi = NA_character_,
-      title = NA_character_, year = NA_integer_, authors = NA_character_, error = TRUE))
+      title = NA_character_, year = NA_integer_, authors = NA_character_, error = TRUE),
+    semanticscholar_query = \(title) data.frame(query = seq_along(title), doi = NA_character_,
+      url = NA_character_, title = NA_character_, year = NA_integer_,
+      authors = NA_character_, venue = NA_character_, type = NA_character_, error = TRUE))
   mo <- module_run(p, "ref_accuracy")
   tbl <- mo$table[mo$table$tier == "provided", ]
   expect_true(any(tbl$bib_type.match == "journal_article"))

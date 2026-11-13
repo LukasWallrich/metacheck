@@ -9,7 +9,7 @@
 # in a paper of 50 (shuffled across subtypes), is looked up with
 # add_bib_match(), and ref_accuracy's flags (incoherent) and not-found notes
 # are counted separately. CiteTracer has no entry types, so every citation is
-# an article. Network calls only (CrossRef, DataCite, doi.org); about 30
+# an article. Network calls only (CrossRef, DataCite, Semantic Scholar, doi.org); about 30
 # minutes. The looked-up papers are saved to `cache`, so a rerun of the
 # module after a change needs no lookups.
 
