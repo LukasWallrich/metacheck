@@ -13,8 +13,8 @@ datacite_query(title, n = 5)
 }
 \value{
 a data frame with the index of the title searched for (\code{query}),
-and the \code{doi}, \code{title}, \code{year}, \code{authors} (family names separated by
-"; ") and \code{type} (DataCite's resourceTypeGeneral) of each record found. A title whose search failed has a row with
+and the \code{doi}, \code{title}, \code{year}, \code{authors} ("Family, Given" names
+separated by "; ") and \code{type} (DataCite's resourceTypeGeneral) of each record found. A title whose search failed has a row with
 \code{doi} NA and \code{error} TRUE; a title with no records has no rows.
 }
 \description{

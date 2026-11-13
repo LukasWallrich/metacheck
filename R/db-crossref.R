@@ -146,8 +146,8 @@ doi_ra <- function(doi) {
 #' @param n how many records to return per title
 #'
 #' @returns a data frame with the index of the title searched for (`query`),
-#'   and the `doi`, `title`, `year`, `authors` (family names separated by
-#'   "; ") and `type` (DataCite's resourceTypeGeneral) of each record found. A title whose search failed has a row with
+#'   and the `doi`, `title`, `year`, `authors` ("Family, Given" names
+#'   separated by "; ") and `type` (DataCite's resourceTypeGeneral) of each record found. A title whose search failed has a row with
 #'   `doi` NA and `error` TRUE; a title with no records has no rows.
 #' @keywords internal
 #'
@@ -205,8 +205,12 @@ datacite_query <- function(title, n = 5) {
         if (length(t)) t[[1]]$title %||% NA_character_ else NA_character_
       }, ""),
       year = vapply(data, \(d) as.integer(d$attributes$publicationYear %||% NA), 1L),
-      authors = vapply(data, \(d) paste(vapply(d$attributes$creators, \(a)
-        a$familyName %||% sub(",.*", "", a$name %||% ""), ""), collapse = "; "), ""),
+      # "Family, Given; ...", so that a name with its parts swapped (family
+      # "Kui", given "Wu", cited as "Wu, K.") can be recognised
+      authors = vapply(data, \(d) paste(vapply(d$attributes$creators, \(a) {
+        if (is.null(a$familyName)) return(a$name %||% "")
+        paste(c(a$familyName, a$givenName), collapse = ", ")
+      }, ""), collapse = "; "), ""),
       type = vapply(data, \(d) d$attributes$types$resourceTypeGeneral %||% NA_character_, ""),
       error = FALSE)
   }) |> dplyr::bind_rows(empty)

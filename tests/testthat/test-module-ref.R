@@ -463,7 +463,8 @@ test_that("ref_accuracy compares a record that a title search finds", {
   p <- demopaper()
   p$bib_match <- p$bib_match[p$bib_match$bib_id != 3, ]
   title <- p$bib$title[p$bib$bib_id == 3]
-  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = NA))
+  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = NA),
+                        crossref_doi = \(doi, ...) data.frame(DOI = doi))
   cr_authors <- "Lakens"
   cr_year <- 2018L
   cr_container <- NA_character_
@@ -522,12 +523,17 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
   base <- demopaper()
   i <- match(1, base$bib$bib_id)
   m <- match(1, base$bib_match$bib_id)
+  local_mocked_bindings(crossref_doi = \(doi, ...) data.frame(DOI = doi))
   run <- function(edit) {
     p <- edit(base)
     tbl <- module_run(p, "ref_accuracy")$table
     as.list(tbl[tbl$bib_id == 1, ])
   }
   expect_false(run(identity)$incoherent)
+  # given and family names swapped in the record: a note, not a flag
+  r <- run(\(p) { p$bib_match$authors[[m]][2, c("given", "family")] <- c("Wood", "Wendy"); p })
+  expect_false(r$incoherent)
+  expect_match(r$name_note, "swapped")
 
   # errors that should be discovered, with the field that shows them
   errors <- list(
@@ -1065,6 +1071,9 @@ test_that("ref_accuracy reads bibr 12.x author lists and article types", {
 test_that("ref_accuracy compares a reference without a DOI only with a record it would suggest", {
   # an uncertain title-search match is not compared, so ref_summary shows no
   # mismatch for it
+  # no CrossRef dates for the record, unless a test gives them
+  dates <- data.frame()
+  local_mocked_bindings(crossref_doi = \(doi, ...) if (nrow(dates)) dates else data.frame(DOI = doi))
   p <- demopaper()
   k <- match(3, p$bib_match$bib_id)
   p$bib_match$year[k] <- 1900L
@@ -1150,4 +1159,34 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   tbl <- module_run(p, "ref_accuracy")$table
   expect_false(tbl$incoherent[tbl$bib_id == 3])
   expect_false(tbl$doi_suggested[tbl$bib_id == 3])
+
+  # a cited preprint is not compared on its year or journal with a published
+  # version, which is noted instead of suggested
+  p <- demopaper()
+  p$bib_match$score[k] <- 85
+  p$bib_match$year[k] <- 2010L
+  p$bib_match$authors[[k]] <- data.frame(given = "Daniël", family = "Lakens")
+  p$bib$container[i] <- "PsyArXiv"
+  mo <- module_run(p, "ref_accuracy")
+  r <- mo$table[mo$table$bib_id == 3, ]
+  expect_false(r$incoherent)
+  expect_false(r$doi_suggested)
+  expect_equal(r$published_doi, p$bib_match$doi[k])
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "Cites a preprint", fixed = TRUE)
+
+  # a cited year that is the year the DOI was created, before the work was
+  # published, is a note; one near the
+  # online date is neither a note nor a flag
+  p$bib$container[i] <- NA_character_
+  y <- p$bib$year[i]
+  dates <- data.frame(DOI = p$bib_match$doi[k], issued = paste0(y + 3, "; 1"),
+                      created = paste0(y, "; 5; 2"))
+  r <- module_run(p, "ref_accuracy")$table
+  r <- r[r$bib_id == 3, ]
+  expect_false(r$incoherent)
+  expect_match(r$year_note, "the year the record was created")
+  dates$`published-online` <- paste0(y, "; 6")
+  r <- module_run(p, "ref_accuracy")$table
+  expect_false(r$incoherent[r$bib_id == 3])
+  expect_true(is.na(r$year_note[r$bib_id == 3]))
 })
