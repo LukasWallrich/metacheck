@@ -1187,6 +1187,10 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   q$bib$container[i] <- "ICML"
   r <- module_run(q, "ref_accuracy")$table
   expect_false(r$preprint_only[r$bib_id == 3])
+  # a journal named like a conference is a journal
+  q$bib$container[i] <- "Proceedings of the National Academy of Sciences"
+  r <- module_run(q, "ref_accuracy")$table
+  expect_true(r$preprint_only[r$bib_id == 3])
 
   # a cited year that is the year the DOI was created, before the work was
   # published, is a note; one near the
