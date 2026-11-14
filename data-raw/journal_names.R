@@ -4,22 +4,27 @@
 # as a preprint, but not one cited from a conference, because many
 # proceedings have no DOIs. A venue is taken as a conference when its name
 # has an acronym ("ICML") or a conference word ("Proceedings"). This list
-# holds the journals with such names ("IEEE Transactions on ...", "PLoS
-# ONE", "Proceedings of the National Academy of Sciences"), so that they are
-# still treated as journals. It is built from the SCImago Journal Rank titles
-# in the sjrdata package (https://github.com/ikashnitsky/sjrdata, MIT
-# licence), pinned to a commit, keeping sources SCImago types as journals.
-# SCImago also types many conference series as journals ("IEEE International
-# Conference on Robotics and Biomimetics, ROBIO"); a name with an event word
-# and no journal word, or ending with an acronym after a comma, is left out.
+# holds the journals with such names ("IEEE Transactions on ...", "PLOS
+# One", "Proceedings of the National Academy of Sciences"), so that they are
+# still treated as journals. It is built from the English names of the
+# Wikidata items that have an ISSN (CC0), queried through QLever's copy of
+# Wikidata. Conference series with an ISSN ("IEEE International Conference
+# on Robotics and Biomimetics, ROBIO") are left out: a name with an event
+# word and no journal word, or ending with an acronym after a comma, and
+# series of proceedings (below).
 
-sha <- "f7ed8273edd350cfd36db0a4832a5ce1542cf77f"
-tmp <- tempfile(fileext = ".rda")
-download.file(sprintf(
-  "https://raw.githubusercontent.com/ikashnitsky/sjrdata/%s/data/sjr_journals.rda", sha),
-  tmp, mode = "wb")
-load(tmp)
-titles <- unique(sjr_journals$title[sjr_journals$type == "journal"])
+query <- paste(
+  "PREFIX wdt: <http://www.wikidata.org/prop/direct/>",
+  "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>",
+  "SELECT DISTINCT ?l WHERE { ?j wdt:P236 ?issn . ?j rdfs:label ?l .",
+  "FILTER(LANG(?l) = \"en\") }")
+resp <- httr2::request("https://qlever.dev/api/wikidata") |>
+  httr2::req_url_query(query = query) |>
+  httr2::req_headers(Accept = "text/tab-separated-values") |>
+  httr2::req_perform()
+titles <- strsplit(httr2::resp_body_string(resp), "\n")[[1]][-1]
+titles <- unique(sub('"@en$', "", sub('^"', "", titles)))
+titles <- gsub('\\\\"', '"', titles)
 
 # the module's test for a conference-like venue
 conference_words <- "(?i)\\b(proc|proceedings|conference|conf|workshops?|symposium|meeting|congress|colloquium|summit|track)\\b"
@@ -32,11 +37,22 @@ journal_word <- "(?i)\\b(journal|review|letters|transactions|bulletin|annals|qua
 is_event <- grepl(event, titles, perl = TRUE) & !grepl(journal_word, titles, perl = TRUE)
 ends_with_acronym <- grepl(",\\s*[[:alnum:] -]*[A-Z]{2,}[[:alnum:] -]*$", titles)
 
-journal_titles <- sort(titles[looks_like_conference & !is_event & !ends_with_acronym])
+# series of conference proceedings with an ISSN ("Proceedings of Machine
+# Learning Research" for ICML, "Leibniz International Proceedings in
+# Informatics", "Springer Proceedings in Physics")
+series <- paste0("(?i)\\bproceedings (in|series)\\b|machine learning research|",
+                 "lecture notes|electronic proceedings|conference proceedings|",
+                 "\\babstracts\\b|\\bseminar\\b|sinn und bedeutung")
+is_series <- grepl(series, titles, perl = TRUE)
+
+journal_titles <- sort(titles[looks_like_conference & !is_event & !ends_with_acronym &
+                                !is_series])
 
 # journals often cited by their acronym alone
 journal_acronyms <- c("PNAS", "JAMA", "BMJ", "NEJM", "PLoS ONE", "PLOS ONE",
                       "JMLR", "TMLR", "TACL", "JAIR", "TPAMI", "IJCV")
 
-saveRDS(list(titles = journal_titles, acronyms = journal_acronyms, sjrdata = sha),
+saveRDS(list(titles = journal_titles, acronyms = journal_acronyms,
+             source = "Wikidata (CC0), items with an ISSN, via qlever.dev",
+             date = Sys.Date()),
         "inst/databases/journal_names.Rds", compress = "xz")
