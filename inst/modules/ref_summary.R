@@ -75,6 +75,9 @@ ref_summary <- function(paper, ...) {
     acc <- acc[!duplicated(acc[, c("paper_id", "bib_id")]), , drop = FALSE]
     mm <- grep("_mismatch$", names(acc), value = TRUE)
     acc$accuracy_mismatch <- vapply(seq_len(nrow(acc)), \(i) {
+      # a title search found the work nowhere, or failed
+      if (isTRUE(acc$not_found[[i]])) return("not found")
+      if (isTRUE(acc$search_failed[[i]])) return("not checked")
       if (isTRUE(acc$no_match[[i]])) {
         # ref_accuracy's tier says why there is no record: a cited DOI that
         # does not exist is not the same as one that was not looked up

@@ -21,10 +21,11 @@ and \code{error} TRUE; a title with no match has no rows.
 \description{
 Asks Semantic Scholar for the work whose title best matches each title.
 Semantic Scholar holds conference papers without DOIs (ICML, NeurIPS,
-ICLR), which CrossRef and DataCite do not. Without a key, its requests
+ICLR), which Crossref and DataCite do not. Without a key, its requests
 share a pool with all other users that often refuses them, so they are
 sent about one a second, retried after a wait when refused, and asked
-once more, more slowly, when still refused. A free key
+once more, more slowly, when still refused; when every title of a group
+of five is refused, the rest are not asked. A free key
 (https://www.semanticscholar.org/product/api#api-key-form) in the
 environment variable \code{SEMANTIC_SCHOLAR_API_KEY} is used when set.
 }

@@ -7,18 +7,16 @@
 doi_clean(doi)
 }
 \arguments{
-\item{doi}{a character vector of one or more DOIs
-
-Removes a surrounding doi.org or journal URL, a "doi:" label, a section
-marker, whitespace, trailing punctuation, and an unmatched closing angle
-bracket, parenthesis or square bracket. Decodes "\%2F" as "/". Balanced
-parentheses within the DOI are kept.}
+\item{doi}{a character vector of one or more DOIs}
 }
 \value{
 a character vector of cleaned DOIs (no https://doi.org or DOI:)
 }
 \description{
-Clean DOIs
+Removes a surrounding doi.org or journal URL, a "doi:" label, a section
+marker, whitespace, trailing punctuation, and an unmatched closing angle
+bracket, parenthesis or square bracket. Decodes "\%2F" as "/". Balanced
+parentheses within the DOI are kept.
 }
 \examples{
 doi_clean("https://doi.org/10.1038/nphys1170")

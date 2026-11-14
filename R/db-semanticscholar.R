@@ -2,10 +2,11 @@
 #'
 #' Asks Semantic Scholar for the work whose title best matches each title.
 #' Semantic Scholar holds conference papers without DOIs (ICML, NeurIPS,
-#' ICLR), which CrossRef and DataCite do not. Without a key, its requests
+#' ICLR), which Crossref and DataCite do not. Without a key, its requests
 #' share a pool with all other users that often refuses them, so they are
 #' sent about one a second, retried after a wait when refused, and asked
-#' once more, more slowly, when still refused. A free key
+#' once more, more slowly, when still refused; when every title of a group
+#' of five is refused, the rest are not asked. A free key
 #' (https://www.semanticscholar.org/product/api#api-key-form) in the
 #' environment variable `SEMANTIC_SCHOLAR_API_KEY` is used when set.
 #'
@@ -41,17 +42,29 @@ semanticscholar_query <- function(title) {
     "title,year,authors,venue,externalIds,publicationTypes,url&query=",
     utils::URLencode(title[todo], reserved = TRUE))
   key <- Sys.getenv("SEMANTIC_SCHOLAR_API_KEY")
-  ask <- \(u, every) .batch_query(
-    u, msg = NULL, batch_size = length(u), delay = 0,
-    req_func = \(req) if (nzchar(key)) httr2::req_headers(req, `x-api-key` = key, .redact = "x-api-key") else req,
-    throttle_capacity = 1, throttle_fill_time_s = every)
+  # Titles are asked in groups of five. When every title of a group is
+  # refused, the service is taken as unavailable and the rest are not asked
+  # (they count as failed searches), so that a refusing service does not
+  # hold up the module.
+  ask <- \(idx, every) {
+    out <- vector("list", length(idx))
+    for (g in split(seq_along(idx), ceiling(seq_along(idx) / 5))) {
+      out[g] <- .batch_query(
+        urls[idx[g]], msg = NULL, batch_size = length(g), delay = 0,
+        req_func = \(req) if (nzchar(key)) httr2::req_headers(req, `x-api-key` = key, .redact = "x-api-key") else req,
+        throttle_capacity = 1, throttle_fill_time_s = every,
+        timeout_s = 15, max_tries = 3)
+      if (all(vapply(out[g], refused, logical(1)))) break
+    }
+    out
+  }
   refused <- \(r) !inherits(r, "httr2_response") || httr2::resp_status(r) %in% c(429, 500, 502, 503, 504)
-  resps <- ask(urls, 1.1)
+  resps <- ask(seq_along(urls), 1.1)
   # titles still refused after the retries are asked once more, more slowly
   again <- which(vapply(resps, refused, logical(1)))
   if (length(again)) {
     Sys.sleep(10)
-    resps[again] <- ask(urls[again], 3)
+    resps[again] <- ask(again, 3)
   }
   # a particle belongs to the family name ("van Dijk")
   particles <- "^(van|von|de|der|den|del|della|da|di|du|dos|le|la|bin|ibn)$"
@@ -74,8 +87,10 @@ semanticscholar_query <- function(title) {
     ids <- d$externalIds
     types <- unlist(d$publicationTypes)
     venue <- d$venue %||% NA_character_
-    arxiv_only <- !is.null(ids$ArXiv) && (is.null(types) ||
-      grepl("(?i)arxiv|corr", venue, perl = TRUE) || !nzchar(venue))
+    # an arXiv record without a venue, or with arXiv as its venue; missing
+    # publication types say nothing
+    arxiv_only <- !is.null(ids$ArXiv) && (is.null(ids$DOI) || grepl("^10\\.48550/", ids$DOI, ignore.case = TRUE)) &&
+      (is.na(venue) || !nzchar(venue) || grepl("(?i)^(arxiv|corr)\\b", venue, perl = TRUE))
     data.frame(
       query = todo[j],
       doi = ids$DOI %||% NA_character_,

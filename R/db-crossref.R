@@ -111,7 +111,8 @@ datacite_doi <- function(doi) {
 #' doi_ra(c("10.1037/0033-2909.126.1.78", "10.1037/0033-2909.1261.7"))
 #' }
 doi_ra <- function(doi) {
-  out <- data.frame(doi = doi, ra = NA_character_, exists = NA)
+  out <- data.frame(doi = doi, ra = rep(NA_character_, length(doi)),
+                    exists = rep(NA, length(doi)))
   cleaned <- doi_clean(doi)
   todo <- unique(cleaned[!is.na(cleaned) & nzchar(cleaned)])
   if (!length(todo) || !online("doi.org")) return(out)

@@ -27,7 +27,7 @@ titles <- unique(sub('"@en$', "", sub('^"', "", titles)))
 titles <- gsub('\\\\"', '"', titles)
 
 # the module's test for a conference-like venue
-conference_words <- "(?i)\\b(proc|proceedings|conference|conf|workshops?|symposium|meeting|congress|colloquium|summit|track)\\b"
+conference_words <- "(?i)\\b(proc|proceedings|conference|conf|workshops?|symposium|meeting|congress|colloquium|summit|track)\\b|advances in neural information processing"
 acronym_word <- "(^|[^[:alnum:]])[[:alnum:]]*[A-Z][[:alnum:]]*[A-Z][[:alnum:]]*($|[^[:alnum:]])"
 looks_like_conference <- grepl(conference_words, titles, perl = TRUE) |
   grepl(acronym_word, titles)
@@ -38,11 +38,13 @@ is_event <- grepl(event, titles, perl = TRUE) & !grepl(journal_word, titles, per
 ends_with_acronym <- grepl(",\\s*[[:alnum:] -]*[A-Z]{2,}[[:alnum:] -]*$", titles)
 
 # series of conference proceedings with an ISSN ("Proceedings of Machine
-# Learning Research" for ICML, "Leibniz International Proceedings in
-# Informatics", "Springer Proceedings in Physics")
+# Learning Research" for ICML, "Advances in Neural Information Processing
+# Systems" for NeurIPS, "Leibniz International Proceedings in Informatics",
+# "Springer Proceedings in Physics")
 series <- paste0("(?i)\\bproceedings (in|series)\\b|machine learning research|",
                  "lecture notes|electronic proceedings|conference proceedings|",
-                 "\\babstracts\\b|\\bseminar\\b|sinn und bedeutung")
+                 "\\babstracts\\b|\\bseminar\\b|sinn und bedeutung|",
+                 "advances in neural information processing")
 is_series <- grepl(series, titles, perl = TRUE)
 
 journal_titles <- sort(titles[looks_like_conference & !is_event & !ends_with_acronym &

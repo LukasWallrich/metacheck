@@ -53,6 +53,9 @@ test_that("ref_miscitation", {
 
 
 test_that("ref_accuracy", {
+  # doi.org reports the demo paper's two unresolved DOIs as not existing
+  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE),
+                        crossref_doi = \(doi, ...) data.frame(DOI = doi))
   module <- "ref_accuracy"
   mods <- module_list()
   expect_true(module %in% mods$name)
@@ -74,7 +77,7 @@ test_that("ref_accuracy", {
   expect_match(mod_output$summary_text, "not looked up at Crossref")
   expect_equal(mod_output$summary_table$refs_checked, 0)
   expect_equal(mod_output$summary_table$no_doi, 1)
-  expect_match(mod_output$summary_text, "1 reference had no DOI")
+  expect_match(mod_output$summary_text, "and 1 did not")
 
   # relevant references
   paper <- demopaper()
@@ -273,6 +276,9 @@ test_that("ref_consistency reports a citation to a missing reference, and reads 
 })
 
 test_that("ref_accuracy counts a reference with several bib_match rows once, and ignores footnote markers in titles (U114)", {
+  # doi.org reports the demo paper's two unresolved DOIs as not existing
+  local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE),
+                        crossref_doi = \(doi, ...) data.frame(DOI = doi))
   # three joins multiplied duplicate bib_match rows (3 copies: 31 rows for 5
   # references); <sup> markers were compared as part of the title
   p <- demopaper()
@@ -395,7 +401,7 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   expect_true(nf(mo))
   expect_true(dc_called)
   expect_equal(mo$summary_table$not_found, 1)
-  expect_match(mo$summary_text, "No work with the cited title was found in CrossRef, DataCite or Semantic Scholar for 1 of them", fixed = TRUE)
+  expect_match(mo$summary_text, "1 was not found in Crossref, DataCite or Semantic Scholar", fixed = TRUE)
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_match(report, "### References not found", fixed = TRUE)
   # a reference not found does not change the traffic light
@@ -432,7 +438,7 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   mo <- module_run(p, "ref_accuracy")
   expect_false(nf(mo))
   expect_true(mo$table$search_failed[mo$table$bib_id == 3])
-  expect_match(mo$summary_text, "The title search failed for 1 of them", fixed = TRUE)
+  expect_match(mo$summary_text, "The title search failed for 1 reference", fixed = TRUE)
 
   # a title cited twice is found for both references
   p2 <- p
@@ -510,7 +516,7 @@ test_that("ref_accuracy compares a record that a title search finds", {
   expect_true(row(mo)$author_mismatch)
   expect_equal(row(mo)$doi.match, "10.1177/2515245918770963")
   report <- paste(unlist(mo$report), collapse = "\n")
-  expect_match(report, "the work with the same title in CrossRef differs", fixed = TRUE)
+  expect_match(report, "the work with the same title in Crossref differs", fixed = TRUE)
   expect_equal(mo$traffic_light, "yellow")
 
   cr_authors <- "Lakens"
@@ -859,11 +865,11 @@ test_that("ref_accuracy counts references without a DOI and suggests a DOI for c
   expect_true(mo$table$no_doi[mo$table$bib_id == 3])
   expect_equal(mo$summary_table$doi_suggested, 0)
 
-  # nothing to check when no reference supplied a DOI, in its DOI field or
-  # its text
+  # with no reference that supplied a DOI, in its DOI field or its text, the
+  # light is green when a reference without one was compared
   p$bib$doi <- ""
   p$text$text <- gsub("(https?://doi\\.org/|doi:)\\S+", "", p$text$text)
-  expect_equal(module_run(p, "ref_accuracy")$traffic_light, "na")
+  expect_equal(module_run(p, "ref_accuracy")$traffic_light, "green")
 
   # a match with another title is another work: no DOI is suggested. A title
   # that only adds or drops words at the end is close enough.
@@ -1093,7 +1099,8 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   # mismatch for it
   # no CrossRef dates for the record, unless a test gives them
   dates <- data.frame()
-  local_mocked_bindings(crossref_doi = \(doi, ...) if (nrow(dates)) dates else data.frame(DOI = doi))
+  local_mocked_bindings(crossref_doi = \(doi, ...) if (nrow(dates)) dates else data.frame(DOI = doi),
+                        doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE))
   p <- demopaper()
   k <- match(3, p$bib_match$bib_id)
   p$bib_match$year[k] <- 1900L
@@ -1113,7 +1120,7 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   expect_false(tbl$doi_suggested[tbl$bib_id == 3])
   expect_true(tbl$no_doi[tbl$bib_id == 3])
   expect_equal(mo$traffic_light, "yellow")
-  expect_match(mo$summary_text, "1 reference without a DOI, a title search found a work with the same title")
+  expect_match(mo$summary_text, "differ from their record (possible citation errors)", fixed = TRUE)
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_match(report, "No DOI cited; the work with the same title differs", fixed = TRUE)
   expect_match(report, paste0("https://doi.org/", p$bib_match$doi[k]), fixed = TRUE)
@@ -1194,7 +1201,21 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   expect_equal(r$published_doi, p$bib_match$doi[k])
   expect_match(paste(unlist(mo$report), collapse = "\n"), "Cites a preprint", fixed = TRUE)
 
-  # a cited journal article whose same-title match is a preprint is flagged
+  # a cited journal article whose same-title match is a preprint is searched
+  # by title, and flagged when the search finds only the preprint
+  hits <- \(types) {
+    x <- data.frame(ref = p$bib$title[i], DOI = paste0("10.31234/", seq_along(types)),
+                    title = p$bib$title[i], score = 90, year = p$bib$year[i],
+                    type = types, `container-title` = NA_character_, check.names = FALSE)
+    x$author <- rep(list(data.frame(given = "Daniël", family = "Lakens")), length(types))
+    x
+  }
+  found <- "posted-content"
+  local_mocked_bindings(
+    crossref_query = \(ref, ...) hits(found),
+    datacite_query = \(title, ...) data.frame(query = integer(0), doi = character(0),
+      title = character(0), year = integer(0), authors = character(0), error = logical(0)),
+    doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE))
   q <- demopaper()
   q$bib_match$score[k] <- 85
   q$bib_match$bib_type[k] <- "misc"
@@ -1211,6 +1232,10 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   q$bib$container[i] <- "Proceedings of the National Academy of Sciences"
   r <- module_run(q, "ref_accuracy")$table
   expect_true(r$preprint_only[r$bib_id == 3])
+  # not when the search also finds the published article, after the preprint
+  found <- c("posted-content", "journal-article")
+  r <- module_run(q, "ref_accuracy")$table
+  expect_false(r$preprint_only[r$bib_id == 3])
 
   # a cited year that is the year the DOI was created, before the work was
   # published, is a note; one near the
@@ -1222,7 +1247,7 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   r <- module_run(p, "ref_accuracy")$table
   r <- r[r$bib_id == 3, ]
   expect_false(r$incoherent)
-  expect_match(r$year_note, "the year the record was created")
+  expect_match(r$year_note, "the record was created in")
   dates$`published-online` <- paste0(y, "; 6")
   r <- module_run(p, "ref_accuracy")$table
   expect_false(r$incoherent[r$bib_id == 3])

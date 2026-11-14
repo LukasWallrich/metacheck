@@ -9,16 +9,20 @@
 # in a paper of 50 (shuffled across subtypes), is looked up with
 # add_bib_match(), and ref_accuracy's flags (incoherent) and not-found notes
 # are counted separately. CiteTracer has no entry types, so every citation is
-# an article. Network calls only (CrossRef, DataCite, Semantic Scholar, doi.org); about 30
-# minutes. The looked-up papers are saved to `cache`, so a rerun of the
-# module after a change needs no lookups.
+# an article. Network calls only (Crossref, DataCite, Semantic Scholar,
+# doi.org); about an hour without a Semantic Scholar key. The looked-up papers
+# are saved to `cache` with the date of the lookup, so a rerun after a change
+# to the module repeats only the module's own calls (doi.org, Crossref dates,
+# title searches), whose answers may change. A failed title search counts as
+# "search failed", not as a miss.
 
 devtools::load_all(".")
 
 # the last commit that changed the v2 data (9 May 2026)
 sha <- "5dfe2dd71c5c9d9a946653bbabb34ee0e61e6efc"
 url <- sprintf("https://raw.githubusercontent.com/aaFrostnova/CiteTracer/%s/data/synthetic_data/v2/", sha)
-cache <- file.path(tools::R_user_dir("metacheck", "cache"), "citetracer_bib_match.rds")
+cache <- file.path(tools::R_user_dir("metacheck", "cache"),
+                   sprintf("citetracer_%s_bib_match.rds", substr(sha, 1, 8)))
 cites <- jsonlite::fromJSON(paste0(url, "_all_test.json"), simplifyVector = FALSE)
 meta <- jsonlite::fromJSON(paste0(url, "meta.json"), simplifyVector = FALSE)
 
@@ -76,6 +80,7 @@ if (file.exists(cache)) {
   papers <- readRDS(cache)
 } else {
   papers <- add_bib_match(papers)
+  attr(papers, "looked_up") <- Sys.Date()
   dir.create(dirname(cache), recursive = TRUE, showWarnings = FALSE)
   saveRDS(papers, cache)
 }
@@ -84,6 +89,9 @@ mo <- module_run(papers, "ref_accuracy")
 res <- merge(refs[, c("paper_id", "bib_id", "label", "subtype")], mo$table,
              by = c("paper_id", "bib_id"))
 res$outcome <- ifelse(res$incoherent, "flagged",
-                      ifelse(res$not_found, "not found", "neither"))
+                      ifelse(res$not_found, "not found",
+                             ifelse(res$search_failed, "search failed", "neither")))
+cat("Looked up", format(attr(papers, "looked_up") %||% NA), "; module run",
+    format(Sys.Date()), "; Semantic Scholar key", nzchar(Sys.getenv("SEMANTIC_SCHOLAR_API_KEY")), "\n")
 table(res$label, res$outcome) |> prop.table(1) |> round(3)
 table(res$subtype, res$outcome)
