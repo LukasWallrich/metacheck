@@ -583,7 +583,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     out
   }
   year_note_text <- \(src, year, record) sprintf(
-    "the record was %s in %s and published in %s", src, year, record)
+    "the cited year is near the year of the %s (%s); the work was published in %s",
+    c(created = "DOI's creation", accepted = "work's acceptance",
+      approved = "work's approval")[src], year, record)
   table$year_note <- NA_character_
   # the record each note refers to
   note_record <- rep(NA_character_, nrow(table))
@@ -1301,16 +1303,18 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       found_why[i] <- dplyr::case_when(
         ok ~ NA_character_,
         (pick < 0) %in% TRUE ~ sprintf(
-          "The searches found %d works with this title and year (such as a book and a review of it).", -pick),
-        pre ~ sprintf("Cited in a journal, but found as a preprint in %s.", where),
-        one & !has_authors ~ sprintf("Found in %s, but the authors could not be compared.", where),
-        one ~ sprintf("Found in %s, but with other authors.", where),
-        blank(s$doi) ~ sprintf("Found in %s, which gives no DOI for it.", where),
+          "The searches found %d records with this title and year (such as a book and a review of it), so it is not clear which is the cited work.", -pick),
+        pre ~ sprintf("Cited in a journal; the closest record in %s is a preprint.", where),
+        one & !has_authors ~ sprintf(
+          "The closest record in %s may be the cited work, but it or the reference lists no authors to confirm it.", where),
+        one ~ sprintf("The closest record in %s has other authors.", where),
+        blank(s$doi) ~ sprintf("The closest record in %s has no DOI.", where),
         !title_check(table$title.orig[i], s$title, table$text[i])$full %in% TRUE ~
-          sprintf("Found in %s with a slightly different title.", where),
+          sprintf("The closest record in %s has a slightly different title.", where),
         !is.na(s$year) & !is.na(table$year.orig[i]) ~ sprintf(
-          "Found in %s with another year (%s): it may be another edition or version.", where, s$year),
-        .default = sprintf("Found in %s, but the year could not be compared.", where))
+          "The closest record in %s has another year (%s): it may be another edition or version.", where, s$year),
+        .default = sprintf(
+          "The closest record in %s may be the cited work, but it or the reference gives no year to confirm it.", where))
       if (any(ok)) {
         f <- i[ok]
         c1 <- c1[ok, ]
@@ -1367,24 +1371,31 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   summary_text <- paste0(
     if (!any(looked_up))
       "The references were not looked up at Crossref, so their accuracy was not checked."
-    else sprintf(
-      "Of %d reference%s, %d differ%s from %s record (possible citation error%s) and %d %s not found in Crossref, DataCite or Semantic Scholar%s.",
-      n_refs, plural(n_refs), n_diff, if (n_diff == 1) "s" else "",
-      if (n_diff == 1) "its" else "their", if (n_diff == 1) "" else "s",
-      n_nf, if (n_nf == 1) "was" else "were",
-      if (n_nf > 0) sprintf(" (check that %s)", if (n_nf == 1) "it exists" else "they exist") else ""),
-    sprintf(" %d printed a DOI%s.", n_doi,
-      if (n_nodoi > 0) sprintf(" and %d did not%s", n_nodoi,
+    else paste0(
+      sprintf("Of %d reference%s, ", n_refs, plural(n_refs)),
+      if (n_diff > 0)
+        sprintf("%d differ%s from %s record (possible citation error%s)",
+                n_diff, if (n_diff == 1) "s" else "", if (n_diff == 1) "its" else "their",
+                if (n_diff == 1) "" else "s")
+      else "none differs from its record",
+      if (n_nf > 0)
+        sprintf(" and %d %s not found in Crossref, DataCite or Semantic Scholar (check that %s)",
+                n_nf, if (n_nf == 1) "was" else "were",
+                if (n_nf == 1) "it exists" else "they exist")
+      else "",
+      "."),
+    sprintf(" %d include%s a DOI%s.", n_doi, if (n_doi == 1) "s" else "",
+      if (n_nodoi > 0) sprintf(" and %d %s not%s", n_nodoi, if (n_nodoi == 1) "does" else "do",
         if (n_suggest > 0) sprintf("; the report suggests a DOI for %d of these", n_suggest) else "")
       else ""),
-    if (n_sfail > 0) sprintf(" The title search failed for %d reference%s without a DOI, so %s not checked; run the module again.",
+    if (n_sfail > 0) sprintf(" The title search failed for %d reference%s, so %s not checked; run the check again later.",
                              n_sfail, plural(n_sfail), if (n_sfail == 1) "it was" else "they were") else "",
     if (n_pub > 0) sprintf(" %d cited preprint%s %s a published version.",
                            n_pub, plural(n_pub), if (n_pub == 1) "has" else "have") else "",
-    if (n_ynote > 0) sprintf(" %d cited year%s %s near the year the record was created or accepted, not published.",
+    if (n_ynote > 0) sprintf(" %d cited year%s %s near the year of the DOI's creation or the work's acceptance, not its publication.",
                              n_ynote, plural(n_ynote), if (n_ynote == 1) "is" else "are") else "",
-    if (n_nnote > 0) sprintf(" %d reference%s cite%s an author with given and family names swapped, or the record does.",
-                             n_nnote, plural(n_nnote), if (n_nnote == 1) "s" else "") else "",
+    if (n_nnote > 0) sprintf(" In %d reference%s, an author's given and family names are swapped, in the reference or in the record.",
+                             n_nnote, plural(n_nnote)) else "",
     if (n_unread > 0) sprintf(" %d entr%s could not be read reliably from the PDF and %s listed in the report.",
                               n_unread, if (n_unread == 1) "y" else "ies",
                               if (n_unread == 1) "is" else "are") else "",
@@ -1413,7 +1424,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     any(table$doi_suggested)
   tl <- if (any(table$incoherent %in% TRUE)) "yellow" else if (!any_compared) "na" else "green"
 
-  guidance <- "Check each flagged reference against the original source. A flag may come from an error in reading the PDF, a citation mistake, or an AI-generated reference."
+  guidance <- "Check each possible citation error against the original source before changing the reference. A difference may come from a citation mistake, an error in reading the PDF, an error in the registry's record, a search that found another work, or an AI-generated reference."
 
   if (n_inc + n_inc_nodoi == 0) guidance <- ""
 
@@ -1528,24 +1539,21 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   discrepancies <- function(r) {
     # an unresolved cited DOI has no record to compare against
     if (r$tier == "unresolved") {
-      gone <- if (isFALSE(r$doi_exists)) "does not exist (doi.org)" else "could not be found"
+      gone <- if (isFALSE(r$doi_exists)) "is not registered at doi.org" else "could not be found"
       if (!is.na(r$doi.match) && nzchar(r$doi.match))
-        return(sprintf("%s<br>The cited DOI %s; this is the DOI of the work with the cited title in %s.",
+        return(sprintf("%s<br>The cited DOI %s; the DOI shown is that of the work found by the cited title in %s.",
                        correction("DOI", r$doi.orig, r$doi.match, words = FALSE), gone,
                        source_name(r$record_source)))
       return(sprintf(
         "<b>DOI:</b> the cited DOI %s %s%s", strike(r$doi.orig), gone,
         if (!is.na(r$record_source))
-          sprintf("; the work with the cited title in %s is shown", source_name(r$record_source))
+          sprintf("; the work found by the cited title in %s is shown", source_name(r$record_source))
         else ""))
     }
     parts <- c(
-      if (r$tier == "crossref")
-        "No DOI cited; the work with the same title differs:",
-      if (r$tier == "search")
-        sprintf("No DOI cited; the work with the same title in %s differs:",
-                switch(r$record_source, datacite = "DataCite",
-                       semanticscholar = "Semantic Scholar", "Crossref")),
+      if (r$tier %in% c("crossref", "search"))
+        sprintf("No DOI cited. The work found by its title in %s differs:",
+                source_name(r$record_source)),
       if (isTRUE(r$title_mismatch))
         correction("title", r$title.orig, r$title.match),
       # the record surnames that are missing, rather than the whole list
@@ -1638,7 +1646,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   nf_report <- NULL
   if (nrow(nf_rows) > 0) {
     out <- data.frame(Reference = paste0(esc(ref_text(nf_rows)), ifelse(
-      nf_rows$tier %in% "unresolved", "<br><i>The cited DOI does not exist (doi.org).</i>", "")),
+      nf_rows$tier %in% "unresolved", "<br><i>The cited DOI is not registered at doi.org.</i>", "")),
       check.names = FALSE)
     nf_report <- scroll_table(out, 5)
   }
@@ -1698,16 +1706,16 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     weak <- is.na(f$source) & r$tier %in% "crossref" & !blank(r$doi.match) &
       (r$title_agrees | r$title_starts_same) %in% TRUE
     why <- dplyr::case_when(
-      !looked_up[rest] ~ "Not looked up.",
+      !looked_up[rest] ~ "Not searched: the paper's references were not looked up.",
       unpublished[rest] ~ "Cited as unpublished: not searched.",
-      blank(r$title.orig) | n_w < 3 ~ "No title read, or one shorter than three words: not searched.",
+      blank(r$title.orig) | n_w < 3 ~ "Not searched: no title was read from the PDF, or it has fewer than three words.",
       r$search_failed ~ "The title search failed: run the module again.",
       !is.na(found_why[rest]) ~ found_why[rest],
       weak & (r$year.match != r$year.orig) %in% TRUE ~ sprintf(
-        "Crossref's closest match has the cited title but another year (%s): it may be another edition or version.",
+        "Crossref's closest record has the cited title but another year (%s): it may be another edition or version.",
         r$year.match),
-      weak ~ "Crossref's closest match has the cited title, but is a book, chapter or report, whose editions share a title, and Crossref's search was not confident that it is the cited one.",
-      .default = "No DOI suggested.")
+      weak ~ "Crossref's closest record has the cited title but is a book, chapter or report, whose editions share titles, and it is not clear that it is the cited one.",
+      .default = "No record found that could be checked against the reference.")
     rec_cell <- ifelse(!is.na(f$source), record_link(f$doi, f$url),
                        ifelse(weak, paste(record_link(r$doi.match, NA), "(?)"), ""))
     out <- data.frame(
@@ -1722,35 +1730,35 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     guidance,
     if (!is.null(incoherent_report))
       c("### Possible citation errors\n",
-        "These references cite details that differ from the record of their DOI, or a DOI that does not exist (the work found by the cited title is shown). For a reference without a DOI, the record is the work with a similar title; its DOI is not suggested. The differences show text that is only in the printed reference <del style=\"color:#c00\">struck through in red</del>, and text that is only in the record <ins style=\"color:#1a7f37\">underlined in green</ins>.\n",
+        "The details of these references differ from the registry's record of the work (Crossref, DataCite or Semantic Scholar). For a reference with a DOI, the record is that of its DOI. For a reference without a DOI, or with a DOI that is not registered, it is the work found by the cited title, which may be another work or version: its DOI is linked but not suggested. The differences show text that is only in the printed reference <del style=\"color:#c00\">struck through in red</del>, and text that is only in the record <ins style=\"color:#1a7f37\">underlined in green</ins>.\n",
         incoherent_report),
     if (!is.null(notes_report))
       c("### Preprints, years and names to check\n",
-        "These notes do not count as errors, and a reference with a note may also be listed above. A cited preprint has a published version, which a reader may prefer to cite. A cited year is the year in which the record was created or the work accepted, not the year it was published. An author's given and family names are swapped in the citation or in the record.\n",
+        "These notes are not citation errors, and a reference with a note may also be listed above. A cited preprint has a published version, which may be the better one to cite. A cited year is near the year the DOI was created or the work accepted, not the year it was published: check which year to cite. An author's given and family names are swapped in the reference or in the record: check which order is right.\n",
         notes_report),
     if (!is.null(alias_report))
-      c("### DOIs that have a newer form\n",
-        "These references cite a DOI that the registry lists as an alias of another DOI, for example after the journal moved to a new publisher. The cited DOI still leads to the right work, so this is not an error; the DOI the registry now uses is given for reference.\n",
+      c("### DOIs with another registered form\n",
+        "The registry lists the cited DOI as an alias of another DOI for the same work, for example after the journal moved to a new publisher. The cited DOI still leads to the work, so this is not an error; the DOI the registry gives is shown, and may be cited instead.\n",
         alias_report),
     if (!is.null(reg_report))
       c("### DOIs that could not be checked\n",
-        "No record was retrieved for these cited DOIs, so the references were not checked. For a DOI registered with Crossref the lookup probably failed: run `add_bib_match()` again. `add_bib_match()` looks up Crossref records only, so DOIs of other registration agencies, such as DataCite, are not checked. When doi.org could not be reached, it is not known whether the DOI exists: run the check again.\n",
+        "No record was retrieved for these cited DOIs, so the references were not checked: follow each DOI and compare the reference with the work. For a DOI registered with Crossref the lookup probably failed, and running the check again may fix it (`add_bib_match()`). Records of other registration agencies, such as DataCite or mEDRA, are not looked up. When doi.org could not be reached, it is not known whether the DOI exists: run the check again later.\n",
         reg_report),
     if (!is.null(unread_report))
       c("### Entries that could not be read reliably\n",
-        "These entries were not read correctly from the PDF, so they were not checked. This is usually a limitation of the PDF reading, not an error in the reference list.\n",
+        "These entries were not read correctly from the PDF, so they were not checked: check them by hand against the original source. A reading problem is usually a limitation of the PDF reading, not an error in the reference list.\n",
         unread_report),
     if (!is.null(nf_report))
       c("### References not found\n",
-        "These references have no DOI, or one that does not exist, and no work with the cited title was found in Crossref, DataCite (which includes arXiv, Zenodo and OSF) or Semantic Scholar (which includes conference papers without DOIs). Books, reports, theses, software and web pages are often missing from these sources, and a title misread from the PDF is not found either. For a journal article or a preprint, check the title and that the work exists.\n",
+        "These references have no DOI, or one that is not registered, and no work with the cited title was found in Crossref, DataCite (which includes arXiv, Zenodo and OSF) or Semantic Scholar (which includes conference papers without DOIs). Books, reports, theses, software and web pages are often missing from these sources, and a title misread from the PDF is not found either. For a journal article or a preprint, check the title and that the work exists.\n",
         nf_report),
     if (!is.null(suggested_report))
       c("### Suggested DOIs\n",
-        "These references have no DOI. A DOI is suggested when Crossref's search for the reference found a confident match with the cited title and details, or when a search for the title found exactly one work with the cited title, year and authors (the source is then named). Check that it is the cited work before adding its DOI. The retraction, PubPeer and replication checks use the DOIs from Crossref's search for the reference, so for those references they are only as reliable as that search.\n",
+        "These references have no DOI, but the search found a work with the cited title whose authors, year and journal agree with the reference; where it was found by the title alone, outside Crossref's search for the reference, the source is named. Check that the linked record is the cited work and version before adding its DOI. The retraction, PubPeer and replication checks use the DOI of Crossref's match for every reference without a DOI, also when none is suggested, so for these references they are only as reliable as that match.\n",
         suggested_report),
     if (!is.null(other_report))
       c("### Other references without a DOI\n",
-        "These references have no DOI, and none is suggested, for the reason given. A record marked (?) is Crossref's closest match, which may be another work.\n",
+        "These references have no DOI, and none is suggested, for the reason given. Where a closest record is linked, check whether it is the cited work before using its DOI; one marked (?) is Crossref's best guess and is more likely to be another work.\n",
         other_report)
   )
 

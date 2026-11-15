@@ -103,7 +103,7 @@ test_that("ref_accuracy", {
   expect_match(mod_output$summary_text, "not looked up at Crossref")
   expect_equal(mod_output$summary_table$refs_checked, 0)
   expect_equal(mod_output$summary_table$no_doi, 1)
-  expect_match(mod_output$summary_text, "and 1 did not")
+  expect_match(mod_output$summary_text, "and 1 does not")
 
   # relevant references
   paper <- demopaper()
@@ -127,8 +127,8 @@ test_that("ref_accuracy", {
   # the package's DOI at CRAN (Crossref) or Zenodo (DataCite)
   expect_match(unresolved$doi.match[1], "faux|zenodo\\.2669586", ignore.case = TRUE)
   report <- paste(unlist(mod_output$report), collapse = "\n")
-  expect_match(report, "this is the DOI of the work with the cited title in", fixed = TRUE)
-  expect_match(report, "The cited DOI does not exist (doi.org).", fixed = TRUE)
+  expect_match(report, "the DOI shown is that of the work found by the cited title in", fixed = TRUE)
+  expect_match(report, "The cited DOI is not registered at doi.org.", fixed = TRUE)
 
   # a checked reference (one whose DOI resolves) whose cited journal differs
   # from the record its DOI points to is also incoherent. Corrupt the journal
@@ -382,7 +382,7 @@ test_that("ref_accuracy asks doi.org about a cited DOI without a record", {
   expect_equal(row(mo)$tier, "unresolved")
   expect_false(row(mo)$incoherent)
   expect_true(row(mo)$not_found)
-  expect_match(paste(unlist(mo$report), collapse = "\n"), "does not exist (doi.org)", fixed = TRUE)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "is not registered at doi.org", fixed = TRUE)
 
   # doi.org could not be asked: not checked, not flagged
   ra <- list(ra = NA_character_, exists = NA)
@@ -462,7 +462,7 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   dc_title <- c(title, title)
   mo <- module_run(p, "ref_accuracy")
   expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
-  expect_match(paste(unlist(mo$report), collapse = "\n"), "2 works with this title and year", fixed = TRUE)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "2 records with this title and year", fixed = TRUE)
 
   # Semantic Scholar holds it, with other authors: flagged, linking its page
   dc_title <- NULL
@@ -560,7 +560,7 @@ test_that("ref_accuracy compares a record that a title search finds", {
   expect_true(row(mo)$author_mismatch)
   expect_equal(row(mo)$doi.match, "10.1177/2515245918770963")
   report <- paste(unlist(mo$report), collapse = "\n")
-  expect_match(report, "the work with the same title in Crossref differs", fixed = TRUE)
+  expect_match(report, "The work found by its title in Crossref differs", fixed = TRUE)
   expect_equal(mo$traffic_light, "yellow")
 
   cr_authors <- "Lakens"
@@ -1191,7 +1191,7 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   expect_equal(mo$traffic_light, "yellow")
   expect_match(mo$summary_text, "differs from its record (possible citation error)", fixed = TRUE)
   report <- paste(unlist(mo$report), collapse = "\n")
-  expect_match(report, "No DOI cited; the work with the same title differs", fixed = TRUE)
+  expect_match(report, "No DOI cited. The work found by its title in Crossref differs", fixed = TRUE)
   # a title that differs in one word from the record it was matched to
   q <- p
   q$bib_match$year[k] <- q$bib$year[q$bib$bib_id == 3]
@@ -1323,7 +1323,7 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   r <- module_run(p, "ref_accuracy")$table
   r <- r[r$bib_id == 3, ]
   expect_false(r$incoherent)
-  expect_match(r$year_note, "the record was created in")
+  expect_match(r$year_note, "near the year of the DOI.s creation")
   dates$`published-online` <- paste0(y, "; 6")
   r <- module_run(p, "ref_accuracy")$table
   expect_false(r$incoherent[r$bib_id == 3])
