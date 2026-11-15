@@ -12,7 +12,7 @@
 #'
 #' **References without a DOI.** These are listed separately, with a recommendation to add a DOI where one exists. Their record comes from a Crossref title search, which can return the wrong work, so a reference is compared only with a record whose title agrees with the cited title. The match must be confident (a score of at least `suggest_score`), or have almost the same title (a character similarity of at least 0.9): a wrong year or author lowers Crossref's score. When the match's title, authors, journal or year differ from the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise the DOI of a confident match is suggested, and the report shows the record it points to. Unless both are articles, only a confident match is compared, and only on its authors, because the editions of a book or report share its title; its DOI is not suggested when the year differs by more than `year_tolerance`. A reference whose title was not read is neither compared nor given a DOI.
 #'
-#' **Title search.** A reference without a DOI whose title is not that of Crossref's match, or whose match is a preprint or dataset while it cites a journal, and a reference whose DOI does not exist, are searched by its title alone: first in Crossref (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories, and then in Semantic Scholar, which holds conference papers without DOIs and many books. Of the records with the cited title (by the title rules below), a published version is taken before a preprint. When none of the first five records of the Crossref and DataCite searches, nor Semantic Scholar's best match, has the cited title, the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9), and both the reference and the record are articles or preprints, its title, authors, year and (for a Crossref journal article or a Semantic Scholar record) journal or venue are compared as for Crossref's confident match, and the reference is flagged when they differ. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
+#' **Title search.** A reference without a DOI whose title is not that of Crossref's match, or whose match is a preprint or dataset while it cites a journal, and a reference whose DOI does not exist, are searched by its title alone: first in Crossref (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories, and then in Semantic Scholar, which holds conference papers without DOIs and many books. Of the records with the cited title (by the title rules below), a published version is taken before a preprint. When none of the first five records of the Crossref and DataCite searches, nor Semantic Scholar's best match, has the cited title, the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9), and both the reference and the record are articles or preprints, its title, authors, year and (for a Crossref journal article or a Semantic Scholar record) journal or venue are compared as for Crossref's confident match, and the reference is flagged when they differ. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words, and works the reference calls unpublished, in preparation, under review or a personal communication, are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
 #'
 #' **Reading problems.** Entries that were not read correctly from the PDF are listed separately and not compared: two references read as one entry (a second APA author-year start, as in "... Bar, M. (2004). ..."), an entry of which only the DOI was read, and a reference whose printed DOI was not read and so not looked up. When only the DOI was read and the entry before it has no DOI but its title search found that DOI, the DOI is given to that reference.
 #'
@@ -29,13 +29,13 @@
 #'
 #' A mismatched DOI, journal or year flags a reference on its own. Title and author mismatches are governed by `min_mismatches`: the default (1) flags a reference when either the title or the authors disagree. In the validation below, every author error was a single author mismatch, so `min_mismatches = 2` removed all seven of them; it is not recommended.
 #'
-#' The report shows each differing cited value struck through beside the record's value, or lists the record's author surnames missing from the citation.
+#' The report shows each difference between the printed reference and the record: text only in the printed reference struck through in red, text only in the record underlined in green, and a word changed by a few letters letter by letter. A record author missing from the reference is shown with the closest cited name ("Sonuga-Barke is cited as Sonuga-Burke") or as missing. Formatting tags in registry titles are removed.
 #'
 #' <validation>The rules were developed on the 30 papers and the benchmark described here, so they may perform less well on other papers.
 #'
-#' In 30 randomly sampled Psychological Science papers (1,269 references, matched with `add_bib_match()` in November 2026), the module flagged 11 of the 555 references that printed a DOI and 19 of the 706 that did not (the other 8 were 6 entries not read reliably, a DOI read as an entry of its own, and a DOI registered with DataCite). Checked by hand, 23 of the 30 flags were citation errors: ten titles that differ from the record (four by a wrong word, such as "mating" for "reproductive", "motor" for "motion" and "input" for "output"; six by a small change, such as "relation" for "relationship", "public good" for "public goods" and "a hypothesis" for "an hypothesis"), seven wrong author names (such as "Bernsten" for Berntsen, "Sonuga-Burke" for Sonuga-Barke, and "Sanderson, A." for Sanderson Abel), three printed DOIs that do not work (all three appear so in the reference lists the publishers deposited at Crossref), and three wrong or misspelled journal names ("Nature Neuroscience Reviews" for Nature Reviews Neuroscience, "Cortex" for Neuropsychologia, and "Neuropsychophamacology"). Two were unclear (a diacritic in "Teder-Sälejärvi" and a compound surname cited by its first part), one was another version of the work (an 1897 abstract of an 1898 paper), and four were not errors (a renamed journal, authors misread from the PDF, and two titles misread from the PDF: a lost colon before a subtitle the record does not have, and a title that lost its opening words). Two online-first years were not flagged once Crossref's dates were read; one of them, cited with the year its DOI was created, is listed as a note. No reference was flagged as found only as a preprint. At `min_mismatches = 2`, 8 flags remain, 6 of them errors: the seven author errors and ten title errors are lost, with the two unclear flags and three reading errors. Of the 706 references without a DOI, 503 were given a suggested DOI, 19 were flagged and 33 were listed as not found. For 29 more, Crossref's match had the cited title but too low a score to be suggested; 112 were found by a title search but not compared (89 of them books and 11 chapters); and 10 had no title or one of fewer than three words.
+#' In 30 randomly sampled Psychological Science papers (1,269 references, matched with `add_bib_match()` in November 2026), the module flagged 11 of the 555 references that printed a DOI and 19 of the 706 that did not (the other 8 were 6 entries not read reliably, a DOI read as an entry of its own, and a DOI registered with DataCite). Checked by hand, 23 of the 30 flags were citation errors: ten titles that differ from the record (four by a wrong word, such as "mating" for "reproductive", "motor" for "motion" and "input" for "output"; six by a small change, such as "relation" for "relationship", "public good" for "public goods" and "a hypothesis" for "an hypothesis"), seven wrong author names (such as "Bernsten" for Berntsen, "Sonuga-Burke" for Sonuga-Barke, and "Sanderson, A." for Sanderson Abel), three printed DOIs that do not work (all three appear so in the reference lists the publishers deposited at Crossref), and three wrong or misspelled journal names ("Nature Neuroscience Reviews" for Nature Reviews Neuroscience, "Cortex" for Neuropsychologia, and "Neuropsychophamacology"). Two were unclear (a diacritic in "Teder-Sälejärvi" and a compound surname cited by its first part), one was another version of the work (an 1897 abstract of an 1898 paper), and four were not errors (a renamed journal, authors misread from the PDF, and two titles misread from the PDF: a lost colon before a subtitle the record does not have, and a title that lost its opening words). Two online-first years were not flagged once Crossref's dates were read; one of them, cited with the year its DOI was created, is listed as a note. No reference was flagged as found only as a preprint. At `min_mismatches = 2`, 8 flags remain, 6 of them errors: the seven author errors and ten title errors are lost, with the two unclear flags and three reading errors. Of the 706 references without a DOI, 503 were given a suggested DOI, 19 were flagged and 32 were listed as not found. For 29 more, Crossref's match had the cited title but too low a score to be suggested; 113 were found by a title search or called unpublished, and were not compared (89 of them books and 11 chapters); and 10 had no title or one of fewer than three words.
 #'
-#' The suggested DOIs were checked by hand in an earlier run, which suggested 507. For 443, the record agreed with the citation on title (character similarity of at least 0.95), first author, year (within one) and journal; a random 15 of these were all the cited work, a spot check that rules out only a high rate of wrong suggestions. The other 64 were checked by hand: 63 were the cited work (most differed only by a subtitle or by "&amp;" in the record's journal), and 1 was unclear (an ICCV paper, with the title, authors and year of a cited ICLR workshop paper). The module listed 33 references as not found (57 before Semantic Scholar was searched; it holds most of the books). All were works these sources do not hold (books and chapters, reports, web pages and news, software, and journal articles without a DOI) or entries misread from the PDF, such as two statements of author contributions.
+#' The suggested DOIs were checked by hand in an earlier run, which suggested 507. For 443, the record agreed with the citation on title (character similarity of at least 0.95), first author, year (within one) and journal; a random 15 of these were all the cited work, a spot check that rules out only a high rate of wrong suggestions. The other 64 were checked by hand: 63 were the cited work (most differed only by a subtitle or by "&amp;" in the record's journal), and 1 was unclear (an ICCV paper, with the title, authors and year of a cited ICLR workshop paper). The module listed 32 references as not found (57 before Semantic Scholar was searched; it holds most of the books). All were works these sources do not hold (books and chapters, reports, web pages and news, software, and journal articles without a DOI) or entries misread from the PDF, such as two statements of author contributions.
 #'
 #' For each kind of error, one error was added to each of 30 references, in the parsed reference and its text; these references had passed the check or had a suggested DOI. They were then looked up again with `add_bib_match()`. Fewer than 30 were changed where the reference had no surname of four or more letters among its first six authors, no journal, or its DOI only in the reference text. Of references with a DOI, the module flagged all 30 with a wrong year, 28 of 28 with a misspelled author (one of the first six), 29 of 29 with another journal, 28 of 28 with a changed digit in the DOI, and 28 of 30 with another reference's title. Of references without a DOI, it flagged all 30 with a wrong year, 26 of 28 with a misspelled author and 27 of 30 with another journal. Of 30 titles taken from another reference, it flagged 21 and listed 2 as not found. Of 30 titles with half their words replaced, it listed 26 as not found and flagged 1; the other 3 were matched by Crossref with the real work, but not confidently enough to be compared, and none was given a DOI. No other reference's result changed. These errors were added to references that were read correctly, so these rates exclude errors hidden by reading the PDF, and they do not estimate how often citation errors occur.
 #'
@@ -780,10 +780,19 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       first_ok <- is.na(first) || !length(cs$name) ||
         person_matches(first, cs, first_g, swapped = TRUE)[1]
     }
+    # each record surname that is missing, with the cited name closest to it
+    # (a misspelling: "Sonuga-Barke is cited as Sonuga-Burke")
+    cited_words <- unique(strsplit(trimws(o), "[;,&[:space:]\u00a0]+")[[1]])
+    cited_words <- cited_words[nchar(letters_only(cited_words)) >= 2]
+    missing <- vapply(l[!found], \(x) {
+      d <- if (length(cited_words)) utils::adist(letters_only(x), letters_only(cited_words))[1, ] /
+        pmax(nchar(letters_only(x)), nchar(letters_only(cited_words))) else numeric(0)
+      if (length(d) && min(d) <= 1 / 3) sprintf("%s is cited as %s", x, cited_words[which.min(d)])
+      else sprintf("%s is in the record but not in the reference", x)
+    }, "")
     note <- c(
-      if (!all(found)) sprintf("%s not found among the cited authors",
-                               paste(l[!found], collapse = ", ")),
-      if (all(found) && !first_ok) sprintf("the first author is %s", first))
+      if (!all(found)) paste(missing, collapse = "; "),
+      if (all(found) && !first_ok) sprintf("the record's first author, %s, is not cited first", first))
     if (length(note)) note
     else if (!as_printed && any(swap)) paste0("SWAP:", paste(l[swap], collapse = ", "))
     else NA_character_
@@ -976,7 +985,13 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # DOI does not exist is searched too: found, it stays flagged with the
   # record found; not found, it is listed as not found instead.
   n_words <- lengths(strsplit(trimws(clean(table$title.orig)), "\\s+"))
-  searched <- which((table$tier %in% c("crossref", "none") & (!cr_same_title | misc_match) |
+  # works the reference itself calls unpublished are not expected in these
+  # sources, so they are not searched or listed as not found
+  unpublished <- grepl(paste0(
+    "(?i)\\b(unpublished|in preparation|manuscript (submitted|under review)|",
+    "submitted for publication|under review|personal communication)\\b"),
+    paste(table$text, table$container.orig, table$bib_type.orig), perl = TRUE)
+  searched <- which(!unpublished & (table$tier %in% c("crossref", "none") & (!cr_same_title | misc_match) |
                        table$tier %in% "unresolved") &
                       !blank(table$title.orig) & n_words >= 3 & looked_up)
   table$not_found <- FALSE
@@ -1292,7 +1307,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # "...<183::AID-BDM318>..." would be read as a tag), white space collapsed
   # (Crossref titles can hold line breaks)
   esc <- \(x) {
-    x <- gsub("&amp;", "&", as.character(x), fixed = TRUE)
+    # formatting tags in registry titles ("<i>Pan troglodytes</i>") are
+    # dropped, so that titles look alike whatever their source
+    x <- gsub("</?(i|b|em|strong|u|sup|sub|scp|span|mml:[a-z]+|jats:[a-z-]+)\\b[^>]*>", "",
+              as.character(x), ignore.case = TRUE, perl = TRUE)
+    x <- gsub("&amp;", "&", x, fixed = TRUE)
     x <- gsub("&", "&amp;", x, fixed = TRUE)
     x <- gsub("<", "&lt;", gsub(">", "&gt;", x, fixed = TRUE), fixed = TRUE)
     trimws(gsub("\\s+", " ", x))
@@ -1304,14 +1323,92 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     r$text)
 
   # for one reference, build the "what is wrong" cell: each mismatching field is
-  # shown as the cited value struck through in red followed by the value from
-  # the record, so the discrepancy is visible at a glance.
-  strike <- function(x) paste0(
-    "<span style=\"color:#c00;text-decoration:line-through\">", esc(x), "</span>")
-  correction <- function(label, cited, record) {
-    if (is.na(cited) || !nzchar(as.character(cited))) cited <- "(missing)"
-    sprintf("<b>%s:</b> %s &rarr; %s", label, strike(cited), esc(record))
+  # shown as a difference between the printed reference and the record: text
+  # only in the printed reference struck through in red, text only in the
+  # record underlined in green, and the words they share plain. A word
+  # changed by a few letters is shown letter by letter ("Neuropsychopha[r]macology").
+  strike <- \(x) if (nzchar(x)) paste0(
+    "<del style=\"color:#c00\">", esc(x), "</del>") else ""
+  added <- \(x) if (nzchar(x)) paste0(
+    "<ins style=\"color:#1a7f37\">", esc(x), "</ins>") else ""
+  letter_diff <- \(a, b) {
+    # dashes and hyphens of every kind are one character
+    a <- gsub("\\p{Pd}", "-", a, perl = TRUE)
+    b <- gsub("\\p{Pd}", "-", b, perl = TRUE)
+    tr <- strsplit(attr(utils::adist(a, b, counts = TRUE), "trafos")[1, 1], "")[[1]]
+    a <- strsplit(a, "")[[1]]
+    b <- strsplit(b, "")[[1]]
+    out <- character()
+    same <- d <- ins <- ""
+    flush <- \() {
+      out <<- c(out, esc(same), strike(d), added(ins))
+      same <<- d <<- ins <<- ""
+    }
+    i <- j <- 1
+    for (t in tr) {
+      if (t == "M") {
+        if (nzchar(d) || nzchar(ins)) flush()
+        same <- paste0(same, a[i]); i <- i + 1; j <- j + 1
+      } else {
+        if (nzchar(same)) { out <- c(out, esc(same)); same <- "" }
+        if (t %in% c("S", "D")) { d <- paste0(d, a[i]); i <- i + 1 }
+        if (t %in% c("S", "I")) { ins <- paste0(ins, b[j]); j <- j + 1 }
+      }
+    }
+    flush()
+    paste(out, collapse = "")
   }
+  word_diff <- \(a, b) {
+    ta <- strsplit(trimws(a), "\\s+")[[1]]
+    tb <- strsplit(trimws(b), "\\s+")[[1]]
+    key <- \(w) uk_us(gsub("[^[:alnum:]]", "", deaccent(tolower(w))))
+    ka <- key(ta)
+    kb <- key(tb)
+    # longest common subsequence of the words
+    L <- matrix(0L, length(ta) + 1, length(tb) + 1)
+    for (i in rev(seq_along(ta))) for (j in rev(seq_along(tb)))
+      L[i, j] <- if (ka[i] == kb[j]) L[i + 1, j + 1] + 1L else max(L[i + 1, j], L[i, j + 1])
+    out <- character()
+    da <- db <- character()
+    flush <- \() {
+      if (length(da) == 1 && length(db) == 1 &&
+          utils::adist(da, db) / max(nchar(da), nchar(db)) <= 0.4) {
+        out <<- c(out, letter_diff(da, db))
+      } else {
+        out <<- c(out, paste(c(if (length(da)) strike(paste(da, collapse = " ")),
+                               if (length(db)) added(paste(db, collapse = " "))),
+                             collapse = " "))
+      }
+      da <<- db <<- character()
+    }
+    i <- j <- 1
+    while (i <= length(ta) || j <= length(tb)) {
+      if (i <= length(ta) && j <= length(tb) && ka[i] == kb[j]) {
+        if (length(da) || length(db)) flush()
+        out <- c(out, esc(ta[i])); i <- i + 1; j <- j + 1
+      } else if (j > length(tb) || (i <= length(ta) && L[i + 1, j] >= L[i, j + 1])) {
+        da <- c(da, ta[i]); i <- i + 1
+      } else {
+        db <- c(db, tb[j]); j <- j + 1
+      }
+    }
+    if (length(da) || length(db)) flush()
+    paste(out[nzchar(out)], collapse = " ")
+  }
+  correction <- function(label, cited, record, words = TRUE) {
+    cited <- if (is.na(cited)) "" else gsub("\\s+", " ", trimws(as.character(cited)))
+    record <- gsub("\\s+", " ", trimws(as.character(record)))
+    record <- gsub("</?(i|b|em|strong|u|sup|sub|scp|span|mml:[a-z]+|jats:[a-z-]+)\\b[^>]*>", "",
+                   record, ignore.case = TRUE, perl = TRUE)
+    if (!nzchar(cited)) return(sprintf("<b>%s:</b> (not printed) %s", label, added(record)))
+    sprintf("<b>%s:</b> %s", label,
+            if (words) word_diff(cited, record) else letter_diff(cited, record))
+  }
+  # "Sonuga-Barke is cited as Sonuga-Burke" as a difference; other notes as text
+  author_diff <- \(note) paste(vapply(strsplit(note, "; ", fixed = TRUE)[[1]], \(n) {
+    m <- regmatches(n, regexec("^(.*) is cited as (.*)$", n))[[1]]
+    if (length(m) == 3) letter_diff(m[3], m[2]) else esc(n)
+  }, ""), collapse = "; ")
   discrepancies <- function(r) {
     # an unresolved cited DOI has no record to compare against
     if (r$tier == "unresolved") {
@@ -1336,16 +1433,17 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         correction("title", r$title.orig, r$title.match),
       # the record surnames that are missing, rather than the whole list
       if (isTRUE(r$author_mismatch))
-        sprintf("<b>authors:</b> %s", esc(r$author_note)),
+        sprintf("<b>authors:</b> %s", author_diff(r$author_note)),
       if (isTRUE(r$preprint_only))
         sprintf("<b>journal:</b> cited in %s, but only a preprint was found",
                 esc(r$container.orig))
       else if (isTRUE(r$container_mismatch))
         correction("journal", r$container.orig, r$container.match),
       if (isTRUE(r$year_mismatch))
-        correction("year", r$year.orig, r$year.match),
+        sprintf("<b>year:</b> %s %s", strike(as.character(r$year.orig)),
+                added(as.character(r$year.match))),
       if (isTRUE(r$doi_mismatch))
-        correction("DOI", r$doi.orig, r$doi.match)
+        correction("DOI", r$doi.orig, r$doi.match, words = FALSE)
     )
     paste(parts, collapse = "<br>")
   }
@@ -1365,13 +1463,14 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     rec_doi <- ifelse(is.na(inc_rows$doi.match) | !nzchar(inc_rows$doi.match),
                       inc_rows$doi.orig, inc_rows$doi.match)
     out <- data.frame(
-      Reference = esc(ref_text(inc_rows)),
+      `Reference as printed` = esc(ref_text(inc_rows)),
       Difference = vapply(seq_len(nrow(inc_rows)), \(i) discrepancies(inc_rows[i, ]),
                           character(1)),
       # a cited DOI written as a URL is cleaned for the link target only
-      Record = record_link(rec_doi, inc_rows$record_url)
+      Record = record_link(rec_doi, inc_rows$record_url),
+      check.names = FALSE
     )
-    names(out)[2] <- "Difference from the record (cited \u2192 record)"
+    names(out)[2] <- "Printed \u2192 record"
     incoherent_report <- scroll_table(out, 5, colwidths = c(.45, .4, .15))
   }
 
@@ -1479,7 +1578,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     guidance,
     if (!is.null(incoherent_report))
       c("### Possible citation errors\n",
-        "These references cite details that differ from the record of their DOI, or a DOI that does not exist (the work found by the cited title is shown). For a reference without a DOI, the record is the work with a similar title; its DOI is not suggested.\n",
+        "These references cite details that differ from the record of their DOI, or a DOI that does not exist (the work found by the cited title is shown). For a reference without a DOI, the record is the work with a similar title; its DOI is not suggested. The differences show text that is only in the printed reference <del style=\"color:#c00\">struck through in red</del>, and text that is only in the record <ins style=\"color:#1a7f37\">underlined in green</ins>.\n",
         incoherent_report),
     if (!is.null(notes_report))
       c("### Preprints, years and names to check\n",

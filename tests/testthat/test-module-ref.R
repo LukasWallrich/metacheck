@@ -1012,11 +1012,13 @@ test_that("ref_accuracy names the missing author, and ref_summary reports the sa
   i <- match(1, p$bib$bib_id)
   p$bib$authors[i] <- "Eagley, Alice H; Wood, Wendy"
   mo <- module_run(p, "ref_accuracy")
+  expect_equal(mo$table$author_note[mo$table$bib_id == 1], "Eagly is cited as Eagley")
+  # shown letter by letter: the "e" only in the printed name struck through
   report <- paste(unlist(mo$report), collapse = "\n")
-  expect_match(report, "Eagly not found among the cited authors", fixed = TRUE)
+  expect_match(report, "Eagl<del", fixed = TRUE)
   p$bib$authors[i] <- "Wood, Wendy; Eagly, Alice H"
   report <- paste(unlist(module_run(p, "ref_accuracy")$report), collapse = "\n")
-  expect_match(report, "the first author is Eagly", fixed = TRUE)
+  expect_match(report, "the record's first author, Eagly, is not cited first", fixed = TRUE)
 
   # at min_mismatches = 2 a lone author mismatch is not flagged, and its
   # mismatch column is FALSE, so that ref_summary does not report it
@@ -1188,7 +1190,7 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   p <- demopaper()
   p$bib_match$score[k] <- 85
   tbl <- module_run(p, "ref_accuracy")$table
-  expect_equal(tbl$author_note[tbl$bib_id == 3], "Scheel, Isager not found among the cited authors")
+  expect_equal(tbl$author_note[tbl$bib_id == 3], "Scheel is in the record but not in the reference; Isager is in the record but not in the reference")
   tbl <- module_run(p, "ref_accuracy", min_mismatches = 2)$table
   expect_false(tbl$incoherent[tbl$bib_id == 3])
   expect_true(tbl$doi_suggested[tbl$bib_id == 3])
