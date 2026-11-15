@@ -1,3 +1,17 @@
+# title searches that find nothing, for tests whose references cite a DOI
+# that does not exist (these are searched by title)
+mock_no_search <- function(env = parent.frame()) {
+  local_mocked_bindings(
+    crossref_query = \(ref, ...) data.frame(ref = unlist(ref), DOI = NA_character_),
+    datacite_query = \(title, ...) data.frame(query = integer(0), doi = character(0),
+      title = character(0), year = integer(0), authors = character(0), error = logical(0)),
+    semanticscholar_query = \(title) data.frame(query = integer(0),
+      doi = character(0), url = character(0), title = character(0),
+      year = integer(0), authors = character(0), venue = character(0),
+      type = character(0), error = logical(0)),
+    .package = "metacheck", .env = env)
+}
+
 test_that("ref_consistency", {
   module <- "ref_consistency"
   mods <- module_list()
@@ -53,9 +67,21 @@ test_that("ref_miscitation", {
 
 
 test_that("ref_accuracy", {
-  # doi.org reports the demo paper's two unresolved DOIs as not existing
+  # doi.org reports the demo paper's two unresolved DOIs as not existing; a
+  # title search finds the first (faux, in DataCite) and not the second
   local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE),
-                        crossref_doi = \(doi, ...) data.frame(DOI = doi))
+                        crossref_doi = \(doi, ...) data.frame(DOI = doi),
+                        crossref_query = \(ref, ...) data.frame(ref = unlist(ref), DOI = NA_character_),
+                        datacite_query = \(title, ...) {
+                          k <- grep("^Faux", title)
+                          data.frame(query = k, doi = rep("10.5281/zenodo.2669586", length(k)),
+                                     title = title[k], year = 2019L, authors = "DeBruine, Lisa",
+                                     type = "Software", error = FALSE)
+                        },
+                        semanticscholar_query = \(title) data.frame(query = integer(0),
+                          doi = character(0), url = character(0), title = character(0),
+                          year = integer(0), authors = character(0), venue = character(0),
+                          type = character(0), error = logical(0)))
   module <- "ref_accuracy"
   mods <- module_list()
   expect_true(module %in% mods$name)
@@ -85,18 +111,21 @@ test_that("ref_accuracy", {
   expect_equal(nrow(mod_output$table), nrow(paper$bib))
 
   # references that supplied a DOI are checked; the demo paper includes two
-  # references with a DOI that does not resolve, which are flagged as incoherent,
-  # and one without a DOI, which CrossRef matched by title (#528)
+  # references with a DOI that does not exist, and one without a DOI, which
+  # Crossref matched by title (#528). The work of the first DOI is found by
+  # its title, so it is flagged with that record; the second is not found.
   st <- mod_output$summary_table
   expect_equal(st$refs_checked, 4)
   expect_equal(st$no_doi, 1)
-  expect_equal(st$incoherent, 2)
+  expect_equal(st$incoherent, 1)
   expect_equal(mod_output$traffic_light, "yellow")
-
-  # those two are the "unresolved" tier: a cited DOI CrossRef could not find
   unresolved <- mod_output$table[mod_output$table$tier == "unresolved", ]
-  expect_equal(nrow(unresolved), 2)
-  expect_true(all(unresolved$incoherent))
+  expect_equal(unresolved$incoherent, c(TRUE, FALSE))
+  expect_equal(unresolved$not_found, c(FALSE, TRUE))
+  expect_equal(unresolved$doi.match[1], "10.5281/zenodo.2669586")
+  report <- paste(unlist(mod_output$report), collapse = "\n")
+  expect_match(report, "the work with the cited title in DataCite is shown", fixed = TRUE)
+  expect_match(report, "The cited DOI does not exist (doi.org).", fixed = TRUE)
 
   # a checked reference (one whose DOI resolves) whose cited journal differs
   # from the record its DOI points to is also incoherent. Corrupt the journal
@@ -107,7 +136,7 @@ test_that("ref_accuracy", {
     "A Completely Different Journal Name"
   bad_out <- module_run(bad, module)
   expect_equal(bad_out$traffic_light, "yellow")
-  expect_equal(bad_out$summary_table$incoherent, 3)
+  expect_equal(bad_out$summary_table$incoherent, 2)
 
   # min_mismatches controls whether a single title/author mismatch flags. A lone
   # author mismatch flags at the default (1) but not when set to 2.
@@ -115,10 +144,9 @@ test_that("ref_accuracy", {
   auth$bib$authors[auth$bib$bib_id == checked_id] <- "Nonexistent, A; Madeup, B"
   loose  <- module_run(auth, module)                       # default = 1
   strict <- module_run(auth, module, min_mismatches = 2)   # conservative
-  # the two unresolved references are always incoherent; the lone author
-  # mismatch adds a third only at the sensitive setting
-  expect_equal(loose$summary_table$incoherent, 3)
-  expect_equal(strict$summary_table$incoherent, 2)
+  # the lone author mismatch adds one only at the sensitive setting
+  expect_equal(loose$summary_table$incoherent, 2)
+  expect_equal(strict$summary_table$incoherent, 1)
 })
 
 test_that("ref_replication", {
@@ -276,6 +304,7 @@ test_that("ref_consistency reports a citation to a missing reference, and reads 
 })
 
 test_that("ref_accuracy counts a reference with several bib_match rows once, and ignores footnote markers in titles (U114)", {
+  mock_no_search()
   # doi.org reports the demo paper's two unresolved DOIs as not existing
   local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE),
                         crossref_doi = \(doi, ...) data.frame(DOI = doi))
@@ -321,6 +350,7 @@ test_that("ref_accuracy accepts a cited DOI written as a URL", {
   p$bib_match <- p$bib_match[-1, ]
   p$bib$doi[i] <- paste0("https://doi.org/", doi)
   local_mocked_bindings(doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE))
+  mock_no_search()
   mo <- module_run(p, "ref_accuracy")
   expect_equal(mo$table$tier[mo$table$bib_id == p$bib$bib_id[i]], "unresolved")
   report <- paste(unlist(mo$report), collapse = "\n")
@@ -342,10 +372,13 @@ test_that("ref_accuracy asks doi.org about a cited DOI without a record", {
   row <- \(mo) mo$table[mo$table$bib_id == 1, ]
 
   # doi.org: the DOI does not exist
+  # (and its title is not found: listed as not found)
+  mock_no_search()
   ra <- list(ra = NA_character_, exists = FALSE)
   mo <- module_run(p, "ref_accuracy")
   expect_equal(row(mo)$tier, "unresolved")
-  expect_true(row(mo)$incoherent)
+  expect_false(row(mo)$incoherent)
+  expect_true(row(mo)$not_found)
   expect_match(paste(unlist(mo$report), collapse = "\n"), "does not exist (doi.org)", fixed = TRUE)
 
   # doi.org could not be asked: not checked, not flagged
@@ -546,7 +579,19 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
   base <- demopaper()
   i <- match(1, base$bib$bib_id)
   m <- match(1, base$bib_match$bib_id)
-  local_mocked_bindings(crossref_doi = \(doi, ...) data.frame(DOI = doi))
+  # a cited DOI that does not exist is searched by its title, which finds
+  # the record
+  local_mocked_bindings(
+    crossref_doi = \(doi, ...) data.frame(DOI = doi),
+    doi_ra = \(doi) data.frame(doi = doi, ra = NA_character_, exists = FALSE),
+    crossref_query = \(ref, ...) {
+      q <- unlist(ref)
+      x <- data.frame(ref = q, DOI = ifelse(q == base$bib$title[i], base$bib_match$doi[m], NA),
+                      title = q, score = 90, year = 1999L, type = "journal-article",
+                      `container-title` = "American Psychologist", check.names = FALSE)
+      x$author <- rep(list(base$bib_match$authors[[m]]), nrow(x))
+      x
+    })
   run <- function(edit) {
     p <- edit(base)
     tbl <- module_run(p, "ref_accuracy")$table
@@ -625,6 +670,14 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
     },
     # a short record title that is found in the reference text as the journal
     title = \(p) { p$bib_match$title[m] <- "American Psychologist"; p },
+    # one word changed
+    title = \(p) {
+      new <- sub("Human", "Animal", p$bib$title[i], fixed = TRUE)
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
     # a DOI written as a URL that was matched by a title search, before
     # add_bib_match() cleaned DOIs, to a work with another DOI
     doi = \(p) {
@@ -810,13 +863,6 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
   # known misses: errors the module does not find, recorded so that a change
   # in them is deliberate
   misses <- list(
-    one_word_title = \(p) {
-      new <- sub("Human", "Animal", p$bib$title[i], fixed = TRUE)
-      j <- p$text$text_id == p$bib$text_id[i]
-      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
-      p$bib$title[i] <- new
-      p
-    },
     journal_continues_record = \(p) {
       p$bib_match$container[m] <- "Journal of Experimental Social Psychology"
       p$bib$container[i] <- "Journal of Experimental Psychology"; p
@@ -1095,6 +1141,7 @@ test_that("ref_accuracy reads bibr 12.x author lists and article types", {
 })
 
 test_that("ref_accuracy compares a reference without a DOI only with a record it would suggest", {
+  mock_no_search()
   # an uncertain title-search match is not compared, so ref_summary shows no
   # mismatch for it
   # no CrossRef dates for the record, unless a test gives them
@@ -1120,9 +1167,16 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   expect_false(tbl$doi_suggested[tbl$bib_id == 3])
   expect_true(tbl$no_doi[tbl$bib_id == 3])
   expect_equal(mo$traffic_light, "yellow")
-  expect_match(mo$summary_text, "differ from their record (possible citation errors)", fixed = TRUE)
+  expect_match(mo$summary_text, "differs from its record (possible citation error)", fixed = TRUE)
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_match(report, "No DOI cited; the work with the same title differs", fixed = TRUE)
+  # a title that differs in one word from the record it was matched to
+  q <- p
+  q$bib_match$year[k] <- q$bib$year[q$bib$bib_id == 3]
+  q$bib$title[q$bib$bib_id == 3] <- "Equivalence Testing for Psychiatric Research"
+  r <- module_run(q, "ref_accuracy")$table
+  expect_true(r$incoherent[r$bib_id == 3])
+  expect_true(r$title_mismatch[r$bib_id == 3])
   expect_match(report, paste0("https://doi.org/", p$bib_match$doi[k]), fixed = TRUE)
   p$bib_match$year[k] <- tbl$year.orig[tbl$bib_id == 3]
   p$bib_match$authors[[k]] <- data.frame(given = "Ann", family = "Other")
