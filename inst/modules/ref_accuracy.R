@@ -10,7 +10,7 @@
 #'
 #' **References with a DOI.** The module compares the cited details field by field with the record for the DOI. `add_bib_match()` looks up a cited DOI directly when it is valid after `doi_clean()`, which removes a doi.org or journal URL around it and the spaces, punctuation and brackets that reading the PDF adds; a DOI that is still not valid is matched by a title search instead. A DOI printed in the reference text that the PDF reader did not take as the reference's DOI (a link with "%2F" for "/", or a malformed DOI such as "doi.org/1073191116659134") counts as the cited DOI when it is the DOI the title search found, apart from lost punctuation or prefix; a malformed one is then a DOI mismatch. For a cited DOI with no record, the module asks doi.org whether it exists. A reference whose DOI does not exist is searched by its title (see Title search): when the work is found, the reference is flagged with the work's record; when it is not, it is listed as not found; when the search fails, it is flagged. A registered DOI, or one doi.org could not be asked about, is listed as not checked: its record is missing because a lookup failed, or because its agency's records are not looked up (DataCite, mEDRA). References in papers that were not looked up at all are not checked.
 #'
-#' **References without a DOI.** These are listed separately, with a recommendation to add a DOI where one exists. Their record comes from a Crossref title search, which can return the wrong work, so a reference is compared only with a record whose title agrees with the cited title. The match must be confident (a score of at least `suggest_score`), or have almost the same title (a character similarity of at least 0.9): a wrong year or author lowers Crossref's score. When the match's title, authors, journal or year differ from the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise the DOI of a confident match is suggested, and the report shows the record it points to. Unless both are articles, only a confident match is compared, and only on its authors, because the editions of a book or report share its title; its DOI is not suggested when the year differs by more than `year_tolerance`. A reference whose title was not read is neither compared nor given a DOI.
+#' **References without a DOI.** These are listed in two tables: suggested DOIs, and the other references, each with the reason no DOI is suggested (not searched, a book or report, a slightly different title, a low Crossref score) and the record found, if any. Their record comes from a Crossref title search, which can return the wrong work, so a reference is compared only with a record whose title agrees with the cited title. The match must be confident (a score of at least `suggest_score`), or have almost the same title (a character similarity of at least 0.9): a wrong year or author lowers Crossref's score. When the match's title, authors, journal or year differ from the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise the DOI of a confident match is suggested, and the report shows the record it points to. Unless both are articles, only a confident match is compared, and only on its authors, because the editions of a book or report share its title; its DOI is not suggested when the year differs by more than `year_tolerance`. A reference whose title was not read is neither compared nor given a DOI.
 #'
 #' **Title search.** A reference without a DOI whose title is not that of Crossref's match, or whose match is a preprint or dataset while it cites a journal, and a reference whose DOI does not exist, are searched by its title alone: first in Crossref (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories, and then in Semantic Scholar, which holds conference papers without DOIs and many books. Of the records with the cited title (by the title rules below), a published version is taken before a preprint. When none of the first five records of the Crossref and DataCite searches, nor Semantic Scholar's best match, has the cited title, the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9), and both the reference and the record are articles or preprints, its title, authors, year and (for a Crossref journal article or a Semantic Scholar record) journal or venue are compared as for Crossref's confident match, and the reference is flagged when they differ. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words, and works the reference calls unpublished, in preparation, under review or a personal communication, are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
 #'
@@ -1021,6 +1021,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
                                 NA_character_)
   # the Semantic Scholar page of a record found there
   table$record_url <- NA_character_
+  # what the title search found for a reference it does not flag, for the
+  # report of references without a DOI
+  found <- data.frame(source = rep(NA_character_, nrow(table)), type = NA_character_,
+                      doi = NA_character_, url = NA_character_, title = NA_character_)
   if (length(searched)) {
     # each title is searched once, and its result given to every reference
     # with that title (the same work cited twice, or in several papers)
@@ -1096,6 +1100,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     table$search_failed[searched[first[qi] %in% -1L]] <- TRUE
     rec <- rec[qi, , drop = FALSE]
     rec$i <- searched
+    found[searched, ] <- rec[, c("source", "type", "doi", "url", "title")]
 
     # a DOI that does not exist: the work found by its title is shown with it;
     # one not found is not a citation error that can be shown, so it is listed
@@ -1409,17 +1414,20 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     m <- regmatches(n, regexec("^(.*) is cited as (.*)$", n))[[1]]
     if (length(m) == 3) letter_diff(m[3], m[2]) else esc(n)
   }, ""), collapse = "; ")
+  source_name <- \(x) ifelse(x %in% "datacite", "DataCite",
+                              ifelse(x %in% "semanticscholar", "Semantic Scholar", "Crossref"))
   discrepancies <- function(r) {
     # an unresolved cited DOI has no record to compare against
     if (r$tier == "unresolved") {
+      gone <- if (isFALSE(r$doi_exists)) "does not exist (doi.org)" else "could not be found"
+      if (!is.na(r$doi.match) && nzchar(r$doi.match))
+        return(sprintf("%s<br>The cited DOI %s; this is the DOI of the work with the cited title in %s.",
+                       correction("DOI", r$doi.orig, r$doi.match, words = FALSE), gone,
+                       source_name(r$record_source)))
       return(sprintf(
-        "<b>DOI:</b> the cited DOI %s %s%s",
-        strike(r$doi.orig),
-        if (isFALSE(r$doi_exists)) "does not exist (doi.org)" else "could not be found",
+        "<b>DOI:</b> the cited DOI %s %s%s", strike(r$doi.orig), gone,
         if (!is.na(r$record_source))
-          sprintf("; the work with the cited title in %s is shown",
-                  switch(r$record_source, datacite = "DataCite",
-                         semanticscholar = "Semantic Scholar", "Crossref"))
+          sprintf("; the work with the cited title in %s is shown", source_name(r$record_source))
         else ""))
     }
     parts <- c(
@@ -1547,31 +1555,57 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     notes_report <- scroll_table(out, 5, colwidths = c(.5, .3, .2))
   }
 
-  ## references without a DOI (could not be checked) ----
-  # (those flagged above are listed there, and preprints with a published
-  # version in the notes)
-  nodoi_rows <- table[table$no_doi %in% TRUE & !table$incoherent & !table$not_found &
-                        is.na(table$published_doi), ]
-  nodoi_report <- NULL
-  if (nrow(nodoi_rows) > 0) {
-    sugg <- nodoi_rows$doi_suggested
+  ## references without a DOI: suggested DOIs, and the others with the reason ----
+  # (those flagged above are listed there, those not found and preprints with
+  # a published version in their own sections)
+  nodoi <- which(table$no_doi %in% TRUE & !table$incoherent & !table$not_found &
+                   is.na(table$published_doi))
+  sugg <- nodoi[table$doi_suggested[nodoi]]
+  rest <- setdiff(nodoi, sugg)
+  suggested_report <- other_report <- NULL
+  if (length(sugg)) {
+    r <- table[sugg, ]
     # the record a suggested DOI points to, so that it can be compared with
     # the citation before it is added
-    record <- sprintf("%s (%s). <i>%s</i>", esc(nodoi_rows$title.match),
-                      nodoi_rows$year.match, esc(nodoi_rows$container.match))
+    record <- sprintf("%s (%s). <i>%s</i>", esc(r$title.match), r$year.match,
+                      esc(r$container.match))
     record <- gsub(" (NA)", "", gsub(" <i>NA</i>", "", record, fixed = TRUE), fixed = TRUE)
     out <- data.frame(
-      Reference = esc(ref_text(nodoi_rows)),
-      `Suggested DOI` = ifelse(
-        sugg,
-        paste0(link(paste0("https://doi.org/", nodoi_rows$doi.match),
-                    esc(nodoi_rows$doi.match)), "<br>", record),
-        ""),
-      check.names = FALSE
-    )
-    # suggestions first
-    out <- out[order(!sugg), , drop = FALSE]
-    nodoi_report <- scroll_table(out, 5, colwidths = c(.6, .4))
+      `Reference as printed` = esc(ref_text(r)),
+      `Suggested DOI` = paste0(link(paste0("https://doi.org/", r$doi.match), esc(r$doi.match)),
+                               "<br>", record),
+      check.names = FALSE)
+    suggested_report <- scroll_table(out, 5, colwidths = c(.6, .4))
+  }
+  if (length(rest)) {
+    r <- table[rest, ]
+    f <- found[rest, ]
+    n_w <- n_words[rest]
+    article <- f$type %in% c("journal-article", "proceedings-article", "posted-content",
+                             "JournalArticle", "Conference", "Preprint")
+    same <- title_check(r$title.orig, f$title, r$text)$exact %in% TRUE
+    why <- dplyr::case_when(
+      !looked_up[rest] ~ "Not looked up.",
+      unpublished[rest] ~ "Cited as unpublished: not searched.",
+      blank(r$title.orig) | n_w < 3 ~ "No title read, or one shorter than three words: not searched.",
+      !is.na(f$source) & !article ~ sprintf(
+        "Found by its title in %s, but as a book, report or other work whose editions share a title, its DOI is not suggested.",
+        source_name(f$source)),
+      !is.na(f$source) & same ~ sprintf(
+        "Found in %s with the cited title and details; only Crossref's confident matches are suggested, so check the record before adding its DOI.",
+        source_name(f$source)),
+      !is.na(f$source) ~ sprintf(
+        "Found in %s with a slightly different title, so it is not compared and its DOI is not suggested.",
+        source_name(f$source)),
+      r$tier %in% "crossref" & (r$title_agrees | r$title_starts_same) %in% TRUE ~
+        "Crossref's match has this title, but too low a score for its DOI to be suggested.",
+      .default = "No DOI suggested.")
+    out <- data.frame(
+      `Reference as printed` = esc(ref_text(r)),
+      `Why no DOI is suggested` = why,
+      `Record found` = ifelse(is.na(f$source), "", record_link(f$doi, f$url)),
+      check.names = FALSE)
+    other_report <- scroll_table(out, 5, colwidths = c(.55, .3, .15))
   }
 
   report <- c(
@@ -1600,10 +1634,14 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       c("### References not found\n",
         "These references have no DOI, or one that does not exist, and no work with the cited title was found in Crossref, DataCite (which includes arXiv, Zenodo and OSF) or Semantic Scholar (which includes conference papers without DOIs). Books, reports, theses, software and web pages are often missing from these sources, and a title misread from the PDF is not found either. For a journal article or a preprint, check the title and that the work exists.\n",
         nf_report),
-    if (!is.null(nodoi_report))
-      c("### References without a DOI\n",
-        "Where a Crossref title search found a confident match with the same title, and the comparison found no disagreement, its DOI is suggested with the record it points to: check that it is the cited work before adding it. The retraction, PubPeer and replication checks also use the DOI Crossref found, so for these references they are only as reliable as that search. Adding a DOI where one exists makes the cited work easier to find and verify.\n",
-        nodoi_report)
+    if (!is.null(suggested_report))
+      c("### Suggested DOIs\n",
+        "These references have no DOI. Crossref's title search found a confident match with the same title, and its details agree with the citation: check that it is the cited work before adding its DOI. The retraction, PubPeer and replication checks also use these DOIs, so for these references they are only as reliable as that search.\n",
+        suggested_report),
+    if (!is.null(other_report))
+      c("### Other references without a DOI\n",
+        "These references have no DOI, and none is suggested, for the reason given.\n",
+        other_report)
   )
 
   # return a list ----

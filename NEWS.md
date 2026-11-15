@@ -16,7 +16,7 @@
 
 * `ref_accuracy` names its classes for readers: possible citation errors (details that differ from the record, the only class that makes the light yellow), references not found, notes, and references not checked. The summary opens with the first two counts. The light is green when a reference without a DOI was compared and nothing differs; it was "na" whenever no reference printed a DOI. `ref_summary` reports a reference not found as "not found".
 
-* `ref_accuracy` shows each difference between the printed reference and the record as a diff: text only in the printed reference struck through in red, text only in the record underlined in green, a misspelled word or name letter by letter. Formatting tags in registry titles (`<i>`) are removed. References the citation calls unpublished, in preparation, under review or a personal communication are not searched or listed as not found.
+* `ref_accuracy` shows each difference between the printed reference and the record as a diff: text only in the printed reference struck through in red, text only in the record underlined in green, a misspelled word or name letter by letter. Formatting tags in registry titles (`<i>`) are removed. References the citation calls unpublished, in preparation, under review or a personal communication are not searched or listed as not found. A cited DOI that does not exist is shown as a difference from the DOI of the work found by its title. References without a DOI are split into suggested DOIs and the others, each with the reason no DOI is suggested and the record found, if any.
 
 * `ref_accuracy` lists entries it could not read reliably (two references read as one, a DOI read without its reference, a printed DOI that was not read) and does not compare them.
 

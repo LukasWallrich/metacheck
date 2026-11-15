@@ -124,7 +124,7 @@ test_that("ref_accuracy", {
   expect_equal(unresolved$not_found, c(FALSE, TRUE))
   expect_equal(unresolved$doi.match[1], "10.5281/zenodo.2669586")
   report <- paste(unlist(mod_output$report), collapse = "\n")
-  expect_match(report, "the work with the cited title in DataCite is shown", fixed = TRUE)
+  expect_match(report, "this is the DOI of the work with the cited title in DataCite", fixed = TRUE)
   expect_match(report, "The cited DOI does not exist (doi.org).", fixed = TRUE)
 
   # a checked reference (one whose DOI resolves) whose cited journal differs
