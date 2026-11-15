@@ -114,17 +114,20 @@ test_that("ref_accuracy", {
   # references with a DOI that does not exist, and one without a DOI, which
   # Crossref matched by title (#528). The work of the first DOI is found by
   # its title, so it is flagged with that record; the second is not found.
+  # Crossref's match for the reference without a DOI has the cited title,
+  # shortened, and two authors the reference omits, so it is flagged too.
   st <- mod_output$summary_table
   expect_equal(st$refs_checked, 4)
   expect_equal(st$no_doi, 1)
-  expect_equal(st$incoherent, 1)
+  expect_equal(st$incoherent, 2)
   expect_equal(mod_output$traffic_light, "yellow")
   unresolved <- mod_output$table[mod_output$table$tier == "unresolved", ]
   expect_equal(unresolved$incoherent, c(TRUE, FALSE))
   expect_equal(unresolved$not_found, c(FALSE, TRUE))
-  expect_equal(unresolved$doi.match[1], "10.5281/zenodo.2669586")
+  # the package's DOI at CRAN (Crossref) or Zenodo (DataCite)
+  expect_match(unresolved$doi.match[1], "faux|zenodo\\.2669586", ignore.case = TRUE)
   report <- paste(unlist(mod_output$report), collapse = "\n")
-  expect_match(report, "this is the DOI of the work with the cited title in DataCite", fixed = TRUE)
+  expect_match(report, "this is the DOI of the work with the cited title in", fixed = TRUE)
   expect_match(report, "The cited DOI does not exist (doi.org).", fixed = TRUE)
 
   # a checked reference (one whose DOI resolves) whose cited journal differs
@@ -136,7 +139,7 @@ test_that("ref_accuracy", {
     "A Completely Different Journal Name"
   bad_out <- module_run(bad, module)
   expect_equal(bad_out$traffic_light, "yellow")
-  expect_equal(bad_out$summary_table$incoherent, 2)
+  expect_equal(bad_out$summary_table$incoherent, 3)
 
   # min_mismatches controls whether a single title/author mismatch flags. A lone
   # author mismatch flags at the default (1) but not when set to 2.
@@ -145,7 +148,7 @@ test_that("ref_accuracy", {
   loose  <- module_run(auth, module)                       # default = 1
   strict <- module_run(auth, module, min_mismatches = 2)   # conservative
   # the lone author mismatch adds one only at the sensitive setting
-  expect_equal(loose$summary_table$incoherent, 2)
+  expect_equal(loose$summary_table$incoherent, 3)
   expect_equal(strict$summary_table$incoherent, 1)
 })
 
@@ -419,8 +422,8 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
       dc_called <<- TRUE
       if (is.null(dc_title)) return(data.frame(query = integer(0), doi = character(0),
         title = character(0), year = integer(0), authors = character(0), error = logical(0)))
-      data.frame(query = 1L, doi = "10.2/y", title = dc_title, year = 2018L,
-                 authors = "Lakens", error = FALSE)
+      data.frame(query = 1L, doi = paste0("10.2/y", c("", "z"))[seq_along(dc_title)],
+                 title = dc_title, year = 2018L, authors = "Lakens", error = FALSE)
     },
     semanticscholar_query = \(title) s2 %||% data.frame(query = integer(0),
       doi = character(0), url = character(0), title = character(0),
@@ -448,10 +451,18 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   expect_false(nf(mo))
   expect_false(dc_called)
 
-  # DataCite holds it
+  # DataCite holds it, with the cited year and authors: its DOI is suggested,
+  # unless another work has that title and year (a review of a book)
   cr_title <- "Equivalence of something else entirely"
   dc_title <- title
-  expect_false(nf(module_run(p, "ref_accuracy")))
+  mo <- module_run(p, "ref_accuracy")
+  expect_false(nf(mo))
+  expect_equal(mo$table$doi.match[mo$table$bib_id == 3], "10.2/y")
+  expect_true(mo$table$doi_suggested[mo$table$bib_id == 3])
+  dc_title <- c(title, title)
+  mo <- module_run(p, "ref_accuracy")
+  expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "2 works with this title and year", fixed = TRUE)
 
   # Semantic Scholar holds it, with other authors: flagged, linking its page
   dc_title <- NULL
@@ -905,8 +916,12 @@ test_that("ref_accuracy counts references without a DOI and suggests a DOI for c
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_match(report, paste0("https://doi.org/", p$bib_match$doi[k]), fixed = TRUE)
 
-  # a low-scoring match is counted but not suggested
+  # a low-scoring match with the cited title and details is suggested too;
+  # one with a similar title is counted but not suggested
   p$bib_match$score[k] <- 40
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(mo$summary_table$doi_suggested, 1)
+  p$bib_match$title[k] <- "Equivalence Testing in Psychological Research Settings"
   mo <- module_run(p, "ref_accuracy")
   expect_true(mo$table$no_doi[mo$table$bib_id == 3])
   expect_equal(mo$summary_table$doi_suggested, 0)
@@ -1154,10 +1169,15 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   k <- match(3, p$bib_match$bib_id)
   p$bib_match$year[k] <- 1900L
   p$bib_match$score[k] <- 40
-  tbl <- module_run(p, "ref_accuracy")$table
+  q <- p
+  q$bib_match$title[k] <- "Equivalence Testing in Psychological Research Settings"
+  tbl <- module_run(q, "ref_accuracy")$table
   expect_equal(tbl$tier[tbl$bib_id == 3], "crossref")
   expect_false(tbl$year_mismatch[tbl$bib_id == 3])
   expect_false(tbl$incoherent[tbl$bib_id == 3])
+  # whatever its score, a match with the cited title is compared
+  tbl <- module_run(p, "ref_accuracy")$table
+  expect_true(tbl$year_mismatch[tbl$bib_id == 3])
 
   # a confident match with the same title but other authors, journal or year
   # is flagged, with the record, and its DOI is not suggested

@@ -10,9 +10,9 @@
 #'
 #' **References with a DOI.** The module compares the cited details field by field with the record for the DOI. `add_bib_match()` looks up a cited DOI directly when it is valid after `doi_clean()`, which removes a doi.org or journal URL around it and the spaces, punctuation and brackets that reading the PDF adds; a DOI that is still not valid is matched by a title search instead. A DOI printed in the reference text that the PDF reader did not take as the reference's DOI (a link with "%2F" for "/", or a malformed DOI such as "doi.org/1073191116659134") counts as the cited DOI when it is the DOI the title search found, apart from lost punctuation or prefix; a malformed one is then a DOI mismatch. For a cited DOI with no record, the module asks doi.org whether it exists. A reference whose DOI does not exist is searched by its title (see Title search): when the work is found, the reference is flagged with the work's record; when it is not, it is listed as not found; when the search fails, it is flagged. A registered DOI, or one doi.org could not be asked about, is listed as not checked: its record is missing because a lookup failed, or because its agency's records are not looked up (DataCite, mEDRA). References in papers that were not looked up at all are not checked.
 #'
-#' **References without a DOI.** These are listed in two tables: suggested DOIs, and the other references, each with the reason no DOI is suggested (not searched, a book or report, a slightly different title, a low Crossref score) and the record found, if any. Their record comes from a Crossref title search, which can return the wrong work, so a reference is compared only with a record whose title agrees with the cited title. The match must be confident (a score of at least `suggest_score`), or have almost the same title (a character similarity of at least 0.9): a wrong year or author lowers Crossref's score. When the match's title, authors, journal or year differ from the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise the DOI of a confident match is suggested, and the report shows the record it points to. Unless both are articles, only a confident match is compared, and only on its authors, because the editions of a book or report share its title; its DOI is not suggested when the year differs by more than `year_tolerance`. A reference whose title was not read is neither compared nor given a DOI.
+#' **References without a DOI.** These are listed in two tables: suggested DOIs, and the other references, each with the reason no DOI is suggested (not searched; found with another year, a slightly different title, other authors or no DOI; several works with the title and year) and the closest record, if any. Their record comes from a Crossref search, which can return the wrong work, so a reference is compared only with a record whose title agrees with the cited title. The match must be confident (a score of at least `suggest_score`), or have almost the same title (a character similarity of at least 0.9) or the cited title (by the title rule below, but not shortened): Crossref scores short references low, and a wrong year or author lowers the score too. When the match's title, authors, journal or year differ from the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise its DOI is suggested, and the report shows the record it points to. Unless both are articles, only a confident match is compared, and only on its authors, because the editions of a book or report share its title; its DOI is not suggested when the year differs by more than `year_tolerance`. A reference whose title was not read is neither compared nor given a DOI.
 #'
-#' **Title search.** A reference without a DOI whose title is not that of Crossref's match, or whose match is a preprint or dataset while it cites a journal, and a reference whose DOI does not exist, are searched by its title alone: first in Crossref (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories, and then in Semantic Scholar, which holds conference papers without DOIs and many books. Of the records with the cited title (by the title rules below), a published version is taken before a preprint. When none of the first five records of the Crossref and DataCite searches, nor Semantic Scholar's best match, has the cited title, the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9), and both the reference and the record are articles or preprints, its title, authors, year and (for a Crossref journal article or a Semantic Scholar record) journal or venue are compared as for Crossref's confident match, and the reference is flagged when they differ. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words, and works the reference calls unpublished, in preparation, under review or a personal communication, are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
+#' **Title search.** A reference without a DOI whose title is not that of Crossref's match, or whose match is a preprint or dataset while it cites a journal, and a reference whose DOI does not exist, are searched by its title alone: first in Crossref (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories, and then in Semantic Scholar, which holds conference papers without DOIs and many books. Of the records with the cited title (by the title rules below), one of the cited year is taken first, then a published version before a preprint. When none of the first five records of the Crossref and DataCite searches, nor Semantic Scholar's best match, has the cited title, the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9) or the cited title, not shortened, and both the reference and the record are articles or preprints, its title, authors, year and (for a Crossref journal article or a Semantic Scholar record) journal or venue are compared as for Crossref's confident match, and the reference is flagged when they differ. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. The DOI of a work found by the title search is suggested when the work has the cited title (not shortened), year and authors, and is the only work with a DOI, that title and that year among the records returned (a book and a review of it often share both); a preprint is not suggested for a reference cited in a journal. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words, and works the reference calls unpublished, in preparation, under review or a personal communication, are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
 #'
 #' **Reading problems.** Entries that were not read correctly from the PDF are listed separately and not compared: two references read as one entry (a second APA author-year start, as in "... Bar, M. (2004). ..."), an entry of which only the DOI was read, and a reference whose printed DOI was not read and so not looked up. When only the DOI was read and the entry before it has no DOI but its title search found that DOI, the DOI is given to that reference.
 #'
@@ -23,8 +23,8 @@
 #' - **DOI** — flagged only when the reference printed a DOI that differs from the record (a blank cited DOI is never a mismatch). DOIs are compared after removing URL wrappers (`https://doi.org/`, journal article URLs), spaces and trailing punctuation left by the PDF, and the old double slash after the prefix (`10.1037//`). When the record was found by looking up the cited DOI (it has no search score), a record with a different DOI means the registry lists the cited DOI as an alias (for example after a journal moved publisher); this is reported as a note with the current DOI, not flagged. A DOI mismatch is therefore only flagged when the record came from a title search. Papers read from bibr 12.x exports do not record how a record was found, so for them a different DOI is always a mismatch.
 #' - **Year** — flagged when the cited year is more than `year_tolerance` years from the record (online-first and print years routinely differ by one year, so this is allowed by default). Before a year is flagged, Crossref's dates for the record are read: a cited year near its online, print, issue or posting date is not a mismatch, because some publishers (IEEE among them) print a paper years after it appears online without depositing the online date. A cited year near only the year the DOI was created or the work accepted is listed as a note, not flagged. A creation date after the publication date (a DOI deposited for an old paper) is not used.
 #' - **Preprints and published versions** — a cited preprint (its journal, or its text when no journal was read, names a preprint server such as arXiv or PsyArXiv) is not compared on its year or journal with a published version of the work, and a cited published version found as a preprint may be up to `year_tolerance` + 1 years later than the preprint. A cited preprint with a published version, and authors that agree, is listed as a note. A reference cited in a journal whose work is found only as a preprint is flagged: the journal article may not exist. Conference papers are left out, because many proceedings (ICML, NeurIPS, ICLR) have no DOIs; a venue that names a conference, has an acronym or belongs to a reference typed as a conference paper is taken as one, unless it is the name of a journal with an ISSN in Wikidata ("IEEE Transactions on Neural Networks and Learning Systems", "Proceedings of the National Academy of Sciences") or a journal cited by its acronym alone ("PNAS", "JMLR").
-#' - **Journal** — flagged when the cited journal differs from the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", "the", "WIREs" for "Wiley Interdisciplinary Reviews", an acronym before the full name ("MMWR. Morbidity and Mortality Weekly Report"), the conference name or acronym for a proceedings record registered as a journal article ("AAAI" for "Proceedings of the AAAI Conference on Artificial Intelligence"), a venue cited by the initials of its main words ("ICML" for "International Conference on Machine Learning", "NeurIPS" for "Neural Information Processing Systems"), and British and American spellings ("Behaviour" and "Behavior") are treated as equivalent. The words of the shorter name must appear in order in the longer one, starting with its first word, so a subtitle or section may be left out, but a name that starts inside another is another journal ("Psychological Science" is not "Current Directions in Psychological Science"). A one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience", "Science" is not "Sciences"), as ISO 4 does not abbreviate one-word titles. Words that the parsed journal lost are accepted when the record's name is in the reference text ("Perception, & Psychophysics" for "Attention, Perception, & Psychophysics"), also when a word in it is hyphenated at a line break. Because later words may be skipped, a journal whose name contains another's words in order is not told apart from it ("Journal of Experimental Psychology" and "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
-#' - **Title** — the record is first identified by a similar title: a character-level similarity of at least `title_similarity` after stripping case, punctuation, footnote markers and diacritics, the record's title in the reference text as whole words ending at a title delimiter (for titles not read correctly from the PDF), one title followed by the other's subtitle after a title delimiter (":", "?", "." or "!"), or a translated title in square brackets, as APA gives for a work in another language. Letters of every script count, so titles in Cyrillic or Chinese are compared like others. A record with a similar title is the work, and its title must then be the cited title: after folding case, diacritics, Unicode forms ("SDO₇" and "SDO7"), "&" and "and", punctuation, spacing and British and American spellings, the two must be equal, or one must be the other's part before or after a title delimiter (a citation or record without its subtitle, or without a main title or acronym before it, as in "PRBoost: ..."). A cited title may also stop after any whole word of the record's title. Any other difference, even of one word ("motor" for "motion", "relation" for "relationship", "a" for "an"), is flagged. A record's title in the reference text, and a translated title, are accepted as they are. A cited preprint is not compared on its title with a published version, which is often retitled.
+#' - **Journal** — flagged when the cited journal differs from the record. Journal names are matched tolerantly: standard ISO-4 abbreviations (e.g. "J. Pers. Soc. Psychol." for "Journal of Personality and Social Psychology"), "&"/"and", "the", "WIREs" for "Wiley Interdisciplinary Reviews", an acronym before the full name ("MMWR. Morbidity and Mortality Weekly Report"), the conference name or acronym for a proceedings record registered as a journal article ("AAAI" for "Proceedings of the AAAI Conference on Artificial Intelligence"), a venue cited by the initials of its main words ("ICML" for "International Conference on Machine Learning", "NeurIPS" for "Neural Information Processing Systems"), and British and American spellings ("Behaviour" and "Behavior") are treated as equivalent. The words of the shorter name must appear in order in the longer one, starting with its first word, so a subtitle or section may be left out, but a name that starts inside another is another journal ("Psychological Science" is not "Current Directions in Psychological Science"). A one-word name must match the other name exactly ("Nature" is not "Nature Neuroscience", "Science" is not "Sciences"), as ISO 4 does not abbreviate one-word titles. Words that the parsed journal lost are accepted when the record's name is in the reference text ("Perception, & Psychophysics" for "Attention, Perception, & Psychophysics"), also when a word in it is hyphenated at a line break, and so is a journal read as the subtitle of the record's name in the reference text ("An International Journal of Research and Practice" in "Infant and Child Development: An International Journal of Research and Practice"). Because later words may be skipped, a journal whose name contains another's words in order is not told apart from it ("Journal of Experimental Psychology" and "Journal of Experimental Social Psychology"). The journal is only compared when the record is a journal article: for book chapters, proceedings and reports the registry often gives a series or platform name ("Oxford Handbooks Online"). A cited "journal" that is an article number ("Article e17018"), which comes from reading the PDF, is not compared either.
+#' - **Title** — the record is first identified by a similar title: a character-level similarity of at least `title_similarity` after stripping case, punctuation, footnote markers and diacritics, the record's title in the reference text as whole words ending at a title delimiter (for titles not read correctly from the PDF), one title followed by the other's subtitle after a title delimiter (":", "?", "." or "!"), or a translated title in square brackets, as APA gives for a work in another language. Letters of every script count, so titles in Cyrillic or Chinese are compared like others. A record with a similar title is the work, and its title must then be the cited title: after folding case, diacritics, Unicode forms ("SDO₇" and "SDO7"), "&" and "and", punctuation, spacing and British and American spellings, the two must be equal, or one must be the other's part before or after a title delimiter (a citation or record without its subtitle, or without a main title or acronym before it, as in "PRBoost: ..."). A cited title may also stop after any whole word of the record's title. Any other difference, even of one word ("motor" for "motion", "relation" for "relationship", "a" for "an"), is flagged. A record's title in the reference text, and a translated title, are accepted as they are, but a DOI found by a title search is suggested only for the cited title itself. A cited preprint is not compared on its title with a published version, which is often retitled.
 #' - **Authors** — flagged when the leading author surnames (the first `max_authors`) from the record are not all present in the cited author list, or when the record's first author is not cited first. Only the leading authors are required because author lists are routinely truncated with "et al.". The cited authors are read one person at a time, and each record surname must equal one cited surname, compared on its letters only, so diacritics, spacing and case are ignored ("Gredebäck" and "Gredeback", "Le Doux" and "LeDoux" match). When one of the two is a single word, it may also match the other's last word, for shortened compound surnames and particles ("Vafaei Shooshtari" cited as "Shooshtari", "Gelder" cited as "De Gelder"); the last word is also taken after a hyphen or an elided particle ("Purdie-Vaughns" cited as "Vaughns", "O'Connell" read from the PDF as "Connell"). A cited name without a comma is read as given name first, and the record surname must equal its last word or words. A name whose given and family names are swapped on one side (the record's given name is the cited surname, and the record's surname starts with the cited initial, as in "Wu, K." for the record's family name "Kui" and given name "Wu") is not flagged but listed as a note. Papers read from bibr 12.x exports keep each author list as printed ("Adam, H., Shirako, A., & Maddux, W. W"), so for them each record surname must equal one or more consecutive whole words of the list, with the same tolerance for compound surnames. A reference whose authors could not be read is not flagged. Extra cited authors after the first and given names are not checked. A cited list truncated with "et al." (or "and others", as BibTeX gives it), in the parsed authors or in the reference text before the title, needs only as many record authors as it cites: truncation is a citation style, not an error.
 #'
 #' A mismatched DOI, journal or year flags a reference on its own. Title and author mismatches are governed by `min_mismatches`: the default (1) flags a reference when either the title or the authors disagree. In the validation below, every author error was a single author mismatch, so `min_mismatches = 2` removed all seven of them; it is not recommended.
@@ -33,13 +33,13 @@
 #'
 #' <validation>The rules were developed on the 30 papers and the benchmark described here, so they may perform less well on other papers.
 #'
-#' In 30 randomly sampled Psychological Science papers (1,269 references, matched with `add_bib_match()` in November 2026), the module flagged 11 of the 555 references that printed a DOI and 19 of the 706 that did not (the other 8 were 6 entries not read reliably, a DOI read as an entry of its own, and a DOI registered with DataCite). Checked by hand, 23 of the 30 flags were citation errors: ten titles that differ from the record (four by a wrong word, such as "mating" for "reproductive", "motor" for "motion" and "input" for "output"; six by a small change, such as "relation" for "relationship", "public good" for "public goods" and "a hypothesis" for "an hypothesis"), seven wrong author names (such as "Bernsten" for Berntsen, "Sonuga-Burke" for Sonuga-Barke, and "Sanderson, A." for Sanderson Abel), three printed DOIs that do not work (all three appear so in the reference lists the publishers deposited at Crossref), and three wrong or misspelled journal names ("Nature Neuroscience Reviews" for Nature Reviews Neuroscience, "Cortex" for Neuropsychologia, and "Neuropsychophamacology"). Two were unclear (a diacritic in "Teder-Sälejärvi" and a compound surname cited by its first part), one was another version of the work (an 1897 abstract of an 1898 paper), and four were not errors (a renamed journal, authors misread from the PDF, and two titles misread from the PDF: a lost colon before a subtitle the record does not have, and a title that lost its opening words). Two online-first years were not flagged once Crossref's dates were read; one of them, cited with the year its DOI was created, is listed as a note. No reference was flagged as found only as a preprint. At `min_mismatches = 2`, 8 flags remain, 6 of them errors: the seven author errors and ten title errors are lost, with the two unclear flags and three reading errors. Of the 706 references without a DOI, 503 were given a suggested DOI, 19 were flagged and 32 were listed as not found. For 29 more, Crossref's match had the cited title but too low a score to be suggested; 113 were found by a title search or called unpublished, and were not compared (89 of them books and 11 chapters); and 10 had no title or one of fewer than three words.
+#' In 30 randomly sampled Psychological Science papers (1,269 references, matched with `add_bib_match()` in November 2026), the module flagged 11 of the 555 references that printed a DOI and 20 of the 706 that did not (the other 8 were 6 entries not read reliably, a DOI read as an entry of its own, and a DOI registered with DataCite). Checked by hand, 24 of the 31 flags were citation errors: ten titles that differ from the record (four by a wrong word, such as "mating" for "reproductive", "motor" for "motion" and "input" for "output"; six by a small change, such as "relation" for "relationship", "public good" for "public goods" and "a hypothesis" for "an hypothesis"), seven wrong author names (such as "Bernsten" for Berntsen, "Sonuga-Burke" for Sonuga-Barke, and "Sanderson, A." for Sanderson Abel), three printed DOIs that do not work (all three appear so in the reference lists the publishers deposited at Crossref), and four wrong or misspelled journal names ("Nature Neuroscience Reviews" for Nature Reviews Neuroscience, "Cortex" for Neuropsychologia, "Journal of the Royal Society B" for the Royal Statistical Society's, and "Neuropsychophamacology"). Two were unclear (a diacritic in "Teder-Sälejärvi" and a compound surname cited by its first part), one was another version of the work (an 1897 abstract of an 1898 paper), and four were not errors (a renamed journal, authors misread from the PDF, and two titles misread from the PDF: a lost colon before a subtitle the record does not have, and a title that lost its opening words). Two online-first years were not flagged once Crossref's dates were read; one of them, cited with the year its DOI was created, is listed as a note. No reference was flagged as found only as a preprint. At `min_mismatches = 2`, 9 flags remain, 7 of them errors: the seven author errors and ten title errors are lost, with the two unclear flags and three reading errors. Of the 706 references without a DOI, 556 were given a suggested DOI, 20 were flagged and 32 were listed as not found. The other 98 were listed with the reason no DOI was suggested: 32 were found with another year (editions, reprints, software versions), 28 with a slightly different title, 14 without a DOI (in Semantic Scholar), 8 with authors or a year that could not be compared, 2 with other authors, and 1 with another work of the same title and year; 10 had no title or one of fewer than three words, and 3 were called unpublished.
 #'
-#' The suggested DOIs were checked by hand in an earlier run, which suggested 507. For 443, the record agreed with the citation on title (character similarity of at least 0.95), first author, year (within one) and journal; a random 15 of these were all the cited work, a spot check that rules out only a high rate of wrong suggestions. The other 64 were checked by hand: 63 were the cited work (most differed only by a subtitle or by "&amp;" in the record's journal), and 1 was unclear (an ICCV paper, with the title, authors and year of a cited ICLR workshop paper). The module listed 32 references as not found (57 before Semantic Scholar was searched; it holds most of the books). All were works these sources do not hold (books and chapters, reports, web pages and news, software, and journal articles without a DOI) or entries misread from the PDF, such as two statements of author contributions.
+#' The suggested DOIs were checked by hand in an earlier run, which suggested 507; the 53 that the current rules add (Crossref matches with the cited title, year and authors but a low score, and works found by the title search) were looked through: each appeared to be the cited work, two of them as a later digital edition of a cited book (Oxford Academic, Bloomsbury). For 443, the record agreed with the citation on title (character similarity of at least 0.95), first author, year (within one) and journal; a random 15 of these were all the cited work, a spot check that rules out only a high rate of wrong suggestions. The other 64 were checked by hand: 63 were the cited work (most differed only by a subtitle or by "&amp;" in the record's journal), and 1 was unclear (an ICCV paper, with the title, authors and year of a cited ICLR workshop paper). The module listed 32 references as not found (57 before Semantic Scholar was searched; it holds most of the books). All were works these sources do not hold (books and chapters, reports, web pages and news, software, and journal articles without a DOI) or entries misread from the PDF, such as two statements of author contributions.
 #'
-#' For each kind of error, one error was added to each of 30 references, in the parsed reference and its text; these references had passed the check or had a suggested DOI. They were then looked up again with `add_bib_match()`. Fewer than 30 were changed where the reference had no surname of four or more letters among its first six authors, no journal, or its DOI only in the reference text. Of references with a DOI, the module flagged all 30 with a wrong year, 28 of 28 with a misspelled author (one of the first six), 29 of 29 with another journal, 28 of 28 with a changed digit in the DOI, and 28 of 30 with another reference's title. Of references without a DOI, it flagged all 30 with a wrong year, 26 of 28 with a misspelled author and 27 of 30 with another journal. Of 30 titles taken from another reference, it flagged 21 and listed 2 as not found. Of 30 titles with half their words replaced, it listed 26 as not found and flagged 1; the other 3 were matched by Crossref with the real work, but not confidently enough to be compared, and none was given a DOI. No other reference's result changed. These errors were added to references that were read correctly, so these rates exclude errors hidden by reading the PDF, and they do not estimate how often citation errors occur.
+#' For each kind of error, one error was added to each of 30 references, in the parsed reference and its text; these references had passed the check or had a suggested DOI. They were then looked up again with `add_bib_match()`. Fewer than 30 were changed where the reference had no surname of four or more letters among its first six authors, no journal, or its DOI only in the reference text. Of references with a DOI, the module flagged all 30 with a wrong year, 28 of 28 with a misspelled author (one of the first six), 29 of 29 with another journal, 28 of 28 with a changed digit in the DOI, and 28 of 30 with another reference's title. Of references without a DOI, it flagged all 30 with a wrong year, 26 of 28 with a misspelled author and 29 of 30 with another journal. Of 30 titles taken from another reference, it flagged 24 and listed 2 as not found. Of 30 titles with half their words replaced, it listed 26 as not found and flagged 1; the other 3 were matched by Crossref with the real work, whose title differs too much for it to be compared, and none was given a DOI. No added error was given a suggested DOI. No other reference's result changed. These errors were added to references that were read correctly, so these rates exclude errors hidden by reading the PDF, and they do not estimate how often citation errors occur.
 #'
-#' On CiteTracer's synthetic benchmark (2,450 machine-learning citations built from real BibTeX entries; `data-raw/ref_accuracy_citetracer.R`, data version of 9 May 2026, looked up in November 2026 without a Semantic Scholar key), the module flagged or listed as not found 68% of the 1,156 citations with a fabricated or changed field: 99.5% of fabricated DOIs, 91% of wrong years, 72% of wrong author lists, 90% of fabricated or paraphrased titles, 41% of fabricated venues, and 1% of citations with wrong pages, volumes or publishers (fields it does not compare). It flagged 7 of the 1,023 real citations (0.7%): two TPAMI papers cited with their preprint year, one conference paper cited two years before its arXiv record, three arXiv records listing an author the citation does not, and a paper in the Journal of Machine Learning Research, which has no DOIs, found only as a preprint. It listed none as not found; before Semantic Scholar was searched, 25 conference and workshop papers without DOIs were not found. Of the 271 borderline citations (name variants, fields no source has), it flagged 2. Of the 7 references flagged as found only as a preprint, 6 had a fabricated field. 25 real citations had a note: 20 cited preprints with a published version, 4 swapped names and 1 year of DOI creation. The benchmark has no PDF reading errors, and all its references are cited as articles.
+#' On CiteTracer's synthetic benchmark (2,450 machine-learning citations built from real BibTeX entries; `data-raw/ref_accuracy_citetracer.R`, data version of 9 May 2026, looked up in November 2026 without a Semantic Scholar key), the module flagged or listed as not found 68% of the 1,156 citations with a fabricated or changed field: 99.5% of fabricated DOIs, 91% of wrong years, 75% of wrong author lists, 90% of fabricated or paraphrased titles, 43% of fabricated venues, and 1% of citations with wrong pages, volumes or publishers (fields it does not compare). It flagged 7 of the 1,023 real citations (0.7%): two TPAMI papers cited with their preprint year, one conference paper cited two years before its arXiv record, three arXiv records listing an author the citation does not, and a paper in the Journal of Machine Learning Research, which has no DOIs, found only as a preprint. It listed none as not found; before Semantic Scholar was searched, 25 conference and workshop papers without DOIs were not found. Of the 271 borderline citations (name variants, fields no source has), it flagged 2. Of the 7 references flagged as found only as a preprint, 6 had a fabricated field. 25 real citations had a note: 20 cited preprints with a published version, 4 swapped names and 1 year of DOI creation. The benchmark has no PDF reading errors, and all its references are cited as articles.
 #'
 #' A flag should be read as "check this reference against the original source", not as a confirmed error.</validation>
 #'
@@ -71,9 +71,11 @@
 #'   of an article routinely differ by a year. Set to 0 to require an exact
 #'   match, or higher to be more lenient.
 #' @param suggest_score for references with no DOI, the minimum Crossref
-#'   relevance score for a DOI found by title search to be offered as a
-#'   suggested DOI. Low-scoring matches are usually the wrong paper, so they are
-#'   not suggested. Raise to be more conservative, lower to suggest more.
+#'   relevance score for a match with a similar title to be compared and its
+#'   DOI suggested. Low-scoring matches are often the wrong paper; below this
+#'   score, a match is compared, and suggested when nothing differs, only when
+#'   it has almost the cited title. Raise to be more conservative, lower to
+#'   suggest more.
 #'   Scores of 1 or less, as bibr 12.x exports give, are on a 0-1 scale and
 #'   are compared with `suggest_score / 100`.
 #'
@@ -322,6 +324,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     TRUE
   }
   journal_coherent <- \(cited, record, text) {
+    # a journal read as the subtitle of its name ("An International Journal
+    # of Research and Practice" in "Infant and Child Development: An
+    # International Journal of Research and Practice")
+    if (!is.na(text) && grepl(paste0(clean(record), ": ", clean(cited)), clean(text), fixed = TRUE))
+      return(TRUE)
     # an acronym before a full stop at the start of a name ("MMWR. Morbidity
     # and Mortality Weekly Report") may be left out
     acronym <- "^\\s*[A-Z]{2,}\\.\\s+(?=\\S)"
@@ -402,6 +409,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # arguments; also used for the DataCite records found for a reference
   # without a DOI
   title_check <- \(cited, record, text) {
+    if (!length(cited)) return(list(mismatch = logical(0), agrees = logical(0),
+                                    starts_same = logical(0), charsim = numeric(0),
+                                    exact = logical(0), same = logical(0), full = logical(0)))
     a <- norm_title(cited)
     b <- norm_title(record)
     charsim <- mapply(\(x, y) {
@@ -488,7 +498,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       lapply(strsplit(trimws(gsub("[^\\p{L}\\p{N}]+", " ", x, perl = TRUE)), " "), uk_us)
     }
     squash <- \(x) vapply(words(x), paste, "", collapse = "")
-    same_title <- \(x, y) {
+    same_title <- \(x, y, shortened = TRUE) {
       if (is.na(x) || is.na(y)) return(FALSE)
       # an APA description after the cited title ("[Conference session]")
       x <- sub("\\s*\\[[^]]*\\]?\\s*$", "", stringi::stri_trans_nfkc(x))
@@ -499,7 +509,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       if (sx == sy) return(TRUE)
       wx <- words(x)[[1]]
       wy <- words(y)[[1]]
-      if (length(wx) < length(wy) && identical(wx, wy[seq_along(wx)])) return(TRUE)
+      if (shortened && length(wx) < length(wy) && identical(wx, wy[seq_along(wx)])) return(TRUE)
       # a footnote that the record appends to its title ("...adolescence11The
       # full text of this article ...")
       if (startsWith(sy, sx) && grepl("^[0-9]", substring(sy, nchar(sx) + 1))) return(TRUE)
@@ -510,10 +520,18 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       any(vapply(cut, \(k) squash(substr(long, 1, k - 1)) == short ||
                    squash(substring(long, k + 1)) == short, logical(1)))
     }
-    exact <- known & (mapply(same_title, cited, record, USE.NAMES = FALSE) |
-                        in_text | translated)
+    same <- known & as.logical(unlist(mapply(same_title, cited, record, USE.NAMES = FALSE)))
+    # the same title, not shortened: a record found by an uncertain search
+    # whose title continues the cited title without a delimiter is another
+    # work ("Federated Learning with Matched Averaging and Deep Learning ...")
+    full <- known & as.logical(unlist(mapply(same_title, cited, record, FALSE, USE.NAMES = FALSE)))
+    # a title found in the reference text, or a translated title, is not a
+    # mismatch, but a DOI found by its title is suggested only for the same
+    # title ("Beck Depression Inventory-II" is in "Manual for the Beck
+    # Depression Inventory-II")
+    exact <- same | (known & (in_text | translated))
     list(mismatch = known & !agrees, agrees = agrees, starts_same = starts_same,
-         charsim = charsim, exact = exact)
+         charsim = charsim, exact = exact, same = same, full = full)
   }
   tc <- title_check(table$title.orig, table$title.match, table$text)
   # a record with another title is compared only when it is the record of the
@@ -937,7 +955,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # whose record has another year.
   article_pair <- (is.na(table$bib_type.match) | table$bib_type.match %in% article_set) &
     (is.na(table$bib_type.orig) | table$bib_type.orig %in% article_set)
-  near_same <- !is.na(title_charsim) & title_charsim >= 0.9
+  near_same <- (!is.na(title_charsim) & title_charsim >= 0.9) | tc$full
   # A cited journal article whose same-title match is a preprint, a dataset
   # or another record bib_match calls "misc" is not judged on that match: the
   # title search below looks for a published version among several records.
@@ -963,7 +981,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   other_year <- table$year_mismatch %in% TRUE
   table$year_mismatch[authors_compared] <- FALSE
   table$container_mismatch[authors_compared] <- FALSE
-  table$doi_suggested <- table$doi_suggested & !table$incoherent &
+  # a match compared on all its fields is suggested whatever its score when
+  # none of them differs: Crossref scores the short references of classic
+  # articles low
+  table$doi_suggested <- (table$doi_suggested | compared) & !table$incoherent &
     !(!compared & other_year) & !preprint_pub
   pub <- preprint_pub & !table$incoherent
   table$published_doi[pub] <- table$doi.match[pub]
@@ -1000,7 +1021,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # For each title q[i], the first record with the same title (a row of
   # hits), NA when there is none, and NA_integer_ - 1 (-1) when the search
   # failed.
-  title_found <- \(hits, q, text) {
+  title_found <- \(hits, q, text, year) {
     first <- rep(NA_integer_, length(q))
     first[unique(hits$query[hits$error])] <- -1L
     ok_rows <- which(!hits$error & !blank(hits$title))
@@ -1008,10 +1029,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       h <- hits[ok_rows, ]
       ok <- title_check(q[h$query], h$title, text[h$query])
       same <- ok_rows[ok$agrees | ok$starts_same]
-      # a published version before a preprint with the same title
+      # a record of the cited year first (not a reprint or another
+      # edition), and a published version before a preprint with the same title
       pre <- hits$type[same] %in% c("posted-content", "Preprint") |
         grepl("^10\\.48550/", hits$doi[same], ignore.case = TRUE)
-      same <- same[order(hits$query[same], pre)]
+      other_year <- !(hits$year[same] == year[hits$query[same]]) %in% TRUE
+      same <- same[order(hits$query[same], other_year, pre)]
       first[unique(hits$query[same])] <- same[!duplicated(hits$query[same])]
     }
     first
@@ -1025,6 +1048,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # report of references without a DOI
   found <- data.frame(source = rep(NA_character_, nrow(table)), type = NA_character_,
                       doi = NA_character_, url = NA_character_, title = NA_character_)
+  source_name <- \(x) ifelse(x %in% "datacite", "DataCite",
+                              ifelse(x %in% "semanticscholar", "Semantic Scholar", "Crossref"))
+  # why a work found by its title has no DOI suggested
+  found_why <- rep(NA_character_, nrow(table))
   if (length(searched)) {
     # each title is searched once, and its result given to every reference
     # with that title (the same work cited twice, or in several papers)
@@ -1032,6 +1059,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     q <- unique(q_ref)
     qi <- match(q_ref, q)
     q_text <- table$text[searched][match(q, q_ref)]
+    q_year <- table$year.orig[searched][match(q, q_ref)]
     cr <- crossref_query(as.list(q), min_score = 0, rows = 5,
                          select = c("DOI", "title", "score", "author", "year", "type",
                                     "container-title"))
@@ -1052,7 +1080,13 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         else NA_character_)
       x
     }
-    first <- title_found(cr, q, q_text)
+    # every record each search returned, to tell whether the found work is
+    # the only one with its title and year (below)
+    cand <- cr[!cr$error & !blank(cr$title), c("query", "doi", "title", "year", "type", "container")]
+    if (nrow(cand)) cand$authors <- cr$authors[!cr$error & !blank(cr$title)] else cand$authors <- list()
+    cand$source <- rep("crossref", nrow(cand))
+    cand$url <- rep(NA_character_, nrow(cand))
+    first <- title_found(cr, q, q_text, q_year)
     rec <- data.frame(source = ifelse(first > 0, "crossref", NA),
                       doi = NA_character_, title = NA_character_, year = NA_integer_,
                       type = NA_character_, container = NA_character_,
@@ -1074,7 +1108,15 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       dc <- datacite_query(q[rest])
       for (col in c("doi", "title", "year", "authors", "type"))
         if (is.null(dc[[col]])) dc[[col]] <- rep(NA, nrow(dc))
-      dfirst <- title_found(dc, q[rest], q_text[rest])
+      dfirst <- title_found(dc, q[rest], q_text[rest], q_year[rest])
+      ok <- which(!dc$error & !blank(dc$title))
+      add <- data.frame(query = rest[dc$query[ok]], doi = dc$doi[ok], title = dc$title[ok],
+                        year = suppressWarnings(as.integer(dc$year[ok])), type = dc$type[ok],
+                        container = rep(NA_character_, length(ok)))
+      add$authors <- lapply(dc$authors[ok], split_names)
+      add$source <- rep("datacite", length(ok))
+      add$url <- rep(NA_character_, length(ok))
+      cand <- rbind(cand, add)
       # not found when neither search found it, failed when either failed
       first[rest] <- ifelse(is.na(dfirst) & first[rest] %in% -1L, -1L, dfirst)
       got <- which(dfirst > 0)
@@ -1087,7 +1129,15 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     rest <- which(is.na(first) | first < 0)
     if (length(rest)) {
       s2 <- semanticscholar_query(q[rest])
-      sfirst <- title_found(s2, q[rest], q_text[rest])
+      sfirst <- title_found(s2, q[rest], q_text[rest], q_year[rest])
+      ok <- which(!s2$error & !blank(s2$title))
+      add <- data.frame(query = rest[s2$query[ok]], doi = s2$doi[ok], title = s2$title[ok],
+                        year = suppressWarnings(as.integer(s2$year[ok])), type = s2$type[ok],
+                        container = s2$venue[ok])
+      add$authors <- lapply(s2$authors[ok], split_names)
+      add$source <- rep("semanticscholar", length(ok))
+      add$url <- s2$url[ok]
+      cand <- rbind(cand, add)
       first[rest] <- ifelse(is.na(sfirst) & first[rest] %in% -1L, -1L, sfirst)
       got <- which(sfirst > 0)
       rec$source[rest[got]] <- "semanticscholar"
@@ -1129,6 +1179,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     # reprints, chapters and reviews with the same title by other authors
     # or in other years.
     rec <- rec[!is.na(rec$source), ]
+    any_rec <- rec
     article_types <- c("journal-article", "proceedings-article", "posted-content",
                        "JournalArticle", "Conference", "Preprint")
     cited_type <- table$bib_type.orig[rec$i]
@@ -1136,7 +1187,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     b <- norm_title(rec$title)
     near_same <- vapply(seq_along(a), \(k)
       1 - utils::adist(a[k], b[k])[1, 1] / max(nchar(a[k]), nchar(b[k]), 1) >= 0.9,
-      logical(1))
+      logical(1)) | title_check(table$title.orig[rec$i], rec$title, table$text[rec$i])$full
     rec <- rec[rec$type %in% article_types & near_same &
                  (is.na(cited_type) | cited_type %in% c("article", "journal_article", "inproceedings")), ]
     if (nrow(rec)) {
@@ -1212,6 +1263,66 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         table$preprint_only[f] <- pmis[flag]
         table$doi_mismatch[f] <- FALSE
         table$incoherent[f] <- TRUE
+      }
+    }
+
+    # A DOI found by the title search is suggested for the work with the
+    # cited title and year, when the searches returned only one such work
+    # with a DOI (a book and a review of it, or two printings, often share a
+    # title and year, and then neither is suggested) and its authors are the
+    # cited ones. For the others, the report gives the reason.
+    s <- any_rec[!table$incoherent[any_rec$i] & is.na(table$published_doi[any_rec$i]), ]
+    if (nrow(s)) {
+      i <- s$i
+      k <- qi[match(i, searched)]
+      cc <- cand[!blank(cand$doi) & !is.na(cand$year), ]
+      cc <- cc[title_check(q[cc$query], cc$title, q_text[cc$query])$full %in% TRUE, ]
+      # per reference, the one candidate with the cited year, or minus the
+      # number of candidates
+      pick <- vapply(seq_along(i), \(j) {
+        m <- which(cc$query == k[j] & cc$year %in% table$year.orig[i[j]])
+        m <- m[!duplicated(tolower(doi_clean(cc$doi[m])))]
+        if (length(m) == 1) m else if (length(m)) -length(m) else NA_integer_
+      }, integer(1))
+      c1 <- cc[ifelse(pick %in% seq_len(nrow(cc)), pick, NA), ]
+      has_authors <- vapply(c1$authors, \(a) any(!is.na(a)), logical(1)) &
+        !blank(table$authors.orig[i])
+      note <- split_swap(author_check(c1$authors, table$authors.orig[i], bibr[i],
+                                      table$text[i], table$title.orig[i]))$note
+      # only the record that was compared with the citation (above) is suggested
+      one <- pick %in% seq_len(nrow(cc)) &
+        tolower(doi_clean(c1$doi)) %in% tolower(doi_clean(s$doi)) &
+        tolower(doi_clean(c1$doi)) == tolower(doi_clean(dplyr::coalesce(s$doi, "")))
+      # a preprint is not suggested for a reference cited in a journal
+      pre <- one & (c1$type %in% c("posted-content", "Preprint") |
+                      grepl("^10\\.48550/", c1$doi, ignore.case = TRUE)) & journal_cited[i]
+      ok <- one & has_authors & is.na(note) & !pre
+      where <- source_name(ifelse(one, c1$source, s$source))
+      found_why[i] <- dplyr::case_when(
+        ok ~ NA_character_,
+        (pick < 0) %in% TRUE ~ sprintf(
+          "The searches found %d works with this title and year (such as a book and a review of it).", -pick),
+        pre ~ sprintf("Cited in a journal, but found as a preprint in %s.", where),
+        one & !has_authors ~ sprintf("Found in %s, but the authors could not be compared.", where),
+        one ~ sprintf("Found in %s, but with other authors.", where),
+        blank(s$doi) ~ sprintf("Found in %s, which gives no DOI for it.", where),
+        !title_check(table$title.orig[i], s$title, table$text[i])$full %in% TRUE ~
+          sprintf("Found in %s with a slightly different title.", where),
+        !is.na(s$year) & !is.na(table$year.orig[i]) ~ sprintf(
+          "Found in %s with another year (%s): it may be another edition or version.", where, s$year),
+        .default = sprintf("Found in %s, but the year could not be compared.", where))
+      if (any(ok)) {
+        f <- i[ok]
+        c1 <- c1[ok, ]
+        table$doi_suggested[f] <- TRUE
+        table$record_source[f] <- c1$source
+        table$doi.match[f] <- c1$doi
+        table$record_url[f] <- c1$url
+        table$title.match[f] <- c1$title
+        table$year.match[f] <- c1$year
+        table$container.match[f] <- c1$container
+        found[f, c("source", "type", "doi", "url", "title")] <-
+          c1[, c("source", "type", "doi", "url", "title")]
       }
     }
   }
@@ -1414,8 +1525,6 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     m <- regmatches(n, regexec("^(.*) is cited as (.*)$", n))[[1]]
     if (length(m) == 3) letter_diff(m[3], m[2]) else esc(n)
   }, ""), collapse = "; ")
-  source_name <- \(x) ifelse(x %in% "datacite", "DataCite",
-                              ifelse(x %in% "semanticscholar", "Semantic Scholar", "Crossref"))
   discrepancies <- function(r) {
     # an unresolved cited DOI has no record to compare against
     if (r$tier == "unresolved") {
@@ -1570,6 +1679,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     record <- sprintf("%s (%s). <i>%s</i>", esc(r$title.match), r$year.match,
                       esc(r$container.match))
     record <- gsub(" (NA)", "", gsub(" <i>NA</i>", "", record, fixed = TRUE), fixed = TRUE)
+    by_search <- !is.na(found$source[sugg])
+    record <- paste0(record, ifelse(by_search,
+      sprintf("<br>Found by its title in %s.", source_name(found$source[sugg])), ""))
     out <- data.frame(
       `Reference as printed` = esc(ref_text(r)),
       `Suggested DOI` = paste0(link(paste0("https://doi.org/", r$doi.match), esc(r$doi.match)),
@@ -1581,29 +1693,27 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     r <- table[rest, ]
     f <- found[rest, ]
     n_w <- n_words[rest]
-    article <- f$type %in% c("journal-article", "proceedings-article", "posted-content",
-                             "JournalArticle", "Conference", "Preprint")
-    same <- title_check(r$title.orig, f$title, r$text)$exact %in% TRUE
+    # Crossref's closest match has the cited title, but did not match the
+    # rest of the reference well enough to be suggested
+    weak <- is.na(f$source) & r$tier %in% "crossref" & !blank(r$doi.match) &
+      (r$title_agrees | r$title_starts_same) %in% TRUE
     why <- dplyr::case_when(
       !looked_up[rest] ~ "Not looked up.",
       unpublished[rest] ~ "Cited as unpublished: not searched.",
       blank(r$title.orig) | n_w < 3 ~ "No title read, or one shorter than three words: not searched.",
-      !is.na(f$source) & !article ~ sprintf(
-        "Found by its title in %s, but as a book, report or other work whose editions share a title, its DOI is not suggested.",
-        source_name(f$source)),
-      !is.na(f$source) & same ~ sprintf(
-        "Found in %s with the cited title and details; only Crossref's confident matches are suggested, so check the record before adding its DOI.",
-        source_name(f$source)),
-      !is.na(f$source) ~ sprintf(
-        "Found in %s with a slightly different title, so it is not compared and its DOI is not suggested.",
-        source_name(f$source)),
-      r$tier %in% "crossref" & (r$title_agrees | r$title_starts_same) %in% TRUE ~
-        "Crossref's match has this title, but too low a score for its DOI to be suggested.",
+      r$search_failed ~ "The title search failed: run the module again.",
+      !is.na(found_why[rest]) ~ found_why[rest],
+      weak & (r$year.match != r$year.orig) %in% TRUE ~ sprintf(
+        "Crossref's closest match has the cited title but another year (%s): it may be another edition or version.",
+        r$year.match),
+      weak ~ "Crossref's closest match has the cited title, but is a book, chapter or report, whose editions share a title, and Crossref's search was not confident that it is the cited one.",
       .default = "No DOI suggested.")
+    rec_cell <- ifelse(!is.na(f$source), record_link(f$doi, f$url),
+                       ifelse(weak, paste(record_link(r$doi.match, NA), "(?)"), ""))
     out <- data.frame(
       `Reference as printed` = esc(ref_text(r)),
       `Why no DOI is suggested` = why,
-      `Record found` = ifelse(is.na(f$source), "", record_link(f$doi, f$url)),
+      `Closest record` = rec_cell,
       check.names = FALSE)
     other_report <- scroll_table(out, 5, colwidths = c(.55, .3, .15))
   }
@@ -1636,11 +1746,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         nf_report),
     if (!is.null(suggested_report))
       c("### Suggested DOIs\n",
-        "These references have no DOI. Crossref's title search found a confident match with the same title, and its details agree with the citation: check that it is the cited work before adding its DOI. The retraction, PubPeer and replication checks also use these DOIs, so for these references they are only as reliable as that search.\n",
+        "These references have no DOI. A DOI is suggested when Crossref's search for the reference found a confident match with the cited title and details, or when a search for the title found exactly one work with the cited title, year and authors (the source is then named). Check that it is the cited work before adding its DOI. The retraction, PubPeer and replication checks use the DOIs from Crossref's search for the reference, so for those references they are only as reliable as that search.\n",
         suggested_report),
     if (!is.null(other_report))
       c("### Other references without a DOI\n",
-        "These references have no DOI, and none is suggested, for the reason given.\n",
+        "These references have no DOI, and none is suggested, for the reason given. A record marked (?) is Crossref's closest match, which may be another work.\n",
         other_report)
   )
 
