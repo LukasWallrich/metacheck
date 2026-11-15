@@ -12,7 +12,7 @@
 #'
 #' **References without a DOI.** These are listed in two tables: suggested DOIs, and the other references, each with the reason no DOI is suggested (not searched; found with another year, a slightly different title, other authors or no DOI; several works with the title and year) and the closest record, if any. Their record comes from a Crossref search, which can return the wrong work, so a reference is compared only with a record whose title agrees with the cited title. The match must be confident (a score of at least `suggest_score`), or have almost the same title (a character similarity of at least 0.9) or the cited title (by the title rule below, but not shortened): Crossref scores short references low, and a wrong year or author lowers the score too. When the match's title, authors, journal or year differ from the citation (by the rules below), the reference is flagged with the match, and its DOI is not suggested: the citation may be wrong, the match may be another version of the work (an abstract or a reprint), or an AI-generated reference may borrow a real title. Otherwise its DOI is suggested, and the report shows the record it points to. Unless both are articles, only a confident match is compared, and only on its authors, because the editions of a book or report share its title; its DOI is not suggested when the year differs by more than `year_tolerance`. A reference whose title was not read is neither compared nor given a DOI.
 #'
-#' **Title search.** A reference without a DOI whose title is not that of Crossref's match, or whose match is a preprint or dataset while it cites a journal, and a reference whose DOI does not exist, are searched by its title alone: first in Crossref (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories, and then in Semantic Scholar, which holds conference papers without DOIs and many books. Of the records with the cited title (by the title rules below), one of the cited year is taken first, then a published version before a preprint. When none of the first five records of the Crossref and DataCite searches, nor Semantic Scholar's best match, has the cited title, the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9) or the cited title, not shortened, and both the reference and the record are articles or preprints, its title, authors, year and (for a Crossref journal article or a Semantic Scholar record) journal or venue are compared as for Crossref's confident match, and the reference is flagged when they differ. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. The DOI of a work found by the title search is suggested when the work has the cited title (not shortened), year and authors, and is the only work with a DOI, that title and that year among the records returned (a book and a review of it often share both); a preprint is not suggested for a reference cited in a journal. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words, and works the reference calls unpublished, in preparation, under review or a personal communication, are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
+#' **Title search.** A reference without a DOI whose title is not that of Crossref's match, or whose match is a preprint or dataset while it cites a journal, and a reference whose DOI does not exist, are searched by its title alone: first in Crossref (the search in `add_bib_match()` also uses the authors and journal, and keeps a match only above a minimum score, which short titles do not reach), then in DataCite, which holds arXiv, Zenodo, OSF and many data repositories, and then in Semantic Scholar, which holds conference papers without DOIs and many books. A title that Crossref finds only as a preprint, for a reference cited in a journal, is searched in the other two as well, for the published version; when one of those searches fails, the reference is not flagged as found only as a preprint. Of the records with the cited title (by the title rules below), one of the cited year is taken first, then a published version before a preprint. When none of the first five records of the Crossref and DataCite searches, nor Semantic Scholar's best match, has the cited title, the reference is listed as not found. When a record has almost the same title (a character similarity of at least 0.9) or the cited title, not shortened, and both the reference and the record are articles or preprints, its title, authors, year and (for a Crossref journal article or a Semantic Scholar record) journal or venue are compared as for Crossref's confident match, and the reference is flagged when they differ. Books, software, reports and standard titles are not compared this way, because their editions, versions, reprints, chapters and reviews share a title with other authors and years. The DOI of a work found by the title search is suggested when the work has the cited title (not shortened), year and authors, and is the only work with a DOI, that title and that year among the records returned (a book and a review of it often share both); a preprint is not suggested for a reference cited in a journal. A journal article or a preprint that cannot be found may be cited with a wrong title, or may not exist. Titles of fewer than three words, and works the reference calls unpublished, in preparation, under review or a personal communication, are not searched. Each title is searched once, also when several references cite it. When a search fails, the reference is counted as not checked (`search_failed`), not as not found.
 #'
 #' **Reading problems.** Entries that were not read correctly from the PDF are listed separately and not compared: two references read as one entry (a second APA author-year start, as in "... Bar, M. (2004). ..."), an entry of which only the DOI was read, and a reference whose printed DOI was not read and so not looked up. When only the DOI was read and the entry before it has no DOI but its title search found that DOI, the DOI is given to that reference.
 #'
@@ -282,12 +282,22 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # "Behavior", "Paediatrics" and "Pediatrics", "Organisation" and
   # "Organization", "Centre" and "Center", "Modelling" and "Modeling") are
   # folded the same way on both sides, so an abbreviation stays a prefix
+  # Each rule is limited to the word forms where the spellings differ, so that
+  # words that only look alike are not folded together ("four" and "for",
+  # "call" and "cal", "filled" and "filed", "does" and "des")
   uk_us <- \(w) {
-    w <- gsub("our", "or", w, fixed = TRUE)
-    w <- gsub("(?<=[a-z])(ae|oe)", "e", w, perl = TRUE)
-    w <- gsub("is(e|ed|es|ing|ation|ations)$", "iz\\1", w)
-    w <- gsub("tre$", "ter", w)
-    w <- gsub("ll", "l", w, fixed = TRUE)
+    # "-our" after at least two letters, at the end of a word or before a
+    # suffix: "behaviour", "neurobehavioural", "colourful", "labourism"
+    w <- sub("(?<=[a-z]{2})our(s|ed|ing|ings|ite|ites|able|ably|ful|less|er|ers|al|ally|ism|isms|ist|ists)?$", "or\\1", w, perl = TRUE)
+    # "ae" and "oe" in longer words: "paediatric", "haemoglobin", "oesophagus"
+    long <- nchar(w) >= 6
+    w[long] <- gsub("(?<=[a-z])(ae|oe)", "e", w[long], perl = TRUE)
+    w <- sub("(?<=[a-z]{3})is(e|ed|es|ing|ation|ations)$", "iz\\1", w, perl = TRUE)
+    w <- sub("(?<=[a-z]{2})tre(s)?$", "ter\\1", w, perl = TRUE)
+    # a doubled "l" before a suffix after an unstressed "e" or "a"
+    # ("modelling", "labelled", "signalling"), and "enrolment", "fulfilment"
+    w <- sub("(?<=[a-z]{3}[ea])ll(ed|ing|er|ers|or|ors)$", "l\\1", w, perl = TRUE)
+    w <- sub("(?<=[a-z]{3}[oi])ll(ment|ments)$", "l\\1", w, perl = TRUE)
     sub("^programme", "program", w)
   }
   # the words of each name, lower case, without "of", "the", ...
@@ -511,8 +521,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       wy <- words(y)[[1]]
       if (shortened && length(wx) < length(wy) && identical(wx, wy[seq_along(wx)])) return(TRUE)
       # a footnote that the record appends to its title ("...adolescence11The
-      # full text of this article ...")
-      if (startsWith(sy, sx) && grepl("^[0-9]", substring(sy, nchar(sx) + 1))) return(TRUE)
+      # full text of this article ..."): a marker followed by a sentence, not a
+      # number that continues the title ("Memory across adult life 2")
+      if (startsWith(sy, sx) && grepl("^[0-9]{1,3}[a-z]{20,}", substring(sy, nchar(sx) + 1))) return(TRUE)
       long <- if (nchar(sx) > nchar(sy)) x else y
       short <- if (nchar(sx) > nchar(sy)) sy else sx
       cut <- gregexpr("[:?.!\u2014]", long)[[1]]
@@ -1023,6 +1034,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # For each title q[i], the first record with the same title (a row of
   # hits), NA when there is none, and NA_integer_ - 1 (-1) when the search
   # failed.
+  # a preprint record: Crossref's posted content, Semantic Scholar's and
+  # DataCite's preprints, and arXiv's DOIs (prefix 10.48550)
+  is_preprint_rec <- \(type, doi) type %in% c("posted-content", "Preprint") |
+    grepl("^10\\.48550/", doi, ignore.case = TRUE)
   title_found <- \(hits, q, text, year) {
     first <- rep(NA_integer_, length(q))
     first[unique(hits$query[hits$error])] <- -1L
@@ -1033,8 +1048,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       same <- ok_rows[ok$agrees | ok$starts_same]
       # a record of the cited year first (not a reprint or another
       # edition), and a published version before a preprint with the same title
-      pre <- hits$type[same] %in% c("posted-content", "Preprint") |
-        grepl("^10\\.48550/", hits$doi[same], ignore.case = TRUE)
+      pre <- is_preprint_rec(hits$type[same], hits$doi[same])
       other_year <- !(hits$year[same] == year[hits$query[same]]) %in% TRUE
       same <- same[order(hits$query[same], other_year, pre)]
       first[unique(hits$query[same])] <- same[!duplicated(hits$query[same])]
@@ -1105,7 +1119,26 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       structure(trimws(sub(",.*", "", p)),
                 given = ifelse(grepl(",", p), trimws(sub("^[^,]*,", "", p)), NA))
     }
-    rest <- which(is.na(first) | first < 0)
+    # A title found only as a preprint, for a reference cited in a journal,
+    # is searched in the other sources too, for a published version; when a
+    # search for it fails, the reference is not flagged as found only as a
+    # preprint.
+    q_journal <- journal_cited[searched][match(q, q_ref)]
+    pre_unsure <- rep(FALSE, length(q))
+    pending <- \() which(is.na(first) | first < 0 |
+                          (q_journal & is_preprint_rec(rec$type, rec$doi) & !is.na(rec$source)))
+    # the record each search found for the pending titles: kept when the title
+    # had none, or had a preprint and this is a published article (a record
+    # of unknown type may be the preprint again)
+    take <- \(rest, f, hits) {
+      had <- !is.na(rec$source[rest])
+      k <- ifelse(f %in% seq_len(nrow(hits)), f, NA_integer_)
+      pre_unsure[rest[had & f %in% -1L]] <<- TRUE
+      !is.na(k) & (!had | (hits$type[k] %in% c("journal-article", "proceedings-article",
+                                                "JournalArticle", "Conference") &
+                             !is_preprint_rec(hits$type[k], hits$doi[k])))
+    }
+    rest <- pending()
     if (length(rest)) {
       dc <- datacite_query(q[rest])
       for (col in c("doi", "title", "year", "authors", "type"))
@@ -1120,15 +1153,18 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       add$url <- rep(NA_character_, length(ok))
       cand <- rbind(cand, add)
       # not found when neither search found it, failed when either failed
-      first[rest] <- ifelse(is.na(dfirst) & first[rest] %in% -1L, -1L, dfirst)
-      got <- which(dfirst > 0)
+      new <- take(rest, dfirst, dc)
+      first[rest] <- ifelse(!is.na(rec$source[rest]) & !new, first[rest],
+                            ifelse(is.na(dfirst) & first[rest] %in% -1L, -1L, dfirst))
+      got <- which(new)
       rec$source[rest[got]] <- "datacite"
       rec[rest[got], c("doi", "title", "year", "type")] <- dc[dfirst[got], c("doi", "title", "year", "type")]
+      rec$container[rest[got]] <- NA_character_
       rec$authors[rest[got]] <- lapply(dc$authors[dfirst[got]], split_names)
     }
     # a title found in neither is searched in Semantic Scholar, which holds
     # conference papers without DOIs; its requests are paced
-    rest <- which(is.na(first) | first < 0)
+    rest <- pending()
     if (length(rest)) {
       s2 <- semanticscholar_query(q[rest])
       sfirst <- title_found(s2, q[rest], q_text[rest], q_year[rest])
@@ -1140,8 +1176,10 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       add$source <- rep("semanticscholar", length(ok))
       add$url <- s2$url[ok]
       cand <- rbind(cand, add)
-      first[rest] <- ifelse(is.na(sfirst) & first[rest] %in% -1L, -1L, sfirst)
-      got <- which(sfirst > 0)
+      new <- take(rest, sfirst, s2)
+      first[rest] <- ifelse(!is.na(rec$source[rest]) & !new, first[rest],
+                            ifelse(is.na(sfirst) & first[rest] %in% -1L, -1L, sfirst))
+      got <- which(new)
       rec$source[rest[got]] <- "semanticscholar"
       rec[rest[got], c("doi", "title", "year", "type", "container")] <-
         s2[sfirst[got], c("doi", "title", "year", "type", "venue")]
@@ -1152,6 +1190,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     table$search_failed[searched[first[qi] %in% -1L]] <- TRUE
     rec <- rec[qi, , drop = FALSE]
     rec$i <- searched
+    rec$pre_unsure <- pre_unsure[qi]
     found[searched, ] <- rec[, c("source", "type", "doi", "url", "title")]
 
     # a DOI that does not exist: the work found by its title is shown with it;
@@ -1200,8 +1239,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       ydiff <- abs(table$year.orig[i] - rec$year)
       # a preprint and a published version of the work appear in different
       # years, and only the published version has a journal
-      rec_preprint <- rec$type %in% c("posted-content", "Preprint") |
-        grepl("^10\\.48550/", rec$doi, ignore.case = TRUE)
+      rec_preprint <- is_preprint_rec(rec$type, rec$doi)
       # the title, unless one is a preprint and the other its published version
       tmis <- !title_check(table$title.orig[i], rec$title, table$text[i])$exact &
         cited_preprint[i] == rec_preprint
@@ -1237,7 +1275,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
          (rec$source == "semanticscholar" & !rec$type %in% "Preprint")) &
         !article_number[i] & !cited_preprint[i],
       USE.NAMES = FALSE)
-      pmis <- pub_of_preprint & journal_cited[i]
+      pmis <- pub_of_preprint & journal_cited[i] & !rec$pre_unsure
       flag <- amis | tmis | ymis | cmis | pmis
       named <- !is.na(an$swapped)
       table$name_note[i[named]] <- an$swapped[named]
@@ -1286,7 +1324,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         m <- m[!duplicated(tolower(doi_clean(cc$doi[m])))]
         if (length(m) == 1) m else if (length(m)) -length(m) else NA_integer_
       }, integer(1))
-      c1 <- cc[ifelse(pick %in% seq_len(nrow(cc)), pick, NA), ]
+      c1 <- cc[ifelse(pick %in% seq_len(nrow(cc)), pick, NA_integer_), ]
       has_authors <- vapply(c1$authors, \(a) any(!is.na(a)), logical(1)) &
         !blank(table$authors.orig[i])
       note <- split_swap(author_check(c1$authors, table$authors.orig[i], bibr[i],
@@ -1296,8 +1334,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         tolower(doi_clean(c1$doi)) %in% tolower(doi_clean(s$doi)) &
         tolower(doi_clean(c1$doi)) == tolower(doi_clean(dplyr::coalesce(s$doi, "")))
       # a preprint is not suggested for a reference cited in a journal
-      pre <- one & (c1$type %in% c("posted-content", "Preprint") |
-                      grepl("^10\\.48550/", c1$doi, ignore.case = TRUE)) & journal_cited[i]
+      pre <- one & is_preprint_rec(c1$type, c1$doi) & journal_cited[i]
       ok <- one & has_authors & is.na(note) & !pre
       where <- source_name(ifelse(one, c1$source, s$source))
       found_why[i] <- dplyr::case_when(

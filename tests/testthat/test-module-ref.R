@@ -463,6 +463,10 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   mo <- module_run(p, "ref_accuracy")
   expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
   expect_match(paste(unlist(mo$report), collapse = "\n"), "2 records with this title and year", fixed = TRUE)
+  # a number that continues the title is another work, not a footnote
+  dc_title <- paste(title, "2")
+  mo <- module_run(p, "ref_accuracy")
+  expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
 
   # Semantic Scholar holds it, with other authors: flagged, linking its page
   dc_title <- NULL
@@ -681,6 +685,14 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
     },
     # a short record title that is found in the reference text as the journal
     title = \(p) { p$bib_match$title[m] <- "American Psychologist"; p },
+    # a misspelling that a spelling-variant rule must not fold ("Rolles")
+    title = \(p) {
+      new <- sub("Roles", "Rolles", p$bib$title[i], fixed = TRUE)
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
     # one word changed
     title = \(p) {
       new <- sub("Human", "Animal", p$bib$title[i], fixed = TRUE)
@@ -1312,6 +1324,29 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   found <- c("posted-content", "journal-article")
   r <- module_run(q, "ref_accuracy")$table
   expect_false(r$preprint_only[r$bib_id == 3])
+  # nor when Crossref finds only the preprint but Semantic Scholar finds the
+  # journal article, or the Semantic Scholar search fails
+  found <- "posted-content"
+  s2 <- data.frame(query = 1L, doi = NA_character_, url = "https://www.semanticscholar.org/paper/abc",
+                   title = p$bib$title[i], year = p$bib$year[i], authors = "Lakens, Daniël",
+                   venue = "Journal of Imaginary Results", type = "JournalArticle", error = FALSE)
+  local_mocked_bindings(semanticscholar_query = \(title) {
+    s2$query <- match(p$bib$title[i], title)
+    s2[!is.na(s2$query), ]
+  })
+  r <- module_run(q, "ref_accuracy")$table
+  expect_false(r$preprint_only[r$bib_id == 3])
+  s2 <- data.frame(query = 1L, doi = NA_character_, url = NA_character_, title = NA_character_,
+                   year = NA_integer_, authors = NA_character_, venue = NA_character_,
+                   type = NA_character_, error = TRUE)
+  r <- module_run(q, "ref_accuracy")$table
+  expect_false(r$preprint_only[r$bib_id == 3])
+  # but a Semantic Scholar record of unknown type does not clear it
+  s2 <- data.frame(query = 1L, doi = NA_character_, url = NA_character_, title = p$bib$title[i],
+                   year = p$bib$year[i], authors = "Lakens, Daniël", venue = NA_character_,
+                   type = NA_character_, error = FALSE)
+  r <- module_run(q, "ref_accuracy")$table
+  expect_true(r$preprint_only[r$bib_id == 3])
 
   # a cited year that is the year the DOI was created, before the work was
   # published, is a note; one near the
