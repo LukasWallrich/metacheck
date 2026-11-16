@@ -463,6 +463,13 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   mo <- module_run(p, "ref_accuracy")
   expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
   expect_match(paste(unlist(mo$report), collapse = "\n"), "2 records with this title and year", fixed = TRUE)
+  # a title cut short in reading the PDF, whose full title is in the
+  # reference text: the work with that full title has its DOI suggested
+  p4 <- p
+  p4$bib$title[p4$bib$bib_id == 3] <- sub(" Research$", "", title)
+  dc_title <- title
+  mo <- module_run(p4, "ref_accuracy")
+  expect_true(mo$table$doi_suggested[mo$table$bib_id == 3])
   # a number that continues the title is another work, not a footnote
   dc_title <- paste(title, "2")
   mo <- module_run(p, "ref_accuracy")
@@ -487,6 +494,13 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   expect_false(nf(mo))
   expect_true(mo$table$search_failed[mo$table$bib_id == 3])
   expect_match(mo$summary_text, "The title search failed for 1 reference", fixed = TRUE)
+
+  # a title in a script written without spaces is counted in words, and
+  # searched
+  p3 <- p
+  p3$bib$title[p3$bib$bib_id == 3] <- "\u57fa\u4e8e\u6df1\u5ea6\u5b66\u4e60\u7684\u56fe\u50cf\u8bc6\u522b\u65b9\u6cd5\u7814\u7a76"
+  cr_title <- "Equivalence of something else entirely"
+  expect_true(nf(module_run(p3, "ref_accuracy")))
 
   # a title cited twice is found for both references
   p2 <- p
@@ -580,12 +594,55 @@ test_that("ref_accuracy compares a record that a title search finds", {
   expect_true(row(mo)$container_mismatch)
   expect_equal(row(mo)$container.match, "Psychological Methods")
 
-  # a book cited, or a record that is not an article, is not compared
+  # a book is not flagged, but its DOI is suggested only when a record has
+  # its title by the cited authors
   p2 <- p
   p2$bib$bib_type[p2$bib$bib_id == 3] <- "book"
   mo <- module_run(p2, "ref_accuracy")
   expect_false(row(mo)$incoherent)
   expect_false(row(mo)$not_found)
+  cr_container <- NA_character_
+  cr_authors <- c("Smith", "Jones")
+  s2_authors <- "Smith, John"
+  s2_doi <- NA_character_
+  local_mocked_bindings(
+    datacite_query = \(title, ...) data.frame(query = integer(0), doi = character(0),
+      title = character(0), year = integer(0), authors = character(0), error = logical(0)),
+    semanticscholar_query = \(titles) {
+      x <- data.frame(query = match(title, titles), doi = s2_doi,
+                      url = "https://www.semanticscholar.org/paper/b", title = title,
+                      year = 2018L, authors = s2_authors, venue = NA_character_,
+                      type = NA_character_, error = FALSE)
+      x[!is.na(x$query), ]
+    })
+  mo <- module_run(p2, "ref_accuracy")
+  expect_false(row(mo)$incoherent)
+  expect_false(row(mo)$doi_suggested)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "has other authors", fixed = TRUE)
+  # Semantic Scholar holds the book by the cited author, without a DOI
+  s2_authors <- "Lakens, Daniel"
+  mo <- module_run(p2, "ref_accuracy")
+  expect_false(row(mo)$incoherent)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "Semantic Scholar has no DOI", fixed = TRUE)
+  # with a DOI that Crossref registers as an article in a journal the
+  # reference does not name: perhaps a review of the book
+  s2_doi <- "10.9/review"
+  cr_year <- 2012L  # Crossref's book by other authors is another edition
+  local_mocked_bindings(crossref_doi = \(doi, ...) data.frame(DOI = doi, type = "journal-article",
+    `container-title` = "Journal of Book Reviews", check.names = FALSE))
+  mo <- module_run(p2, "ref_accuracy")
+  expect_false(row(mo)$doi_suggested)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "may be a review of the book", fixed = TRUE)
+  # a book, or an article in a journal the reference names (here split at a
+  # line break, "Ad- vances in Methods ..."), is suggested
+  local_mocked_bindings(crossref_doi = \(doi, ...) data.frame(DOI = doi, type = "book",
+    `container-title` = NA_character_, check.names = FALSE))
+  mo <- module_run(p2, "ref_accuracy")
+  expect_true(row(mo)$doi_suggested)
+  local_mocked_bindings(crossref_doi = \(doi, ...) data.frame(DOI = doi, type = "journal-article",
+    `container-title` = "Advances in Methods and Practices in Psychological Science", check.names = FALSE))
+  mo <- module_run(p2, "ref_accuracy")
+  expect_true(row(mo)$doi_suggested)
 })
 
 test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differences", {
@@ -712,6 +769,16 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib_match$container[m] <- "Cognition and Emotion"
       p$bib$container[i] <- "Cognition"; p
     },
+    # a journal whose name has the cited one's words with another between
+    # them, and a former name of a journal (shown, for the reader to judge)
+    container = \(p) {
+      p$bib_match$container[m] <- "Journal of Experimental Social Psychology"
+      p$bib$container[i] <- "Journal of Experimental Psychology"; p
+    },
+    container = \(p) {
+      p$bib_match$container[m] <- "Philosophical Transactions of the Royal Society B: Biological Sciences"
+      p$bib$container[i] <- "Philosophical Transactions of the Royal Society of London B: Biological Sciences"; p
+    },
     # a journal whose name contains the cited one, and the reverse
     container = \(p) {
       p$bib_match$container[m] <- "Current Directions in Psychological Science"
@@ -806,6 +873,22 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$title[i] <- "The origins of sex differences in human behavior (Version 1.0.0) [Computer code]. Zenodo"
       p
     },
+    # spellings from VarCon's list, and a compound word ending in one
+    british_title = \(p) {
+      new <- sub("Behavior", "Behaviour", p$bib$title[i], fixed = TRUE)
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
+    compound_british_title = \(p) {
+      p$bib_match$title[m] <- sub("human behavior", "human neurobehavioral analysis", p$bib_match$title[m], ignore.case = TRUE)
+      new <- sub("Human Behavior", "Human Neurobehavioural Analysis", p$bib$title[i], fixed = TRUE)
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub(p$bib$title[i], new, p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- new
+      p
+    },
     british_spelling = \(p) {
       p$bib_match$container[m] <- "Nature Human Behaviour"
       p$bib$container[i] <- "Nat. Hum. Behav."; p
@@ -826,9 +909,9 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
     },
     # a word split at a line break, and a longer form of the name
     journal_word_split = \(p) { p$bib$container[i] <- "Ameri can Psychologist"; p },
-    journal_longer_form = \(p) {
-      p$bib_match$container[m] <- "Philosophical Transactions of the Royal Society B: Biological Sciences"
-      p$bib$container[i] <- "Philosophical Transactions of the Royal Society of London B: Biological Sciences"; p
+    journal_word_split_abbreviated = \(p) {
+      p$bib_match$container[m] <- "Psychological Review"
+      p$bib$container[i] <- "Psycho logical Rev."; p
     },
     # an acronym before the full name
     journal_acronym = \(p) {
@@ -862,6 +945,14 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib$title[i] <- new
       p
     },
+    # a title cut short in reading the PDF, whose full title is in the
+    # reference text, split at a line break
+    title_cut_in_reading = \(p) {
+      j <- p$text$text_id == p$bib$text_id[i]
+      p$text$text[j] <- sub("Dispositions", "Dis- positions", p$text$text[j], fixed = TRUE)
+      p$bib$title[i] <- sub(" Social Roles$", " Social", p$bib$title[i])
+      p
+    },
     # the record drops the particle the citation keeps
     particle_not_in_record = \(p) { p$bib$authors[i] <- "Eagly, Alice H; Van Wood, Wendy"; p },
     no_authors_read = \(p) { p$bib$authors[i] <- ""; p },
@@ -886,10 +977,6 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
   # known misses: errors the module does not find, recorded so that a change
   # in them is deliberate
   misses <- list(
-    journal_continues_record = \(p) {
-      p$bib_match$container[m] <- "Journal of Experimental Social Psychology"
-      p$bib$container[i] <- "Journal of Experimental Psychology"; p
-    },
     extra_author = \(p) { p$bib$authors[i] <- "Eagly, Alice H; Smith, John; Wood, Wendy"; p },
     given_name = \(p) { p$bib$authors[i] <- "Eagly, John; Wood, Wendy"; p }
   )
@@ -945,7 +1032,8 @@ test_that("ref_accuracy counts references without a DOI and suggests a DOI for c
   expect_equal(module_run(p, "ref_accuracy")$traffic_light, "green")
 
   # a match with another title is another work: no DOI is suggested. A title
-  # that only adds or drops words at the end is close enough.
+  # that continues the cited title after a delimiter (a subtitle) is the same
+  # title; one that continues without a delimiter is another title.
   p <- demo3()
   p$bib_match$score[k] <- 85
   p$bib_match$title[k] <- "A different paper by the same authors"
@@ -953,10 +1041,14 @@ test_that("ref_accuracy counts references without a DOI and suggests a DOI for c
   expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
   p$bib_match$title[k] <- "Equivalence testing for psychological research in practice"
   mo <- module_run(p, "ref_accuracy")
+  expect_false(mo$table$doi_suggested[mo$table$bib_id == 3])
+  expect_true(mo$table$title_mismatch[mo$table$bib_id == 3])
+  p$bib_match$title[k] <- "Equivalence testing for psychological research: A tutorial"
+  mo <- module_run(p, "ref_accuracy")
   expect_true(mo$table$doi_suggested[mo$table$bib_id == 3])
   # the suggestion shows the record it points to
   report <- paste(unlist(mo$report), collapse = "\n")
-  expect_match(report, "Equivalence testing for psychological research in practice (2018)", fixed = TRUE)
+  expect_match(report, "Equivalence testing for psychological research: A tutorial (2018)", fixed = TRUE)
 })
 
 test_that("ref_accuracy reads DOIs from the reference text and lists entries it could not read", {
@@ -1353,12 +1445,20 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   # online date is neither a note nor a flag
   p$bib$container[i] <- NA_character_
   y <- p$bib$year[i]
-  dates <- data.frame(DOI = p$bib_match$doi[k], issued = paste0(y + 3, "; 1"),
+  p$bib_match$year[k] <- y + 2L
+  dates <- data.frame(DOI = p$bib_match$doi[k], issued = paste0(y + 2, "; 1"),
                       created = paste0(y, "; 5; 2"))
   r <- module_run(p, "ref_accuracy")$table
   r <- r[r$bib_id == 3, ]
   expect_false(r$incoherent)
   expect_match(r$year_note, "near the year of the DOI.s creation")
+  # but not when the work was published more than a year after that
+  p$bib_match$year[k] <- y + 3L
+  dates$issued <- paste0(y + 3, "; 1")
+  r <- module_run(p, "ref_accuracy")$table
+  expect_true(r$year_mismatch[r$bib_id == 3])
+  p$bib_match$year[k] <- y + 2L
+  dates$issued <- paste0(y + 2, "; 1")
   dates$`published-online` <- paste0(y, "; 6")
   r <- module_run(p, "ref_accuracy")$table
   expect_false(r$incoherent[r$bib_id == 3])
