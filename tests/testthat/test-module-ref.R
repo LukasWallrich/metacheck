@@ -643,6 +643,20 @@ test_that("ref_accuracy compares a record that a title search finds", {
     `container-title` = "Advances in Methods and Practices in Psychological Science", check.names = FALSE))
   mo <- module_run(p2, "ref_accuracy")
   expect_true(row(mo)$doi_suggested)
+  # a journal whose name is in the cited title only is not named by the
+  # reference ("Equivalence Testing for Psychological Research")
+  local_mocked_bindings(crossref_doi = \(doi, ...) data.frame(DOI = doi, type = "journal-article",
+    `container-title` = "Psychological Research", check.names = FALSE))
+  mo <- module_run(p2, "ref_accuracy")
+  expect_false(row(mo)$doi_suggested)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "may be a review of the book", fixed = TRUE)
+  # a record of the book that lists no authors (as publishers' records of
+  # books often do) is suggested; one with other authors is not (above)
+  s2_authors <- NA_character_
+  local_mocked_bindings(crossref_doi = \(doi, ...) data.frame(DOI = doi, type = "book",
+    `container-title` = NA_character_, check.names = FALSE))
+  mo <- module_run(p2, "ref_accuracy")
+  expect_true(row(mo)$doi_suggested)
 })
 
 test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differences", {
