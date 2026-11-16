@@ -135,11 +135,12 @@ test_that("ref_accuracy scores bibr 12.x matches 0-1", {
   expect_match(paste(mo$report, collapse = "\n"), "10.1234/prior", fixed = TRUE)
 
   # after add_bib_match() refreshes the paper, its scores are CrossRef
-  # relevance scores: 60 is below the default suggest_score of 70
+  # relevance scores: 60 is below the default suggest_score of 70, but a
+  # match with the cited title, authors, year and journal is suggested
+  # whatever its score (Crossref scores short references low)
   paper$bib_match$score <- 60
   mo <- module_run(paper, "ref_accuracy")
-  expect_no_match(paste(mo$report, collapse = "\n"), "10.1234/prior",
-                  fixed = TRUE)
+  expect_true(mo$table$doi_suggested)
 })
 
 test_that("a later bibr 12.x file reads, ignoring keys it does not know", {
