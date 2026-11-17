@@ -137,6 +137,69 @@ doi_ra <- function(doi) {
   out
 }
 
+#' Record of DOIs from doi.org
+#'
+#' Asks doi.org for the citation record (CSL JSON) of each DOI. doi.org passes
+#' the request to the agency that registered the DOI, so this also returns
+#' records of DataCite, mEDRA, JaLC and other agencies whose records are not
+#' looked up in Crossref.
+#'
+#' @param doi the DOI(s) to look up
+#'
+#' @returns a data frame with one row per DOI, in the order given, with the
+#'   `doi`, `title`, `authors` (a list of data frames with `given` and
+#'   `family`), `year`, `container` and `bib_type` of each record; all NA when
+#'   no record was returned
+#' @keywords internal
+#'
+#' @examples
+#' \dontrun{
+#' doi_csl("10.5281/zenodo.1165402")
+#' }
+doi_csl <- function(doi) {
+  na_chr <- rep(NA_character_, length(doi))
+  out <- data.frame(doi = na_chr, title = na_chr, year = rep(NA_integer_, length(doi)),
+                    container = na_chr, bib_type = na_chr)
+  out$authors <- replicate(length(doi), data.frame(given = character(0),
+                                                   family = character(0)),
+                           simplify = FALSE)
+  cleaned <- doi_clean(doi)
+  todo <- which(!is.na(cleaned) & nzchar(cleaned))
+  if (!length(todo) || !online("doi.org")) return(out)
+  urls <- paste0("https://doi.org/", utils::URLencode(cleaned[todo], reserved = TRUE))
+  resps <- .batch_query(urls, msg = NULL,
+                        accept = "application/vnd.citationstyles.csl+json",
+                        max_tries = 2, timeout_s = 30)
+  first <- \(x) if (length(x)) as.character(unlist(x)[[1]]) else NA_character_
+  # CSL types, as bib_match names them (see .bibtype_convert())
+  csl_type <- c("article-journal" = "article", "book" = "book",
+                "chapter" = "incollection", "paper-conference" = "inproceedings",
+                "report" = "techreport", "thesis" = "phdthesis",
+                "entry-encyclopedia" = "incollection", "entry-dictionary" = "incollection")
+  for (j in seq_along(todo)) {
+    resp <- resps[[j]]
+    failed <- is.null(resp) || inherits(resp, "error") ||
+      httr2::resp_status(resp) >= 400
+    rec <- if (!failed) tryCatch(httr2::resp_body_json(resp, check_type = FALSE),
+                                 error = \(e) NULL)
+    if (!is.list(rec) || is.null(rec$title)) next
+    i <- todo[j]
+    out$doi[i] <- rec$DOI %||% NA_character_
+    out$title[i] <- first(rec$title)
+    dp <- rec$issued$`date-parts`
+    out$year[i] <- if (length(dp) && length(dp[[1]])) as.integer(dp[[1]][[1]]) else NA_integer_
+    out$container[i] <- first(rec$`container-title`)
+    type <- rec$type %||% NA_character_
+    # Crossref's records keep Crossref's type names ("journal-article")
+    type <- if (type %in% names(csl_type)) csl_type[[type]] else .bibtype_convert(type)
+    out$bib_type[i] <- if (type %in% c(csl_type, "inbook", "proceedings")) type else "misc"
+    out$authors[[i]] <- data.frame(
+      given = vapply(rec$author, \(a) a$given %||% NA_character_, ""),
+      family = vapply(rec$author, \(a) a$family %||% a$literal %||% NA_character_, ""))
+  }
+  out
+}
+
 #' Search DataCite by title
 #'
 #' Searches DataCite's records (which include arXiv, Zenodo, OSF and many data

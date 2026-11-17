@@ -364,8 +364,15 @@ test_that("ref_accuracy accepts a cited DOI written as a URL", {
 test_that("ref_accuracy asks doi.org about a cited DOI without a record", {
   p <- demopaper()
   i <- match(1, p$bib$bib_id)
+  own_rec <- p$bib_match[p$bib_match$bib_id == 1, ]
   p$bib_match <- p$bib_match[p$bib_match$bib_id != 1, ]
   ra <- NULL
+  # the record doi.org returns: none, or that of the cited work
+  csl <- NULL
+  no_csl <- data.frame(doi = NA_character_, title = NA_character_, year = NA_integer_,
+                       container = NA_character_, bib_type = NA_character_)
+  no_csl$authors <- list(data.frame(given = character(0), family = character(0)))
+  local_mocked_bindings(doi_csl = \(doi) csl %||% no_csl[rep(1, length(doi)), ])
   # the answer for bib 1; the demo's other unresolved DOIs get none
   local_mocked_bindings(doi_ra = \(doi) {
     own <- doi == p$bib$doi[i]
@@ -401,6 +408,22 @@ test_that("ref_accuracy asks doi.org about a cited DOI without a record", {
   expect_match(report, "DOIs that could not be checked", fixed = TRUE)
   expect_match(report, "mEDRA", fixed = TRUE)
   expect_match(mo$summary_text, "1 cited DOI is registered, but no record was retrieved for it", fixed = TRUE)
+
+  # doi.org returns the agency's record: compared like a Crossref record
+  csl <- data.frame(doi = own_rec$doi, title = own_rec$title, year = own_rec$year,
+                    container = own_rec$container, bib_type = own_rec$bib_type)
+  csl$authors <- own_rec$authors
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(row(mo)$tier, "provided")
+  expect_false(row(mo)$incoherent)
+  expect_equal(row(mo)$record_source, "mEDRA")
+
+  # ... and a record that differs from the reference is flagged
+  csl$title <- "A wholly different title about something else entirely"
+  mo <- module_run(p, "ref_accuracy")
+  expect_equal(row(mo)$tier, "provided")
+  expect_true(row(mo)$incoherent)
+  expect_true(row(mo)$title_mismatch)
 })
 
 test_that("ref_accuracy lists references without a DOI that no registry holds", {

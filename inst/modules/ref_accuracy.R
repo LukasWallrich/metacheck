@@ -6,9 +6,9 @@
 #' @details
 #' A flagged reference is a *possible citation error* (`incoherent` in the tables): its cited details differ from the record. The difference may come from a citation mistake, an error in reading the reference list from the PDF, an error in the record, or an AI-generated reference, so check the original source. Only possible citation errors make the traffic light yellow.
 #'
-#' **Sources and time.** The module uses the Crossref records in the `bib_match` table (see `add_bib_match()`). It also queries doi.org whether a cited DOI without a record exists, Crossref for the dates of records whose year differs, and Crossref, DataCite and Semantic Scholar for the titles of references without a DOI. Semantic Scholar holds many books and conference papers that have no DOI but has strict rate limits. Therefore, it is only queried when the other two did not find a title, at about one title a second. A free key in the environment variable `SEMANTIC_SCHOLAR_API_KEY` makes refused requests rarer. With `semantic_scholar = FALSE` it is not queried, and the references it would have been asked about are counted as not checked, not as not found.
+#' **Sources and time.** The module uses the Crossref records in the `bib_match` table (see `add_bib_match()`). It also asks doi.org for the record of a cited DOI that Crossref did not return (from DataCite, mEDRA or another agency), Crossref for the dates of records whose year differs, and Crossref, DataCite and Semantic Scholar for the titles of references without a DOI. Semantic Scholar holds many books and conference papers that have no DOI but has strict rate limits. Therefore, it is only queried when the other two did not find a title, at about one title a second. A free key in the environment variable `SEMANTIC_SCHOLAR_API_KEY` makes refused requests rarer. With `semantic_scholar = FALSE` it is not queried, and the references it would have been asked about are counted as not checked, not as not found.
 #'
-#' **References with a DOI** are compared field by field with the record of their DOI, after `doi_clean()` has removed the URLs, spaces and punctuation that reading the PDF adds. A cited DOI without a Crossref record is checked at doi.org. If it is not registered, the reference is searched by its title and flagged with the work found, or listed as not found. If it is registered (usually with another agency, such as DataCite or mEDRA, whose records are not looked up, or the Crossref lookup failed), there is no record to compare, so the reference is listed as not checked.
+#' **References with a DOI** are compared field by field with the record of their DOI, after `doi_clean()` has removed the URLs, spaces and punctuation that reading the PDF adds. A cited DOI without a Crossref record is looked up at doi.org, which returns the record from the agency that registered it, and the reference is compared with that record. If the DOI is not registered, the reference is searched by its title and flagged with the work found, or listed as not found. If doi.org knows the DOI but returns no record, the reference is listed as not checked.
 #'
 #' **References without a DOI** are compared with Crossref's match when its title is almost the cited title (a character similarity of at least 0.9), or is similar and has a Crossref score of at least `suggest_score`; the others are searched by their title in Crossref, DataCite and Semantic Scholar. A record whose title, authors, journal or year differ flags the reference. A record that agrees has its DOI suggested, if it is the only work with a DOI, that title and that year among the records found. A reference found in none of the sources is listed as not found, not flagged: most are books, reports and web pages that these sources do not hold, but a journal article that cannot be found may have a wrong title or may not exist. Each reference without a suggested DOI is listed with the reason. Titles of fewer than three words, and works the reference calls unpublished, are not searched.
 #'
@@ -72,10 +72,10 @@
 #' @returns a module output list. Its `table` has one row per reference, with
 #'   the cited (`.orig`) and record (`.match`) values and these columns:
 #'   - `tier`: how the reference was checked. "provided": compared with the
-#'     record of its own DOI. "unresolved": its DOI has no record, and doi.org
+#'     record of its own DOI (from Crossref, or else from doi.org). "unresolved": its DOI has no record, and doi.org
 #'     reports that it does not exist (flagged with the work its title search
 #'     found, or listed as not found). "registered": its DOI exists
-#'     but has no record; "unconfirmed": doi.org could not be asked; "not_checked":
+#'     but doi.org returned no record; "unconfirmed": doi.org could not be asked; "not_checked":
 #'     its paper was not looked up (these three are not checked). "crossref": no
 #'     DOI, and `add_bib_match()` found a record. "search": no DOI, and a title
 #'     search found a record that disagrees (flagged). "none": no DOI and no
@@ -100,8 +100,8 @@
 #'     of Crossref, DataCite and Semantic Scholar; the search failed, or
 #'     Semantic Scholar was not searched.
 #'   - `no_match`: no record was retrieved, for whatever reason (see `tier`).
-#'   - `doi_exists`, `doi_ra`: doi.org's answer for a DOI without a record.
-#'   - `record_source`: where the compared record comes from.
+#'   - `doi_exists`, `doi_ra`: doi.org's answer for a DOI without a Crossref record.
+#'   - `record_source`: where the compared record comes from (for a DOI, the agency that registered it).
 #'
 #'   `summary_table` counts per paper the references with a DOI checked (`refs_checked`,
 #'   tiers "provided" and "unresolved"), flagged, without a DOI, with a
@@ -155,6 +155,35 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     dplyr::left_join(ref_table, by = c("paper_id", "bib_id"))
   blank <- \(x) is.na(x) | !nzchar(trimws(x))
   alnum <- \(x) gsub("[^a-z0-9]", "", tolower(x))
+
+  # A cited DOI without a Crossref record is checked at doi.org: whether it
+  # exists, with which agency, and, if it exists, its record (DataCite, mEDRA
+  # and other agencies are not looked up by add_bib_match(), and a Crossref
+  # lookup may have failed). The record is then compared like any other.
+  table$doi_exists <- NA
+  table$doi_ra <- NA_character_
+  unres <- which(!blank(table$doi.orig) & blank(table$title.match) &
+                   table$paper_id %in% bib_match$paper_id)
+  if (length(unres)) {
+    ra <- doi_ra(table$doi.orig[unres])
+    table$doi_exists[unres] <- ra$exists
+    table$doi_ra[unres] <- ra$ra
+    reg <- unres[ra$exists %in% TRUE]
+    if (length(reg)) {
+      csl <- doi_csl(table$doi.orig[reg])
+      got <- !blank(csl$title)
+      reg <- reg[got]
+      csl <- csl[got, , drop = FALSE]
+      table$doi.match[reg] <- csl$doi
+      table$title.match[reg] <- csl$title
+      table$year.match[reg] <- csl$year
+      table$authors.match[reg] <- csl$authors
+      table$container.match[reg] <- csl$container
+      table$bib_type.match[reg] <- csl$bib_type
+      table$service[reg] <- ifelse(table$doi_ra[reg] %in% c("Crossref", "DataCite"),
+                                   tolower(table$doi_ra[reg]), table$doi_ra[reg])
+    }
+  }
 
   # Reading problems: entries that cannot be compared field by field.
   table$read_problem <- NA_character_
@@ -862,9 +891,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   #                 a DOI that is not valid as printed and whose title search
   #                 found nothing. doi.org is then asked whether the DOI
   #                 exists; only a DOI it reports as not existing stays here.
-  #  "registered" - an unresolved DOI that doi.org knows: no record was
-  #                 retrieved for it (a lookup that failed, or an agency whose
-  #                 records are not looked up), so it is not checked.
+  #  "registered" - an unresolved DOI that doi.org knows but whose record it
+  #                 did not return, so it is not checked. (A record doi.org
+  #                 returns is compared, as tier "provided".)
   #  "unconfirmed" - an unresolved DOI that doi.org could not be asked about
   #                 (offline, a timeout, a server error): not checked.
   #  "not_checked" - the reference printed a DOI, but its paper has no
@@ -890,20 +919,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     has_record                 ~ "crossref",
     .default                   = "none"
   )
-  # an unresolved DOI is checked at doi.org: one that does not exist stays
-  # flagged; one that is registered (a lookup that failed, or an agency such as
-  # mEDRA whose records are not looked up) is listed as not checked
-  table$doi_exists <- NA
-  table$doi_ra <- NA_character_
-  unres <- which(table$tier == "unresolved")
-  if (length(unres)) {
-    ra <- doi_ra(table$doi.orig[unres])
-    table$doi_exists[unres] <- ra$exists
-    table$doi_ra[unres] <- ra$ra
-    table$tier[unres[ra$exists %in% TRUE]] <- "registered"
-    # a failed doi.org request says nothing about the DOI
-    table$tier[unres[is.na(ra$exists)]] <- "unconfirmed"
-  }
+  # an unresolved DOI was checked at doi.org (above): one that does not exist
+  # stays flagged; one that is registered but whose record doi.org did not
+  # return is listed as not checked, as is one doi.org could not be asked about
+  unres <- table$tier == "unresolved"
+  table$tier[unres & table$doi_exists %in% TRUE] <- "registered"
+  table$tier[unres & is.na(table$doi_exists)] <- "unconfirmed"
   # no_match: the reference could not be matched to a retrieved record (kept for
   # downstream modules such as ref_summary that group on it)
   table$no_match <- !has_record & table$tier != "fragment"
@@ -1084,8 +1105,9 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # report of references without a DOI
   found <- data.frame(source = rep(NA_character_, nrow(table)), type = NA_character_,
                       doi = NA_character_, url = NA_character_, title = NA_character_)
-  source_name <- \(x) ifelse(x %in% "datacite", "DataCite",
-                              ifelse(x %in% "semanticscholar", "Semantic Scholar", "Crossref"))
+  source_name <- \(x) dplyr::case_when(
+    x %in% "datacite" ~ "DataCite", x %in% "semanticscholar" ~ "Semantic Scholar",
+    is.na(x) | x %in% "crossref" ~ "Crossref", .default = x)
   # why a work found by its title has no DOI suggested
   found_why <- rep(NA_character_, nrow(table))
   if (length(searched)) {
@@ -1910,7 +1932,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         alias_report),
     if (!is.null(reg_report))
       c("### DOIs that could not be checked\n",
-        "No record was retrieved for these cited DOIs, so the references were not checked: follow each DOI and compare the reference with the work. For a DOI registered with Crossref the lookup probably failed, and running the check again may fix it (`add_bib_match()`). Records of other registration agencies, such as DataCite or mEDRA, are not looked up. When doi.org could not be reached, it is not known whether the DOI exists: run the check again later.\n",
+        "No record was retrieved for these cited DOIs, so the references were not checked: follow each DOI and compare the reference with the work. doi.org knows these DOIs but did not return their records; running the check again may fix it. When doi.org could not be reached, it is not known whether the DOI exists: run the check again later.\n",
         reg_report),
     if (!is.null(unread_report))
       c("### Entries that could not be read reliably\n",
