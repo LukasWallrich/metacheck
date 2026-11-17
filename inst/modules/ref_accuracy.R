@@ -25,7 +25,7 @@
 #'
 #' Each limit errs towards not flagging, to keep false alarms few; they are judgement calls set on the papers described under validation, not calibrated. Raising `title_similarity` or `suggest_score` compares fewer records, so it gives fewer flags but also fewer suggested DOIs. Entries that were not read reliably from the PDF (two references read as one, a DOI read without its reference) are listed and not compared. The report shows each difference as a diff of the printed reference and the record.
 #'
-#' <validation>In 30 randomly sampled Psychological Science papers (1,269 references, looked up in November 2026), the module flagged 31 references. Checked by hand, 24 were citation errors (ten titles, seven author names, four journals and three DOIs that do not work), two were unclear, one cited another version of the work, and four were not errors (two journals cited by a former name, and two errors in reading the PDF). Of the 706 references without a DOI, 560 were given a suggested DOI: of those checked by hand, 63 of 64 were the cited work (1 was unclear), and a random 15 of the 443 that agreed on every field were all the cited work. 32 were listed as not found, all works these sources do not hold or entries misread from the PDF. Of errors added to references that had passed, the module flagged 140 of 141 in references with a DOI, 78 of 87 wrong years, misspelled authors and wrong journals in references without one, and 21 of 28 titles taken from another reference (1 more was not found); all 30 invented titles were not found. On CiteTracer's synthetic benchmark of machine-learning citations (`data-raw/ref_accuracy_citetracer.R`), it flagged or listed as not found 68% of 1,156 citations with a fabricated or changed field, and flagged 0.7% of 1,023 real citations. The rules were developed on these papers and this benchmark, so they may perform less well on others. A flag means "check this reference against the original source", not a confirmed error.</validation>
+#' <validation>In 30 randomly sampled Psychological Science papers (1,269 references, looked up in November 2026), the module flagged 30 references. Checked by hand, 24 were citation errors (ten titles, seven author names, four journals and three DOIs that do not work), two were unclear, one cited another version of the work, and three were not errors (a journal cited by its former name, and two errors in reading the PDF). Of the 706 references without a DOI, 560 were given a suggested DOI: of those checked by hand, 63 of 64 were the cited work (1 was unclear), and a random 15 of the 443 that agreed on every field were all the cited work. 32 were listed as not found, all works these sources do not hold or entries misread from the PDF. Of errors added to references that had passed, the module flagged 140 of 141 in references with a DOI, 78 of 87 wrong years, misspelled authors and wrong journals in references without one, and 21 of 28 titles taken from another reference (1 more was not found); all 30 invented titles were not found. On CiteTracer's synthetic benchmark of machine-learning citations (`data-raw/ref_accuracy_citetracer.R`), it flagged or listed as not found 68% of 1,156 citations with a fabricated or changed field, and flagged 0.7% of 1,023 real citations. The rules were developed on these papers and this benchmark, so they may perform less well on others. A flag means "check this reference against the original source", not a confirmed error.</validation>
 #'
 #' @keywords reference
 #'
@@ -330,8 +330,12 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     x <- gsub("&amp;|&", " and ", x)
     x <- gsub("\\bwires\\b", "wiley interdisciplinary reviews", x)
     x <- gsub("[^a-z ]", " ", x)
-    lapply(uk_us_list(strsplit(trimws(gsub("\\s+", " ", x)), " ")), \(toks)
-      toks[!toks %in% c("of","and","the","for","in","on","a","an","de","") & nchar(toks) > 0])
+    # "a" after "series", "section" or "part" is a letter, not a word to drop
+    # ("Series A" is not "Series B")
+    lapply(uk_us_list(strsplit(trimws(gsub("\\s+", " ", x)), " ")), \(toks) {
+      letter <- toks == "a" & c("", head(toks, -1)) %in% c("series", "ser", "section", "sect", "part", "pt")
+      toks[(letter | !toks %in% c("of","and","the","for","in","on","a","an","de","")) & nchar(toks) > 0]
+    })
   }
   journal_tokens <- \(x) journal_token_list(x)[[1]]
   # do tokens ta match tb from position `from` on, a token as a prefix?
@@ -433,23 +437,37 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
   # predecessor or successor (data-raw/journal_successions.R). Crossref's
   # records of back issues may give the current name ("ILR Review" for a 2006
   # article in Industrial and Labor Relations Review). The record's name must
-  # be one of the journal's names, word for word.
+  # be one of the journal's names, word for word, or begin one. The cited name
+  # may abbreviate the other name or stop early, but not add words to it: the
+  # name of a predecessor ("Philosophical Transactions") does not accept a
+  # journal that begins with it (its series A, for series B).
+  as_listed <- \(cited, name) {
+    ta <- journal_tokens(cited); tb <- journal_tokens(name)
+    if (!length(ta) || !length(tb)) return(FALSE)
+    if (length(ta) == 1) return(identical(ta, tb))
+    length(ta) <= length(tb) && in_sequence(ta, tb)
+  }
   jmm <- which(table$container_mismatch)
   if (length(jmm)) {
     js <- readRDS(system.file("databases/journal_successions.Rds", package = "metacheck"))
-    # a quick key first, on all names; the module's own key on the few that share it
-    quick <- \(x) gsub("[^a-z]", "", gsub("&", "and", tolower(x)))
-    js_quick <- quick(js$names$name)
-    full_key <- \(x) vapply(journal_token_list(x), paste, "", collapse = " ")
+    # the journal of each name, and the journals linked to each journal
+    js_journal <- rep(seq_along(js$size), js$size)
+    # the names that begin with the same letters as the record's are compared
+    # with it word for word (the file keeps one spelling of a name, which may
+    # be British or American)
+    quick <- \(x) substr(gsub("[^a-z]", "", tolower(x)), 1, 5)
+    js_quick <- quick(js$names)
     for (k in jmm) {
-      rec_key <- full_key(table$container.match[k])
+      rec <- journal_tokens(table$container.match[k])
       cand <- which(js_quick == quick(table$container.match[k]))
-      items <- unique(js$names$item[cand[full_key(js$names$name[cand]) == rec_key]])
-      if (!length(items)) next
-      items <- unique(c(items, js$links$to[js$links$from %in% items]))
-      alt <- setdiff(js$names$name[js$names$item %in% items], table$container.match[k])
-      if (any(vapply(alt, \(a) journal_coherent(table$container.orig[k], a, table$text[k]),
-                     logical(1))))
+      same <- vapply(journal_token_list(js$names[cand]), \(w)
+        if (length(rec) == 1) identical(w, rec) else
+          length(rec) <= length(w) && identical(w[seq_along(rec)], rec), logical(1))
+      journals <- unique(js_journal[cand[same]])
+      if (!length(journals)) next
+      journals <- unique(c(journals, js$links[js$links[, 1] %in% journals, 2]))
+      alt <- setdiff(js$names[js_journal %in% journals], table$container.match[k])
+      if (any(vapply(alt, \(a) as_listed(table$container.orig[k], a), logical(1))))
         table$container_mismatch[k] <- FALSE
     }
   }

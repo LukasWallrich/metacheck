@@ -821,6 +821,12 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib_match$container[m] <- "Journal of Experimental Social Psychology"
       p$bib$container[i] <- "Journal of Experimental Psychology"; p
     },
+    # another journal that begins with the name of the record's predecessor
+    # in Wikidata ("Philosophical Transactions of the Royal Society of London")
+    container = \(p) {
+      p$bib_match$container[m] <- "Philosophical Transactions of the Royal Society B: Biological Sciences"
+      p$bib$container[i] <- "Philosophical Transactions of the Royal Society of London. Series A"; p
+    },
     # a word missing from a name Wikidata gives the journal
     container = \(p) {
       p$bib_match$container[m] <- "Journal of the Royal Statistical Society Series B: Statistical Methodology"

@@ -59,9 +59,47 @@ linked <- lapply(c("?j ?p ?o", "?o ?p ?j"), \(link) {
 names <- do.call(rbind, c(list(aliased), linked))
 names <- data.frame(item = qid(names[["?j"]]), name = literal(names[["?l"]]))
 names <- unique(names[nzchar(trimws(names$name)), ])
+
+# Names the module does not need are left out, to keep the file small:
+# - a name that differs from another name of the journal only in case,
+#   punctuation, "&" or the words "of", "the", "and" (the module compares
+#   names without them);
+# - a name that abbreviates another name of the journal word for word ("J R
+#   Stat Soc Series B Stat Methodol"), as the module accepts abbreviations;
+# - a name with which another name of the journal begins ("Philosophical
+#   Transactions of the Royal Society B" before "... B: Biological
+#   Sciences"), as the module accepts a cited name that stops early;
+# - web addresses;
+# - a journal left with one name and no link, which offers no other name.
+stop_words <- c("of", "and", "the", "for", "in", "on", "a", "an", "de")
+names <- names[!grepl("/|\\.(com|org|net)\\b|^www\\.", names$name), ]
+words <- lapply(strsplit(gsub("[^a-z ]", " ", gsub("&", " and ", tolower(names$name))), "\\s+"),
+                \(w) w[nzchar(w) & !w %in% stop_words])
+key <- vapply(words, paste, "", collapse = " ")
+keep <- nzchar(key) & !duplicated(paste(names$item, key))
+names <- names[keep, ]
+words <- words[keep]
+abbreviates <- \(a, b) length(a) == length(b) && !identical(a, b) && all(startsWith(b, a))
+begins <- \(a, b) length(a) < length(b) && identical(b[seq_along(a)], a)
+redundant <- rep(FALSE, nrow(names))
+for (g in split(seq_len(nrow(names)), names$item)) {
+  if (length(g) < 2) next
+  for (k in g) redundant[k] <- any(vapply(setdiff(g, k), \(o)
+    abbreviates(words[[k]], words[[o]]) || begins(words[[k]], words[[o]]), logical(1)))
+}
+names <- names[!redundant, ]
+several <- names(which(table(names$item) > 1))
+names <- names[names$item %in% c(several, links$from, links$to), ]
 links <- links[links$from %in% names$item & links$to %in% names$item, ]
 
-saveRDS(list(names = names, links = links,
+# Stored without Wikidata's item numbers: the names in order of journal,
+# the number of names of each journal, and the links as pairs of journals
+# (their positions in that order)
+names <- names[order(names$item), ]
+journals <- rle(names$item)
+links <- matrix(match(c(links$from, links$to), journals$values), ncol = 2)
+
+saveRDS(list(names = names$name, size = journals$lengths, links = links,
              source = "Wikidata (CC0), English names of journals with an ISSN that have an alias or are linked by P155, P156, P1365 or P1366, via qlever.dev",
              date = Sys.Date()),
         "inst/databases/journal_successions.Rds", compress = "xz")
