@@ -816,15 +816,15 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
       p$bib_match$container[m] <- "Cognition and Emotion"
       p$bib$container[i] <- "Cognition"; p
     },
-    # a journal whose name has the cited one's words with another between
-    # them, and a former name of a journal (shown, for the reader to judge)
+    # a journal whose name has the cited one's words with another between them
     container = \(p) {
       p$bib_match$container[m] <- "Journal of Experimental Social Psychology"
       p$bib$container[i] <- "Journal of Experimental Psychology"; p
     },
+    # a word missing from a name Wikidata gives the journal
     container = \(p) {
-      p$bib_match$container[m] <- "Philosophical Transactions of the Royal Society B: Biological Sciences"
-      p$bib$container[i] <- "Philosophical Transactions of the Royal Society of London B: Biological Sciences"; p
+      p$bib_match$container[m] <- "Journal of the Royal Statistical Society Series B: Statistical Methodology"
+      p$bib$container[i] <- "Journal of the Royal Society B: Methodological"; p
     },
     # a journal whose name contains the cited one, and the reverse
     container = \(p) {
@@ -873,6 +873,16 @@ test_that("ref_accuracy discovers synthetic errors and ignores cosmetic differen
     doi_double_slash = \(p) { p$bib$doi[i] <- "10.1037//0003-066x.54.6.408"; p },
     year_online_first = \(p) { p$bib$year[i] <- 2000L; p },
     journal_abbreviated = \(p) { p$bib$container[i] <- "Am. Psychol."; p },
+    # another name Wikidata gives the journal, and its predecessor's name
+    # (data-raw/journal_successions.R)
+    journal_other_name = \(p) {
+      p$bib_match$container[m] <- "Philosophical Transactions of the Royal Society B: Biological Sciences"
+      p$bib$container[i] <- "Philosophical Transactions of the Royal Society of London. Series B: Biological Sciences"; p
+    },
+    journal_predecessor = \(p) {
+      p$bib_match$container[m] <- "Journal of the Royal Statistical Society Series B: Statistical Methodology"
+      p$bib$container[i] <- "Journal of the Royal Statistical Society. Series B (Methodological)"; p
+    },
     # the record has only the main title, and a line-break hyphen in the
     # reference text ("Dif- ferences") hides it there
     subtitle_not_in_record = \(p) {

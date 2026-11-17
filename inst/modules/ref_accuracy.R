@@ -19,7 +19,7 @@
 #' - **DOI**: URL wrappers, spaces, punctuation and the old double slash (`10.1037//`). A cited DOI that the registry lists as an alias of the record's DOI is a note.
 #' - **Year**: up to `year_tolerance` years, or the year of the record's online, print or issue date. A cited year near only the year the DOI was created or the work accepted is a note.
 #' - **Authors**: the record's first `max_authors` surnames must all be cited, its first author first. Surnames are compared on their letters (accents, spacing and case are ignored), allowing shortened compound surnames and particles. A list truncated with "et al." needs only the authors it cites, and given and family names swapped on one side are a note.
-#' - **Journal**: ISO 4 abbreviations, acronyms, "&" for "and", British and American spellings and a missing subtitle. No word may be skipped, so a journal cited by another of its names may be flagged. That can include the name the journal had when the article was published, as a publisher that redeposits its back issues may give them the current name: in Crossref, a 2006 article in Industrial and Labor Relations Review is now in ILR Review. Only journal articles are compared.
+#' - **Journal**: ISO 4 abbreviations, acronyms, "&" for "and", British and American spellings and a missing subtitle. No word may be skipped. A journal cited by another of its names is accepted when Wikidata gives that name for the journal or for its predecessor or successor, as Crossref's records of back issues may give a journal's current name (a 1972 article in the Journal of the Royal Statistical Society, Series B (Methodological), is in its successor, Series B: Statistical Methodology); other names may be flagged. Only journal articles are compared.
 #' - **Title**: case, punctuation, Unicode forms, a missing subtitle, a translation in square brackets, and British, Canadian and Australian spellings (folded to the American from VarCon's list of spelling variants). Any other difference, even of one word, is flagged.
 #' - **Preprints**: a cited preprint is not compared on its year, journal or title with its published version, which is a note. A reference cited in a journal whose work is found only as a preprint is flagged, unless its venue is a conference.
 #'
@@ -428,6 +428,31 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     !journal_coherent(a, b, text)
   }, table$container.orig, table$container.match, table$text,
   is_article & !article_number, USE.NAMES = FALSE)
+  # A journal cited by another of its names in Wikidata is accepted: an alias
+  # of the record's journal, or a name of the journal Wikidata links to it as
+  # predecessor or successor (data-raw/journal_successions.R). Crossref's
+  # records of back issues may give the current name ("ILR Review" for a 2006
+  # article in Industrial and Labor Relations Review). The record's name must
+  # be one of the journal's names, word for word.
+  jmm <- which(table$container_mismatch)
+  if (length(jmm)) {
+    js <- readRDS(system.file("databases/journal_successions.Rds", package = "metacheck"))
+    # a quick key first, on all names; the module's own key on the few that share it
+    quick <- \(x) gsub("[^a-z]", "", gsub("&", "and", tolower(x)))
+    js_quick <- quick(js$names$name)
+    full_key <- \(x) vapply(journal_token_list(x), paste, "", collapse = " ")
+    for (k in jmm) {
+      rec_key <- full_key(table$container.match[k])
+      cand <- which(js_quick == quick(table$container.match[k]))
+      items <- unique(js$names$item[cand[full_key(js$names$name[cand]) == rec_key]])
+      if (!length(items)) next
+      items <- unique(c(items, js$links$to[js$links$from %in% items]))
+      alt <- setdiff(js$names$name[js$names$item %in% items], table$container.match[k])
+      if (any(vapply(alt, \(a) journal_coherent(table$container.orig[k], a, table$text[k]),
+                     logical(1))))
+        table$container_mismatch[k] <- FALSE
+    }
+  }
 
   # title check: compare on character similarity rather than exact equality, so
   # that formatting noise (footnote markers, em-dash spacing, colons/question

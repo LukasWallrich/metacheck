@@ -1,5 +1,14 @@
 metacheck includes material from other works, under their own licences.
 
+inst/databases/journal_names.Rds
+inst/databases/journal_successions.Rds
+  Names of journals with an ISSN, and the links between journals and their
+  predecessors or successors, collected by data-raw/journal_names.R and
+  data-raw/journal_successions.R from Wikidata, https://www.wikidata.org/,
+  through QLever, https://qlever.dev/wikidata. Wikidata's data is released
+  under CC0 1.0 (public domain dedication),
+  https://creativecommons.org/publicdomain/zero/1.0/.
+
 inst/databases/key_patterns.Rds
   The rules for finding keys (API keys, access tokens) in files, collected by
   data-raw/key_patterns.R from the file config/betterleaks.toml of betterleaks,
