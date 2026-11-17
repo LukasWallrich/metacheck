@@ -440,6 +440,16 @@ test_that("ref_accuracy lists references without a DOI that no registry holds", 
   expect_match(mo$summary_text, "1 was not found in Crossref, DataCite or Semantic Scholar", fixed = TRUE)
   report <- paste(unlist(mo$report), collapse = "\n")
   expect_match(report, "### References not found", fixed = TRUE)
+  # without Semantic Scholar, a title the other two did not find is not
+  # checked, not "not found"
+  local({
+    local_mocked_bindings(semanticscholar_query = \(title) stop("not searched"))
+    mo <- module_run(p, "ref_accuracy", semantic_scholar = FALSE)
+    expect_false(nf(mo))
+    expect_true(mo$table$search_failed[mo$table$bib_id == 3])
+    expect_match(mo$summary_text, "1 reference not found in Crossref or DataCite was not checked, because Semantic Scholar was not searched", fixed = TRUE)
+    expect_match(paste(unlist(mo$report), collapse = "\n"), "Semantic Scholar was not searched", fixed = TRUE)
+  })
   # a reference not found does not change the traffic light
   p2 <- p; p2$bib_match <- p2$bib_match[0, ]
   expect_equal(module_run(p2, "ref_accuracy")$traffic_light, "na")
