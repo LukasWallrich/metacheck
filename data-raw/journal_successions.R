@@ -70,7 +70,8 @@ names <- unique(names[nzchar(trimws(names$name)), ])
 #   Transactions of the Royal Society B" before "... B: Biological
 #   Sciences"), as the module accepts a cited name that stops early;
 # - web addresses;
-# - a journal left with one name and no link, which offers no other name.
+# - a journal left with one name and no link to a journal with a name here,
+#   which offers no other name.
 stop_words <- c("of", "and", "the", "for", "in", "on", "a", "an", "de")
 names <- names[!grepl("/|\\.(com|org|net)\\b|^www\\.", names$name), ]
 words <- lapply(strsplit(gsub("[^a-z ]", " ", gsub("&", " and ", tolower(names$name))), "\\s+"),
@@ -88,9 +89,9 @@ for (g in split(seq_len(nrow(names)), names$item)) {
     abbreviates(words[[k]], words[[o]]) || begins(words[[k]], words[[o]]), logical(1)))
 }
 names <- names[!redundant, ]
+links <- links[links$from %in% names$item & links$to %in% names$item, ]
 several <- names(which(table(names$item) > 1))
 names <- names[names$item %in% c(several, links$from, links$to), ]
-links <- links[links$from %in% names$item & links$to %in% names$item, ]
 
 # Stored without Wikidata's item numbers: the names in order of journal,
 # the number of names of each journal, and the links as pairs of journals
