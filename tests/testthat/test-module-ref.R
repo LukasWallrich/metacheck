@@ -396,7 +396,7 @@ test_that("ref_accuracy asks doi.org about a cited DOI without a record", {
   mo <- module_run(p, "ref_accuracy")
   expect_equal(row(mo)$tier, "unconfirmed")
   expect_false(row(mo)$incoherent)
-  expect_match(paste(unlist(mo$report), collapse = "\n"), "doi.org could not be reached", fixed = TRUE)
+  expect_match(paste(unlist(mo$report), collapse = "\n"), "no answer from doi.org", fixed = TRUE)
 
   # the DOI is registered with another agency: listed, not flagged
   ra <- list(ra = "mEDRA", exists = TRUE)

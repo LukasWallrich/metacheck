@@ -12,8 +12,8 @@ doi_csl(doi)
 \value{
 a data frame with one row per DOI, in the order given, with the
 \code{doi}, \code{title}, \code{authors} (a list of data frames with \code{given} and
-\code{family}), \code{year}, \code{container} and \code{bib_type} of each record; all NA when
-no record was returned
+\code{family}), \code{year}, \code{container} and \code{bib_type} of each record; all NA, with
+no authors, when no record was returned
 }
 \description{
 Asks doi.org for the citation record (CSL JSON) of each DOI. doi.org passes

@@ -7,7 +7,7 @@
 # (http://wordlist.aspell.net/, MIT-like licence, see inst/COPYRIGHTS). Each
 # spelling on a VarCon line is mapped to the line's American spelling.
 # Spellings that VarCon marks as improper ("x", a misspelling) or as only
-# possible ("-") are left out, so that a real misspelling is never folded
+# possible ("-") are left out, so that misspellings are not folded
 # away. A spelling that would map to two American forms is left out too.
 
 release <- "rel-2020.12.07"

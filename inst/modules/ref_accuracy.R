@@ -6,13 +6,13 @@
 #' @details
 #' A flagged reference is a *possible citation error* (`incoherent` in the tables): its cited details differ from the record. The difference may come from a citation mistake, an error in reading the reference list from the PDF, an error in the record, or an AI-generated reference, so check the original source. Only possible citation errors make the traffic light yellow.
 #'
-#' **Sources and time.** The module uses the Crossref records in the `bib_match` table (see `add_bib_match()`). It also asks doi.org for the record of a cited DOI that Crossref did not return (from DataCite, mEDRA or another agency), Crossref for the dates of records whose year differs, and Crossref, DataCite and Semantic Scholar for the titles of references without a DOI. Semantic Scholar holds many books and conference papers that have no DOI but has strict rate limits. Therefore, it is only queried when the other two did not find a title, at about one title a second. A free key in the environment variable `SEMANTIC_SCHOLAR_API_KEY` makes refused requests rarer. With `semantic_scholar = FALSE` it is not queried, and the references it would have been asked about are counted as not checked, not as not found.
+#' **Sources and time.** The module uses the Crossref records in the `bib_match` table (see `add_bib_match()`). It also asks doi.org for the record of a cited DOI that Crossref did not return (from DataCite, mEDRA or another agency), Crossref for the dates of records whose year differs, and Crossref, DataCite and Semantic Scholar for the titles of references without a DOI. Semantic Scholar holds many books and conference papers that have no DOI but has strict rate limits. Therefore, it is only queried when the other two did not find the cited work, at about one title a second. A free key in the environment variable `SEMANTIC_SCHOLAR_API_KEY` makes refused requests rarer. With `semantic_scholar = FALSE` it is not queried, and the references it would have been asked about are counted as not checked, not as not found.
 #'
-#' **References with a DOI** are compared field by field with the record of their DOI, after `doi_clean()` has removed the URLs, spaces and punctuation that reading the PDF adds. A cited DOI without a Crossref record is looked up at doi.org, which returns the record from the agency that registered it, and the reference is compared with that record. If the DOI is not registered, the reference is searched by its title and flagged with the work found, or listed as not found. Any other cited DOI without a record is listed as not checked.
+#' **References with a DOI** are compared field by field with the record of their DOI, after `doi_clean()` has removed the URLs, spaces and punctuation that reading the PDF adds. A cited DOI without a Crossref record is looked up at doi.org, which returns the record from the agency that registered it, and the reference is compared with that record. If the DOI is not registered, the reference is flagged and searched by its title: the work found is shown, and a reference found in no source is listed as not found instead. Any other cited DOI without a record is listed as not checked.
 #'
 #' **References without a DOI** are compared with Crossref's match when its title is almost the cited title (a character similarity of at least 0.9), or is similar and has a Crossref score of at least `suggest_score`; the others are searched by their title in Crossref, DataCite and Semantic Scholar. A record whose title, authors, journal or year differ flags the reference. A record that agrees has its DOI suggested, if it is the only work with a DOI, that title and that year among the records found. A reference found in none of the sources is listed as not found, not flagged: most are books, reports and web pages that these sources do not hold, but a journal article that cannot be found may have a wrong title or may not exist. Each reference without a suggested DOI is listed with the reason. Titles of fewer than three words, and works the reference calls unpublished, are not searched.
 #'
-#' **Books** and other works not cited as articles (as the PDF reader classifies the reference) are never flagged, because the record found by their title is often not the cited work: another edition, a review of the book, an encyclopedia entry, or a record that lists a volume's editors as its authors. They can still get a suggested DOI, when the record lists the cited authors or lists no authors (as publishers' records of books often do). A journal article is not suggested for a cited book, as a journal article with a book's title is usually a review of it; the exception is a reference that names the journal outside the title, which is probably an article that the PDF reader wrongly classified as a book.
+#' **Books** and other works not cited as articles (as the PDF reader classifies the reference) are never flagged when they have no DOI, because the record found by their title is often not the cited work: another edition, a review of the book, an encyclopedia entry, or a record that lists a volume's editors as its authors. They can still get a suggested DOI, when the record lists the cited authors or lists no authors (as publishers' records of books often do). A journal article is not suggested for a cited book, as a journal article with a book's title is usually a review of it; the exception is a reference that names the journal outside the title, which is probably an article that the PDF reader wrongly classified as a book.
 #'
 #' **Fields.** Differences that are usually harmless are tolerated:
 #'
@@ -37,8 +37,8 @@
 #'
 #' @param paper a paper object or paperlist object
 #' @param max_authors how many of the leading authors to compare against the
-#'   retrieved record. Author lists are routinely truncated with "et al." (APA
-#'   abbreviates after 7), and GROBID often drops the tail of long lists, so only
+#'   retrieved record. Author lists are routinely truncated with "et al.",
+#'   and GROBID often drops the tail of long lists, so only
 #'   the first `max_authors` surnames must match.
 #' @param title_similarity the minimum character-level similarity (0-1, after
 #'   stripping case, punctuation, footnote markers and diacritics) for a record
@@ -53,8 +53,9 @@
 #' @param year_tolerance how many years the cited year may differ from the
 #'   retrieved record before the year is flagged. The default (1) allows a
 #'   one-year difference, because the online-first and print publication years
-#'   of an article routinely differ by a year. Set to 0 to require an exact
-#'   match, or higher to be more lenient.
+#'   of an article routinely differ by a year. Set to 0 to require the same
+#'   year (apart from the date and version rules under Details), or higher
+#'   to be more lenient.
 #' @param suggest_score for references with no DOI, the minimum Crossref
 #'   relevance score for a match with a similar title to be compared and its
 #'   DOI suggested. Low-scoring matches are often the wrong paper; below this
@@ -63,8 +64,8 @@
 #'   suggest more.
 #'   Scores of 1 or less, as bibr 12.x exports give, are on a 0-1 scale and
 #'   are compared with `suggest_score / 100`.
-#' @param semantic_scholar whether to search Semantic Scholar for titles that
-#'   Crossref and DataCite do not hold (default TRUE). Its requests are paced
+#' @param semantic_scholar whether to search Semantic Scholar for works that
+#'   Crossref and DataCite did not find (default TRUE). Its requests are paced
 #'   at about one a second, so FALSE is faster; the references it would have
 #'   been asked about are then counted as not checked (`search_failed`), not
 #'   as not found.
@@ -85,7 +86,8 @@
 #'   - `doi_mismatch`, `title_mismatch`, `author_mismatch`, `year_mismatch`,
 #'     `container_mismatch`: which fields disagree, for flagged references only.
 #'     FALSE does not mean the field was compared.
-#'   - `author_note`: the record's authors missing from the citation.
+#'   - `author_note`: how the cited authors differ from the record's (an
+#'     author missing from the reference, or another first author).
 #'   - `year_note`: the cited year is that of another date in the record (a
 #'     note).
 #'   - `name_note`: an author's given and family names are swapped in the
@@ -96,9 +98,10 @@
 #'     DOI (a note).
 #'   - `doi_alias`: the cited DOI is an alias of the record's DOI (a note).
 #'   - `no_doi`, `doi_suggested`: no DOI was cited; a DOI is suggested.
-#'   - `not_found`, `search_failed`: the title search found the work in none
-#'     of Crossref, DataCite and Semantic Scholar; the search failed, or
-#'     Semantic Scholar was not searched.
+#'   - `not_found`: the title search found the work in none of Crossref,
+#'     DataCite and Semantic Scholar.
+#'   - `search_failed`: the title search failed, or Semantic Scholar was not
+#'     searched, so it is not known whether the work exists.
 #'   - `no_match`: no record was retrieved, for whatever reason (see `tier`).
 #'   - `doi_exists`, `doi_ra`: doi.org's answer for a DOI without a Crossref record.
 #'   - `record_source`: where the compared record comes from (for a DOI, the agency that registered it).
@@ -913,7 +916,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     swap <- startsWith(note, "SWAP:") %in% TRUE
     list(note = ifelse(swap, NA_character_, note),
          swapped = ifelse(swap, sprintf(
-           "given and family names are swapped in the record or the citation (%s)",
+           "given and family names are swapped in the record or the citation (family name in the record: %s)",
            sub("SWAP:", "", note, fixed = TRUE)), NA_character_))
   }
   an <- split_swap(author_check(last_names, table$authors.orig, bibr,
@@ -1637,7 +1640,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
               if (n_reg == 1) "it" else "them",
               if (n_reg == 1) "the reference was" else "the references were") else "",
     if (n_unconf > 0)
-      sprintf(" %d cited DOI%s had no record, and doi.org could not be reached to ask whether %s, so %s not checked.",
+      sprintf(" %d cited DOI%s had no record, and doi.org did not say whether %s, so %s not checked.",
               n_unconf, plural(n_unconf),
               if (n_unconf == 1) "it exists" else "they exist",
               if (n_unconf == 1) "the reference was" else "the references were") else "",
@@ -1854,7 +1857,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
       DOI = link(paste0("https://doi.org/", doi_clean(reg_rows$doi.orig)),
                  esc(reg_rows$doi.orig)),
       `Registered with` = ifelse(reg_rows$tier == "unconfirmed",
-                                 "unknown (doi.org could not be reached)",
+                                 "unknown (no answer from doi.org)",
                                  reg_rows$doi_ra),
       check.names = FALSE
     )
@@ -1938,7 +1941,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     weak <- is.na(f$source) & r$tier %in% "crossref" & !blank(r$doi.match) &
       (r$title_agrees | r$title_starts_same) %in% TRUE
     why <- dplyr::case_when(
-      !looked_up[rest] ~ "Not searched: the paper's references were not looked up.",
+      !looked_up[rest] ~ "Not searched: this paper's references were not looked up in Crossref.",
       unpublished[rest] ~ "Cited as unpublished: not searched.",
       blank(r$title.orig) | n_w < 3 ~ "Not searched: no title was read from the PDF, or it has fewer than three words.",
       skipped[rest] ~ "Not found in Crossref or DataCite; Semantic Scholar was not searched (`semantic_scholar = FALSE`).",
@@ -1963,7 +1966,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
     guidance,
     if (!is.null(incoherent_report))
       c("### Possible citation errors\n",
-        "The details of these references differ from the registry's record of the work (Crossref, DataCite or Semantic Scholar). For a reference with a DOI, the record is that of its DOI. For a reference without a DOI, or with a DOI that is not registered, it is the work found by the cited title, which may be another work or version: its DOI is linked but not suggested. The differences show text that is only in the printed reference <del style=\"color:#c00\">struck through in red</del>, and text that is only in the record <ins style=\"color:#1a7f37\">underlined in green</ins>.\n",
+        "The details of these references differ from the record of the work. For a reference with a DOI, the record is that of its DOI (from Crossref or doi.org). For a reference without a DOI, or with a DOI that is not registered, it is the work found by the cited title in Crossref, DataCite or Semantic Scholar, which may be another work or version: its DOI is linked but not suggested. The differences show text that is only in the printed reference <del style=\"color:#c00\">struck through in red</del>, and text that is only in the record <ins style=\"color:#1a7f37\">underlined in green</ins>.\n",
         incoherent_report),
     if (!is.null(notes_report))
       c("### Preprints, years and names to check\n",
@@ -1975,7 +1978,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         alias_report),
     if (!is.null(reg_report))
       c("### DOIs that could not be checked\n",
-        "No record was retrieved for these cited DOIs, so the references were not checked: follow each DOI and compare the reference with the work. doi.org knows these DOIs but did not return their records; running the check again may fix it. When doi.org could not be reached, it is not known whether the DOI exists: run the check again later.\n",
+        "No record was retrieved for these cited DOIs, so the references were not checked: follow each DOI and compare the reference with the work. doi.org knows these DOIs but did not return their records; running the check again may fix it. When doi.org gave no answer, it is not known whether the DOI exists: run the check again later.\n",
         reg_report),
     if (!is.null(unread_report))
       c("### Entries that could not be read reliably\n",

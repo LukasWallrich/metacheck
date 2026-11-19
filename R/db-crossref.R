@@ -148,8 +148,8 @@ doi_ra <- function(doi) {
 #'
 #' @returns a data frame with one row per DOI, in the order given, with the
 #'   `doi`, `title`, `authors` (a list of data frames with `given` and
-#'   `family`), `year`, `container` and `bib_type` of each record; all NA when
-#'   no record was returned
+#'   `family`), `year`, `container` and `bib_type` of each record; all NA, with
+#'   no authors, when no record was returned
 #' @keywords internal
 #'
 #' @examples
