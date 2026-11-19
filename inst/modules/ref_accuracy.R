@@ -1959,7 +1959,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
                        ifelse(weak, paste(record_link(r$doi.match, NA), "(?)"), ""))
     out <- data.frame(
       `Reference as printed` = esc(ref_text(r)),
-      `Why no DOI is suggested` = why,
+      `Why not suggested` = why,
       `Closest record` = rec_cell,
       check.names = FALSE)
     other_report <- scroll_table(out, 5, colwidths = c(.55, .3, .15))
@@ -1973,7 +1973,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         incoherent_report),
     if (!is.null(notes_report))
       c("### Preprints, years and names to check\n",
-        "These notes are not citation errors, and a reference with a note may also be listed above. A cited preprint has a published version, which may be the better one to cite. A cited year is near the year the DOI was created or the work accepted, not the year it was published: check which year to cite. An author's given and family names are swapped in the reference or in the record: check which order is right.\n",
+        "These notes are not citation errors, and a reference with a note may also be listed above. Each note is one of three kinds: a cited preprint that has a published version, which may be the better one to cite; a cited year that is near the year the DOI was created or the work accepted, not the year it was published (check which year to cite); or an author whose given and family names are swapped in the reference or in the record (check which order is right).\n",
         notes_report),
     if (!is.null(alias_report))
       c("### DOIs with another registered form\n",
@@ -1981,7 +1981,7 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         alias_report),
     if (!is.null(reg_report))
       c("### DOIs that could not be checked\n",
-        "No record was retrieved for these cited DOIs, so the references were not checked: follow each DOI and compare the reference with the work. doi.org knows these DOIs but did not return their records; running the check again may fix it. When doi.org gave no answer, it is not known whether the DOI exists: run the check again later.\n",
+        "No record was retrieved for these cited DOIs, so the references were not checked: follow each DOI and compare the reference with the work. Where the table names a registration agency, doi.org knows the DOI but did not return its record, and running the check again may fix it. Where it says unknown, doi.org gave no answer, so it is not known whether the DOI exists: run the check again later.\n",
         reg_report),
     if (!is.null(unread_report))
       c("### Entries that could not be read reliably\n",
@@ -1993,11 +1993,11 @@ ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
         nf_report),
     if (!is.null(suggested_report))
       c("### Suggested DOIs\n",
-        "These references have no DOI, but the search found a work with the cited title whose authors, year and journal agree with the reference; where it was found by the title alone, outside Crossref's search for the reference, the source is named. Check that the linked record is the cited work and version before adding its DOI. The retraction, PubPeer and replication checks use the DOI of Crossref's match for every reference without a DOI, also when none is suggested, so for these references they are only as reliable as that match.\n",
+        "These references have no DOI, but a work was found whose details agree with the reference: its title, year and authors (a book's record may list no authors), and for an article its journal. The source is named when the work was found by searching for its title rather than by Crossref's match for the reference. Check that the linked record is the cited work and version before adding its DOI. The retraction, PubPeer and replication checks do not use these suggestions: for every reference without a DOI, they use the DOI of Crossref's match, whether or not it is suggested.\n",
         suggested_report),
     if (!is.null(other_report))
       c("### Other references without a DOI\n",
-        "These references have no DOI, and none is suggested, for the reason given. Where a closest record is linked, check whether it is the cited work before using its DOI; one marked (?) is Crossref's best guess and is more likely to be another work.\n",
+        "These references have no DOI, and no record found for them matches the reference closely enough for its DOI to be suggested; the table gives the reason. Where the closest record is linked, check whether it is the cited work before using its DOI; one marked (?) is Crossref's best guess and is more likely to be another work.\n",
         other_report)
   )
 
