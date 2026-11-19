@@ -14,7 +14,7 @@
 
 * `ref_accuracy` checks years, preprints and swapped names more carefully:
   * Years: before flagging a year, it reads all the record's dates in Crossref. A cited year within `year_tolerance` of the online, print, issue or posting date is accepted. A year off by one more year is listed as a note, not flagged, when it is close to the date the DOI was created or the work was accepted.
-  * Preprints: a cited preprint is not compared on its year or journal with its published version; the published version is listed as a note. A cited published version may be dated up to `year_tolerance` + 1 years after its preprint.
+  * Preprints: a cited preprint is not compared on its year or journal with its published version; the published version is listed as a note. For a reference without a DOI, the cited year may be up to `year_tolerance` + 1 years later than the year of the record found when that record is a preprint, or comes from Semantic Scholar, which gives the year of a work's earliest version (often its preprint).
   * Names: given and family names swapped in the reference or the record ("Wu, K." when the record gives "Wu" as the given name and "Kui" as the family name) are listed as a note, not flagged.
   * New flag `preprint_only`: a reference cited as a journal article is flagged when the work exists only as a preprint, that is, when Crossref, DataCite and Semantic Scholar all find no published version. If one of these searches fails, the reference is not flagged. References to conference papers are not flagged, as many proceedings have no DOIs.
 
