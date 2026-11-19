@@ -14,9 +14,10 @@ test_that("repo_check offline", {
                     files_data = NA,
                     files_code = NA,
                     files_readme = NA,
-                    files_zip = NA)
+                    files_zip = NA,
+                    file_share_n = 0L)
   expect_equal(mod_output$summary_table, exp)
-  exp <- "We found no links to repositories on the Open Science Framework, Github, GitLab, ResearchBox, DSpace, EPrints (ReShare and others), Invenio (Zenodo and others), Dataverse, Figshare, Dryad, 4TU.ResearchData, Mendeley Data, DataONE, LDbase, or CKAN data portals."
+  exp <- "We found no links to repositories on the Open Science Framework, Github, GitLab, ResearchBox, DSpace, EPrints (ReShare and others), Invenio (Zenodo and others), Dataverse, Figshare, Dryad, 4TU.ResearchData, Mendeley Data, DataONE, LDbase, CKAN data portals, GEO, SRA, ENA, DDBJ, ArrayExpress, CRAN, or ICPSR (openICPSR, AEA Data and Code Repository)."
   expect_equal(mod_output$summary_text, exp)
   expect_equal(mod_output$report, exp)
 })
@@ -53,6 +54,11 @@ test_that("OSF no files", {
                     repo_own = 1L,
                     repo_others = 0L,
                     ref_others = 0L,
+                    file_share_n = 0L,
+                    icpsr_own_n = 0L,
+                    cran_own_n = 0L,
+                    archive_own_n = 0L,
+                    ref_own = 0L,
                     repo_view_only = 0L,
                     roster_mismatch = FALSE)
   expect_equal(mod_output$summary_table, exp)
@@ -89,6 +95,11 @@ test_that("no code files", {
                     repo_own = 1L,
                     repo_others = 0L,
                     ref_others = 0L,
+                    file_share_n = 0L,
+                    icpsr_own_n = 0L,
+                    cran_own_n = 0L,
+                    archive_own_n = 0L,
+                    ref_own = 0L,
                     repo_view_only = 0L,
                     roster_mismatch = FALSE)
   expect_equal(mod_output$summary_table, exp)
@@ -102,7 +113,9 @@ test_that("OSF", {
 
   expect_true(grepl("We found 4 files ", mod_output$summary_text))
   # The fixture's Archive.zip is not classifiable by name/extension without
-  # opening it (repo_check never downloads), and test_paper()'s empty
+  # opening it (repo_check never downloads), but an archive is neither an
+  # unclassified file nor a naming problem (#648): "Archive Files" reports
+  # it. test_paper()'s empty
   # manuscript text names no studies at all, so roster_check$roster is empty —
   # nothing for the file-derived "ex1" group to disagree with, hence FALSE
   # (not a real mismatch, just an absence of roster evidence to compare).
@@ -114,12 +127,17 @@ test_that("OSF", {
                     files_code = 2,
                     files_readme = 0,
                     files_zip = 1,
-                    files_unknown = 1L,
-                    naming_issues = 1L,
+                    files_unknown = 0L,
+                    naming_issues = 0L,
                     # a link in the text, not shown to be anyone else's (#634)
                     repo_own = 1L,
                     repo_others = 0L,
                     ref_others = 0L,
+                    file_share_n = 0L,
+                    icpsr_own_n = 0L,
+                    cran_own_n = 0L,
+                    archive_own_n = 0L,
+                    ref_own = 0L,
                     repo_view_only = 0L,
                     roster_mismatch = FALSE)
   expect_equal(mod_output$summary_table, exp)
@@ -213,6 +231,94 @@ test_that("repo_check tolerates files with an unknown (NA) size", {
   # The unknown size flows through and renders as the placeholder, not a crash.
   expect_true(is.na(mo$table$file_size))
   expect_true(any(grepl("—", mo$report)))
+})
+
+test_that("repo_check: an unknown file type is not a naming problem (#648)", {
+  d <- withr::local_tempdir()
+  writeLines("x,y\n1,2", file.path(d, "data.csv"))
+  writeLines("x <- 1", file.path(d, "analysis.R"))
+  writeLines("", file.path(d, "model.joblib"))      # a type metacheck does not know
+  writeLines("* text=auto", file.path(d, ".gitattributes"))  # a tool's settings
+  writeLines("all:", file.path(d, "Makefile"))
+  writeLines("help", file.path(d, "asdoc.sthlp"))
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+  # only model.joblib is listed as unclassified; nothing is a naming problem
+  expect_equal(mo$summary_table$files_unknown, 1L)
+  expect_equal(mo$summary_table$naming_issues, 0L)
+  expect_false("unclassifiable" %in% mo$naming_issues$rule)
+  expect_true(grepl("We could not classify 1 file", mo$summary_text))
+  expect_equal(mo$table$data_type[mo$table$file_name == "Makefile"], "code")
+  expect_equal(mo$table$data_type[mo$table$file_name == "asdoc.sthlp"], "documentation")
+})
+
+test_that("repo_check counts files with the classification it reports, and sets bundled code aside (#648)", {
+  # one classification for the counts and the File Classification
+  f <- c("run.sh", "data.nc", "x.log.gz", "scan.nii.gz", "a.tar.gz", "b.7z", "c.zip", "t.jar",
+         "README.md", "LICENSE_code_MIT.txt", "data_report.html")
+  dt <- data_classify_files(f, f)
+  expect_equal(.repo_file_kind(f, dt, c(rep(10, 8), 0, 10, 10)),
+               c("code", "data", "documentation", "data", "archive", "archive", "archive", "materials",
+                 "documentation", "documentation", "documentation"))
+  expect_equal(.repo_file_kind("README.md", "documentation", NA), "readme")
+  # code by others that a deposit bundles is material, not the authors' code
+  expect_equal(.is_others_code_path(c("analysis/extra_ados/asdoc.ado", "task/jspsych-6.3.1/jspsych.js",
+                                      "js/jquery.min.js", "node_modules/x/index.js", "analysis/main.do",
+                                      "lib/helpers.py", "external/census.csv")),
+               c(TRUE, TRUE, TRUE, TRUE, FALSE, FALSE, TRUE))
+  expect_equal(data_classify_files(c("asdoc.ado", "census.csv"), c("extra_ados/asdoc.ado", "external/census.csv")),
+               c("materials", "data"))
+  # a folder named after a release is the authors' own code when the
+  # repository has no code outside it (a GitHub release), and others' code
+  # when it sits beside the code that uses it
+  rel <- c("analysis-v2.1.0/main.py", "analysis-v2.1.0/utils/x.py",
+           "exp/jspsych-6.3.1/jspsych.js", "exp/experiment.js")
+  expect_equal(.is_others_code_path(rel, group = c("a", "a", "b", "b")), c(FALSE, FALSE, TRUE, FALSE))
+  expect_equal(.is_others_code_path(rel[1:2]), c(FALSE, FALSE))
+  expect_equal(.is_others_code_path(rel), c(TRUE, TRUE, TRUE, FALSE))
+  # only code outside the folder counts, not data
+  expect_equal(.is_others_code_path(c("tool-1.2/run.py", "data.csv"), is_code = c(TRUE, FALSE)),
+               c(FALSE, FALSE))
+  expect_equal(data_classify_files(basename(rel), rel, group = c("a", "a", "b", "b")),
+               c("code", "code", "materials", "code"))
+  # code_check: by repository, with code being a file of a language it reads
+  cf <- data.frame(file_name = c("main.R", "fit.R", "plot.R", "data.csv"),
+                   file_path = c("Coronial-NLP-Analysis-v2.1.0/main.R", "lib/pkg-1.0.2/fit.R",
+                                 "plot.R", "data.csv"),
+                   repo_url = c("osf.io/aaaaa", "osf.io/bbbbb", "osf.io/bbbbb", "osf.io/aaaaa"))
+  cf$language <- code_lang(cf$file_name)
+  expect_equal(.in_others_code_folder(cf), c(FALSE, TRUE, FALSE, FALSE))
+  # files R leaves behind
+  expect_equal(.useless_file_kind(c(".RDataTmp", ".Rapp.history")), c("temporary files", "R history"))
+
+  d <- withr::local_tempdir()
+  for (p in c("data.csv", "analysis.R", "run.sh", "model.joblib", "run.log.gz", "b.tar.gz",
+              "analysis/extra_ados/asdoc.ado", "task/jspsych-6.3.1/jspsych.js")) {
+    dir.create(dirname(file.path(d, p)), recursive = TRUE, showWarnings = FALSE)
+    writeLines("x", file.path(d, p))
+  }
+  mo <- module_run(NULL, "repo_check", local_path = d, local_only = TRUE)
+  expect_equal(mo$summary_table$files_code, 2L)    # analysis.R and run.sh
+  expect_equal(mo$summary_table$files_zip, 1L)     # b.tar.gz, not run.log.gz
+  expect_equal(mo$summary_table$files_unknown, 1L) # model.joblib, listed for information
+  rep <- paste(mo$report, collapse = "\n")
+  expect_match(rep, "This is no problem in itself", fixed = TRUE)
+  expect_no_match(rep, "Add a recognisable keyword", fixed = TRUE)
+  expect_no_match(rep, "not ZIP archives: [^.]*run.log.gz")
+})
+
+test_that("repo_check counts naming problems of a local folder without a paper (#650)", {
+  d <- withr::local_tempdir()
+  writeLines("x,y\n1,2", file.path(d, "my data.csv"))
+  writeLines("x <- 1", file.path(d, "analysis two.R"))
+  writeLines("x <- 1", file.path(d, "clean.R"))
+  mo <- module_run(NULL, "repo_check", local_path = d, local_only = TRUE)
+  expect_true(grepl("2 file naming problems", mo$summary_text))
+  expect_equal(mo$summary_table$naming_issues, 2L)
+  expect_setequal(mo$naming_issues$file_name[mo$naming_issues$rule == "spaces"],
+                  c("my data.csv", "analysis two.R"))
+  # data_check's file tree shows them too
+  dc <- module_run(NULL, "data_check", local_path = d, local_only = TRUE)
+  expect_true(grepl("my data.csv[^\n]*contains a space", paste(dc$report, collapse = "\n")))
 })
 
 test_that("repo_check vector of local paths", {
@@ -570,6 +676,24 @@ test_that("repo_check excludes a nested vendored package but keeps real sibling 
   expect_true("data.csv" %in% mo$table$file_name)
 })
 
+test_that("repo_check keeps a package in a subfolder when nothing else is real data or code (#505)", {
+  # the paper's own package one folder down, as in github.com/afernandez1303/good
+  # ("good 2/"), with a README.Rmd beside it and a README.md at the top: the
+  # package is the deposit, so its files are kept
+  d <- withr::local_tempdir()
+  pkg <- file.path(d, "good 2")
+  dir.create(file.path(pkg, "R"), recursive = TRUE)
+  writeLines("Package: good\nVersion: 0.1.0", file.path(pkg, "DESCRIPTION"))
+  writeLines("export(dgood)", file.path(pkg, "NAMESPACE"))
+  writeLines("dgood <- function(x) x", file.path(pkg, "R", "dgood.R"))
+  writeLines("# good", file.path(pkg, "README.Rmd"))
+  writeLines("# good", file.path(d, "README.md"))
+
+  mo <- module_run(test_paper(), "repo_check", local_path = d)
+
+  expect_true(all(c("DESCRIPTION", "NAMESPACE", "dgood.R") %in% mo$table$file_name))
+})
+
 
 # repo_check() + local_only ----
 
@@ -725,6 +849,121 @@ test_that("repo_check names an OSF project listed only in part at osf_max_reques
   expect_equal(nrow(mo$partial_repos), 0)
   expect_false(any(mo$ownership$listing_cut))
   expect_false(any(grepl("Partly Listed Repositories", mo$report)))
+})
+
+test_that("a listing the OSF refused in part, and a project it could not look up, are named by repo_check, code_check and data_check (#681)", {
+  llm_use(FALSE)
+  osf_info_mock <- function(osf_url, recursive = TRUE, pb = NULL, cache = FALSE,
+                            max_requests = Inf, ...) {
+    if (grepl("fghij", osf_url))
+      return(data.frame(osf_url = osf_url, osf_id = "fghij", osf_type = "error",
+                        error = "the OSF API did not answer (HTTP 503)"))
+    d <- data.frame(osf_url = osf_url, osf_id = c("abcde", "f1", "f2"),
+                    osf_type = c("nodes", "files", "files"),
+                    parent = NA_character_, kind = c(NA, "file", "file"), public = TRUE,
+                    name = c("A study", "data.csv", "analysis.R"),
+                    path = c(NA, "/data.csv", "/analysis.R"),
+                    download_url = c(NA, "https://osf.io/download/f1", "https://osf.io/download/f2"),
+                    size = c(NA, 10, 10), filetype = c(NA, "data", "code"),
+                    provider = c(NA, "osfstorage", "osfstorage"))
+    d$listing_short <- TRUE
+    d
+  }
+  local_mocked_bindings(online = \(...) TRUE, osf_info = osf_info_mock)
+  paper <- test_paper(text = "Data: https://osf.io/abcde and code: https://osf.io/fghij")
+
+  out <- suppressWarnings(suppressMessages(report_module_run(
+    paper, c("repo_check", "code_check", "data_check"),
+    args = list(repo_check = list(peek_zips = FALSE),
+                code_check = list(download = FALSE),
+                data_check = list(download = "none")))))
+  rc <- out$repo_check
+  expect_equal(rc$partial_repos$repo_url, "https://osf.io/abcde")
+  expect_equal(rc$partial_repos$reason, "refused by the OSF")
+  expect_equal(rc$partial_repos$files_listed, 2L)
+  expect_true(rc$ownership$listing_short[rc$ownership$repo_url == "https://osf.io/abcde"])
+  expect_false(rc$ownership$listing_cut[rc$ownership$repo_url == "https://osf.io/abcde"])
+  expect_match(paste(rc$report, collapse = " "),
+               "The OSF refused part of the listing of https://osf.io/abcde (2 files listed)", fixed = TRUE)
+  expect_match(rc$summary_text, "because the OSF refused part of the listing; run the check again", fixed = TRUE)
+  expect_equal(rc$gated_repos$paper_id, paper$paper_id)
+  expect_equal(rc$gated_repos$repo_url, "https://osf.io/fghij")
+
+  for (m in c("code_check", "data_check")) {
+    mo <- out[[m]]
+    expect_false(identical(mo$traffic_light, "fail"), info = m)
+    # files went unchecked, so the light is at least yellow
+    expect_true(mo$traffic_light %in% c("yellow", "red"), info = m)
+    report <- paste(unlist(mo$report), collapse = " ")
+    expect_match(report, "Repositories not listed in full", fixed = TRUE, info = m)
+    expect_match(report, "https://osf.io/abcde: the OSF refused part of the listing", fixed = TRUE, info = m)
+    expect_match(report, "https://osf.io/fghij: could not be listed (the OSF API did not answer (HTTP 503))",
+                 fixed = TRUE, info = m)
+    expect_match(mo$summary_text, "We could not list every file of 2 repositories", fixed = TRUE, info = m)
+  }
+})
+
+test_that(".repos_not_listed_text names partly listed and unlisted repositories, with their reason (#681)", {
+  partial <- data.frame(paper_id = "p", repo_url = c("https://osf.io/aaaaa", "https://osf.io/bbbbb"),
+                        files_listed = c(7L, 1L), reason = c("refused by the OSF", "request limit"))
+  gated <- data.frame(paper_id = "p",
+                      repo_url = c("https://osf.io/ccccc", "https://osf.io/ddddd", "https://osf.io/aaaaa"),
+                      repo_type = "osf", repo_error = c("the OSF API did not answer (HTTP 503)", "private", "x"))
+  # ddddd has files, so it was listed; aaaaa is named once, as partly listed
+  x <- .repos_not_listed_text(partial, gated, "https://osf.io/ddddd")
+  expect_equal(x$report[1], "#### Repositories not listed in full")
+  expect_length(x$report, 5)
+  expect_match(x$report[3], "https://osf.io/aaaaa: the OSF refused part of the listing, also when asked again (7 files listed). Run the check again later.", fixed = TRUE)
+  expect_match(x$report[4], "the listing stopped at the request limit (1 file listed)", fixed = TRUE)
+  expect_match(x$report[5], "https://osf.io/ccccc: could not be listed (the OSF API did not answer (HTTP 503))", fixed = TRUE)
+  expect_match(x$summary, "^We could not list every file of 3 repositories")
+  # a table without `reason` (an older repo_check output) is a cut listing
+  x <- .repos_not_listed_text(partial[2, 1:3], NULL, character(0))
+  expect_match(x$report[2], "this repository, because it could not", fixed = TRUE)
+  expect_match(x$report[3], "request limit", fixed = TRUE)
+  expect_null(.repos_not_listed_text(NULL, NULL, character(0))$report)
+  expect_null(.repos_not_listed_text(partial[0, ], gated[0, ], character(0))$summary)
+  expect_null(.repos_not_listed_text(NULL, gated[2, ], "https://osf.io/ddddd")$report)
+})
+
+test_that("code_check says a missing file may be in a repository not listed in full (#681)", {
+  p <- test_paper()
+  dir <- withr::local_tempdir()
+  script <- file.path(dir, "analysis.R")
+  writeLines(c("# read the data", "dat <- read.csv('results.csv')"), script)
+  tbl <- data.frame(paper_id = p$paper_id, repo_url = "https://osf.io/abcde",
+                    repo_type = "osf", file_name = "analysis.R", file_path = "analysis.R",
+                    file_url = NA_character_, file_size = 100, file_type = "code",
+                    file_location = script)
+  partial <- data.frame(paper_id = p$paper_id, repo_url = "https://osf.io/abcde",
+                        files_listed = 1L, reason = "refused by the OSF")
+  prev <- structure(list(paper = p, module = "repo_check", table = tbl, partial_repos = partial,
+                         summary_table = data.frame(paper_id = p$paper_id)),
+                    class = "metacheck_module_output")
+  mo <- module_run(prev, "code_check", download = FALSE)
+  report <- paste(unlist(mo$report), collapse = " ")
+  expect_match(report, "could not be automatically identified in the repository. This may be because a repository was listed only in part or not at all", fixed = TRUE)
+  expect_match(mo$summary_text, "We could not list every file of 1 repository", fixed = TRUE)
+
+  # listed in full: the sentence is as before
+  prev$partial_repos <- NULL
+  mo <- module_run(prev, "code_check", download = FALSE)
+  report <- paste(unlist(mo$report), collapse = " ")
+  expect_match(report, "could not be automatically identified in the repository. Check if", fixed = TRUE)
+  expect_false(grepl("not listed in full", report, fixed = TRUE))
+})
+
+test_that(".cap_report_partial words a refused listing apart from a cut one (#681)", {
+  partial <- data.frame(paper_id = "p", repo_url = c("https://osf.io/abcde", "https://osf.io/zzzzz"),
+                        files_listed = c(3L, 1L), reason = c("refused by the OSF", "request limit"))
+  w <- character(0)
+  withCallingHandlers(
+    suppressMessages(metacheck:::.cap_report_partial(partial, partial$repo_url)),
+    warning = \(x) { w <<- c(w, conditionMessage(x)); invokeRestart("muffleWarning") })
+  expect_length(w, 2)
+  expect_match(w[1], "the OSF refused part of the listing, also when asked again", fixed = TRUE)
+  expect_false(grepl("osf_max_requests", w[1]))
+  expect_match(w[2], "osf_max_requests", fixed = TRUE)
 })
 
 test_that(".cap_report_partial warns once per partly listed repository that is downloaded from", {

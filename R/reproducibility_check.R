@@ -437,8 +437,9 @@ repro_dependencies <- function(code_text, lang = "R") {
     R = c("write[\\._][A-Za-z\\._0-9]*", "saveRDS", "save\\.image",
          "save", "ggsave", "export", "fwrite"),
     # to_<format> (to_csv/to_pickle/to_parquet/...), numpy's save/savetxt,
-    # matplotlib's savefig, and pickle's/json's dump — see code_check.R's
-    # lang_write_regex (code_file_refs()) for the same list, kept in sync.
+    # matplotlib's savefig, and pickle's/json's dump — the writes of
+    # .code_write_calls (code_check.R) without the downloads, whose first
+    # quoted text is the address to download from, not a path to redirect.
     # open() is excluded — see this function's own `lang` docs above.
     Python = c("to_[A-Za-z_0-9]+", "savetxt", "savefig", "dump", "save")
   )
@@ -780,7 +781,19 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
   call_refs <- if (identical(lang, "R")) .repro_format_call_refs(code_text) else
     data.frame(call_text = character(0), fmt = character(0),
                resolved = character(0), line = integer(0))
-  if (nrow(call_refs) > 0) refs <- setdiff(refs, call_refs$fmt)
+  # A format string that also stands in quotes outside such calls stays a
+  # reference of its own: paste(dir, "x.csv", sep = "/") took "x.csv" out, and a
+  # read.csv("x.csv") elsewhere in the script was not pointed to its file (#648).
+  if (nrow(call_refs) > 0) {
+    code_joined <- paste(code_text, collapse = "\n")
+    n_quoted <- function(f, x) sum(vapply(c(paste0('"', f, '"'), paste0("'", f, "'")), function(q)
+      sum(gregexpr(q, x, fixed = TRUE)[[1]] > 0), integer(1)))
+    fmts <- unique(call_refs$fmt[!is.na(call_refs$fmt)])
+    only_in_calls <- vapply(fmts, function(f)
+      n_quoted(f, code_joined) <= sum(vapply(call_refs$call_text, function(ct) n_quoted(f, ct), integer(1))),
+      logical(1))
+    refs <- setdiff(refs, fmts[only_in_calls])
+  }
   if (length(refs) == 0 && nrow(call_refs) == 0) return(empty)
   ref_base <- tolower(basename(gsub("\\\\", "/", refs)))
   ref_ext  <- tolower(tools::file_ext(ref_base))
@@ -1244,7 +1257,10 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
 # `list.files(pattern = "\\.wav$")` or `glob("*.tif")`. The first download leaves
 # out images, sound, video and documents from hosts that send files one by one
 # (see .run_download_want()); a script that reads one gets it here (#568).
-.repro_named_files <- function(structure_df, code_text) {
+# With `by_extension = FALSE` only names count: for the files of deposits that
+# are not the paper's own (#648), where a pattern such as "\\.csv$" fetched all
+# 1,327 files of another team's repository (10.1101/2026.11.02.26367118).
+.repro_named_files <- function(structure_df, code_text, by_extension = TRUE) {
   want <- .repro_fetchable(structure_df)
   if (!any(want) || !length(code_text)) return(want)
   # bytes that are not UTF-8 stopped tolower() for the whole paper (#568)
@@ -1262,6 +1278,7 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
   if (any(!plain)) found <- c(found, cand[!plain][vapply(cand[!plain], function(b)
     grepl(b, txt, fixed = TRUE), logical(1), USE.NAMES = FALSE)])
   by_name <- base %in% found
+  if (!isTRUE(by_extension)) return(want & by_name)
   exts <- unique(ext[want & nzchar(ext)])
   ext_named <- exts[vapply(exts, function(e)
     grepl(paste0("(\\\\{1,2}\\.|\\*\\.|['\"]\\.)", e, "\\b"), txt, perl = TRUE), logical(1))]
@@ -1513,7 +1530,14 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
   pat <- paste0("(?:cannot open (?:compressed )?file|No such file or directory:?|does not exist)",
                 nq, "*", q, "(", nq, "+)", q, "|", q, "(", nq, "+)", q, ":? No such file|",
                 q, "(", nq, "+)", q, " does not exist",
-                "|Cannot open ", q, "(", nq, "+)", q, "|file does not exist: ([^\\s'\"]+)")
+                "|Cannot open ", q, "(", nq, "+)", q, "|file does not exist: ([^\\s'\"]+)",
+                # "Data file not found: ../data/x.csv", Rcpp's "file not found: 'x.cpp'",
+                # h5py's "unable to open file: name = 'x.h5'", ggsave's "Cannot find
+                # directory `x`", a FileNotFoundError with only a path (#648)
+                "|[Ff]ile not found:? *", q, "?([^\\s'\"\u2018\u2019(]+[./][^\\s'\"\u2018\u2019(]*)",
+                "|unable to open file[^\n]*?name = ", q, "(", nq, "+)", q,
+                "|[Cc]annot find (?:the )?(?:file|directory|folder) [`'\"\u2018](", nq, "+?)[`'\"\u2019]",
+                "|FileNotFoundError: (?!\\[Errno)([^\\s'\"]+[./][^\\s'\"]*)")
   out <- unlist(lapply(.utf8_lines(msgs[!is.na(msgs)]), function(m) {
     k <- regmatches(m, gregexpr(pat, m, perl = TRUE))[[1]]
     vapply(k, function(x) { g <- regmatches(x, regexec(pat, x, perl = TRUE))[[1]][-1]; g[nzchar(g)][1] },
@@ -1580,7 +1604,12 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
 .repro_fetch_files <- function(structure_df, rows, max_file_size = 100, max_download_size = 500,
                                cache = FALSE, skip_on_api_limit = FALSE) {
   if (!any(rows)) return(structure_df)
-  dl <- tryCatch(download_repo_files(structure_df[rows, , drop = FALSE],
+  # downloaded under the path in the deposit, where the cache keeps it, not
+  # where unpacking its archive puts it in the run (#648)
+  want <- structure_df[rows, , drop = FALSE]
+  if ("file_path_deposit" %in% names(want))
+    want$file_path <- dplyr::coalesce(as.character(want$file_path_deposit), as.character(want$file_path))
+  dl <- tryCatch(download_repo_files(want,
                                      max_file_size = max_file_size,
                                      max_download_size = max_download_size,
                                      repo_file_counts = table(structure_df$repo_url),
@@ -1596,7 +1625,10 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
 # elsewhere in the repository (see .repro_keep_working_refs()). One string, since
 # the module adds sentences to it. `rewrite_list` holds a repro_rewrite_paths()
 # result per script, named by script.
-.repro_path_fix_text <- function(rewrite_list, execute = FALSE) {
+# `absent` holds the names the code reads that the repository does not hold
+# (the module's unresolved references, which leave out names the code builds
+# and files other scripts write).
+.repro_path_fix_text <- function(rewrite_list, execute = FALSE, absent = character(0)) {
   fixes <- do.call(rbind, lapply(names(rewrite_list), function(f) {
     d <- rewrite_list[[f]]
     if (!nrow(d)) return(NULL)
@@ -1606,6 +1638,15 @@ repro_rewrite_paths <- function(code_text, file_name, plan, lang = "R",
     data.frame(file = f, ref = d$ref[ok], target = d$target[ok])
   }))
   n <- NROW(fixes)
+  # paths to files the deposit does not hold: "every data path works" was said
+  # of reports whose scripts then stopped on missing files (#648, K8f)
+  absent <- unique(absent[!is.na(absent) & nzchar(absent)])
+  if (!n && length(absent))
+    return(sprintf(paste0("The data paths in the code to files the repository holds work as deposited, but %d ",
+                          "path%s name%s a file the repository does not hold: %s%s."),
+                   length(absent), plural(length(absent)), plural(length(absent), "s", ""),
+                   paste(sprintf("`%s`", utils::head(absent, 10)), collapse = ", "),
+                   if (length(absent) > 10) sprintf(", and %d more", length(absent) - 10) else ""))
   if (!n) return("Every data path in the code works in the repository as deposited.")
   shown <- utils::head(fixes, 10)
   sprintf(paste0("**%d data path%s in the code %s not work in the repository as deposited.** ",
@@ -1923,10 +1964,14 @@ repro_run_order <- function(files, extra_edges = NULL) {
 #' @param user the file_name of the script that failed
 #' @param code_text_list named list of every R script's code text
 #' @param candidates candidate packages for step 2 (see the module)
+#' @param unavailable packages the run could not install: never attached, as
+#'   `library()` of such a package stops the script. In sd2hq_v2 all 23
+#'   packages of a project were put in R/data.R, which then stopped on
+#'   `library(mixedpower)`, a package from GitHub that was not installed (#648).
 #'
 #' @returns a character vector of package names to attach (empty when none)
 #' @keywords internal
-.repro_missing_fn_pkgs <- function(name, user, code_text_list, candidates) {
+.repro_missing_fn_pkgs <- function(name, user, code_text_list, candidates, unavailable = character(0)) {
   provides <- function(pkg) {
     if (identical(pkg, "tidyverse") ||
         (identical(name, "%>%") && pkg %in% .repro_pipe_pkgs)) return(TRUE)
@@ -1937,10 +1982,10 @@ repro_run_order <- function(files, extra_edges = NULL) {
   own <- .repro_attached_pkgs(code_text_list[[user]] %||% character(0))
   others <- unique(unlist(lapply(setdiff(names(code_text_list), user), function(f)
     .repro_attached_pkgs(code_text_list[[f]])), use.names = FALSE))
-  others <- setdiff(others, own)
+  others <- setdiff(others, c(own, unavailable))
   if (length(others) && any(vapply(others, provides, logical(1)))) return(others)
 
-  pkg <- .repro_find_export_pkg(name, candidates)
+  pkg <- .repro_find_export_pkg(name, setdiff(candidates, unavailable))
   if (!is.na(pkg)) return(pkg)
 
   if (identical(name, "%>%") &&
@@ -2004,11 +2049,10 @@ repro_file_io <- function(code_text_list, lang = "R") {
   lang_for <- if (length(lang) == 1) stats::setNames(rep(lang, length(fname)), fname)
     else lang[fname]
 
-  # A read call vs a write call, from the call name preceding the quoted path.
-  write_fns_for <- list(
-    R = "\\b(write[._][A-Za-z._0-9]*|saveRDS|save|save\\.image|ggsave|export|fwrite)\\s*\\(",
-    Python = "\\b(to_[A-Za-z_0-9]+|savetxt|savefig|dump|save)\\s*\\("
-  )
+  # A read call vs a write call, from the call name preceding the quoted path:
+  # the same calls code_file_refs() takes as writes (.code_write_regex()), so a
+  # file a script downloads is made by it, not read (#648)
+  write_fns_for <- list(R = .code_write_regex("R"), Python = .code_write_regex("Python"))
   # open(...) is BOTH a read call (code_file_refs()'s Python branch) and a
   # potential write call, decided only by its own mode argument (see
   # .py_open_writes()).
@@ -2875,7 +2919,7 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   sz <- file.size(f)
   small <- f[!is.na(sz) & sz < 1024]
   is_ptr <- vapply(small, function(p) {
-    l <- tryCatch(readLines(p, n = 1, warn = FALSE), error = function(e) character(0))
+    l <- tryCatch(.utf8_lines(readLines(p, n = 1, warn = FALSE)), error = function(e) character(0))
     length(l) && startsWith(l[1], "version https://git-lfs.github.com/spec/")
   }, logical(1))
   ptr <- unique(basename(small[is_ptr]))
@@ -2912,7 +2956,7 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   small <- src[!is.na(size) & size < 1024]
   if (!length(small)) return(none)
   stated <- vapply(small, function(f) {
-    l <- tryCatch(readLines(f, n = 3, warn = FALSE), error = function(e) character(0))
+    l <- tryCatch(.utf8_lines(readLines(f, n = 3, warn = FALSE)), error = function(e) character(0))
     if (!length(l) || !startsWith(l[1], "version https://git-lfs.github.com/spec/")) return(NA_real_)
     s <- suppressWarnings(as.numeric(sub("^size ", "", grep("^size [0-9]+$", l, value = TRUE)[1])))
     if (is.na(s)) NA_real_ else s
@@ -2964,6 +3008,242 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
                  !duplicated(plan$target_path), , drop = FALSE]
   rownames(plan) <- NULL
   plan
+}
+
+# Where each file of an archive is once the archive is unpacked where it is, as
+# the authors had it on their computer (#648). data_check, code_check and the
+# download list a file inside an archive under the archive's path
+# ("data/behaviour_data.zip/behaviour_data/p01.json"); copied to the run folder
+# like that, the files sat in a folder named after the archive, where no code
+# looks. Unpacked as Archive Utility on a Mac does: a zip or tar whose files
+# are all in one folder is unpacked beside itself ("data/behaviour_data/p01.json"),
+# one with loose files into a folder named after it ("data/behaviour_data/");
+# a single compressed file (.gz, .bz2, .xz) beside itself ("x.json.gz" gives
+# "x.json"). A path that a file outside archives already has is not taken: that
+# file stays, and the archive's copy keeps its path. An archive inside an
+# archive is unpacked in turn. Paths are compared without case, as on the
+# authors' Windows or Mac computer.
+.repro_archive_ext <- "\\.(zip|tar|tgz|tbz2?|txz|tar\\.(gz|bz2|xz)|7z|rar)$"
+.repro_compress_ext <- "\\.(gz|bz2|xz)$"
+.repro_unpacked_paths <- function(paths) {
+  out <- sub("^(\\./|/)+", "", gsub("\\\\", "/", as.character(paths)))
+  if (!length(out)) return(character(0))
+  is_arch <- function(x) grepl(.repro_archive_ext, x, ignore.case = TRUE) |
+    grepl(.repro_compress_ext, x, ignore.case = TRUE)
+  # paths outside every archive: never taken by a file from an archive
+  plain <- function(p) !vapply(strsplit(p, "/", fixed = TRUE), function(x)
+    length(x) > 1 && any(is_arch(sub("\\.contents$", "", x[-length(x)], ignore.case = TRUE))), logical(1))
+  taken <- tolower(out[!is.na(out) & plain(out)])
+  for (round in 1:5) {
+    parts <- strsplit(ifelse(is.na(out), "", out), "/", fixed = TRUE)
+    pos <- vapply(parts, function(x) {
+      n <- length(x)
+      if (n < 2) return(0L)
+      k <- which(is_arch(sub("\\.contents$", "", x[-n], ignore.case = TRUE)))
+      if (length(k)) k[1] else 0L
+    }, integer(1))
+    if (!any(pos > 0)) break
+    idx <- which(pos > 0)
+    prefix <- vapply(idx, function(i) paste(parts[[i]][seq_len(pos[i])], collapse = "/"), "")
+    inner <- vapply(idx, function(i) paste(parts[[i]][-seq_len(pos[i])], collapse = "/"), "")
+    for (pf in unique(prefix)) {
+      m <- which(prefix == pf)
+      arch <- sub("\\.contents$", "", basename(pf), ignore.case = TRUE)
+      dir <- dirname(pf)
+      dir <- if (dir %in% c(".", "")) "" else paste0(dir, "/")
+      if (!grepl(.repro_archive_ext, arch, ignore.case = TRUE)) {
+        new <- paste0(dir, inner[m])
+      } else {
+        first <- sub("/.*$", "", inner[m])
+        one_folder <- all(grepl("/", inner[m], fixed = TRUE)) && length(unique(tolower(first))) == 1
+        new <- if (one_folder) paste0(dir, inner[m]) else
+          paste0(dir, sub(.repro_archive_ext, "", arch, ignore.case = TRUE), "/", inner[m])
+      }
+      free <- !tolower(new) %in% taken
+      # a path already taken: the archive's copy goes to a folder of its own
+      # beside the archive ("data/x.zip_files/a.csv")
+      out[idx[m][free]] <- new[free]
+      out[idx[m][!free]] <- paste0(sub("\\.contents$", "", pf, ignore.case = TRUE), "_files/", inner[m][!free])
+      taken <- c(taken, tolower(new[free]))
+    }
+  }
+  out
+}
+
+# The module's file tables with every file of an archive at its place once the
+# archive is unpacked (.repro_unpacked_paths()), decided for data and code
+# together, as they share the archives. `file_path` is changed; the deposit's
+# own path is kept in `file_path_deposit` for the report. Also returns the
+# archives that are on disk (`archives`: file_name, file_path, file_location),
+# which go into the run folder at their own path too, so code that unpacks an
+# archive itself, or reads a .gz as it is, finds it.
+.repro_unpack_archives <- function(structure_df, code_tbl) {
+  get_paths <- function(d) {
+    if (is.null(d) || !nrow(d)) return(character(0))
+    p <- if ("file_path" %in% names(d)) as.character(d$file_path) else as.character(d$file_name)
+    p[is.na(p) | !nzchar(p)] <- as.character(d$file_name)[is.na(p) | !nzchar(p)]
+    p
+  }
+  ps <- get_paths(structure_df); pc <- get_paths(code_tbl)
+  # the archives on disk
+  a <- data.frame(archive_file_path = character(0), archive_file_location = character(0))
+  if (!is.null(structure_df) && nrow(structure_df) &&
+      all(c("archive_file_path", "archive_file_location") %in% names(structure_df))) {
+    a <- unique(structure_df[!is.na(structure_df$archive_file_location) &
+                               file.exists(structure_df$archive_file_location %||% "") &
+                               !is.na(structure_df$archive_file_path),
+                             c("archive_file_path", "archive_file_location"), drop = FALSE])
+    a <- a[!duplicated(tolower(a$archive_file_path)), , drop = FALSE]
+  }
+  # an archive inside another archive is one of that archive's files
+  new <- .repro_unpacked_paths(c(ps, pc, a$archive_file_path))
+  set <- function(d, nw) {
+    if (is.null(d) || !nrow(d)) return(d)
+    if (!"file_path_deposit" %in% names(d)) d$file_path_deposit <- d$file_path %||% d$file_name
+    d$file_path <- nw
+    d
+  }
+  structure_df <- set(structure_df, new[seq_along(ps)])
+  code_tbl <- set(code_tbl, new[length(ps) + seq_along(pc)])
+  archives <- data.frame(file_name = basename(a$archive_file_path),
+                         file_path = new[length(ps) + length(pc) + seq_len(nrow(a))],
+                         file_location = a$archive_file_location)
+  list(structure_df = structure_df, code_tbl = code_tbl, archives = archives)
+}
+
+# The report's sentence on the zip and tar files the run unpacked because the
+# code reads files that are only inside them, while no script unpacks them
+# itself: as deposited, the code does not find those files (#648). The code
+# reads a file of the archive when it names the file, or the folder the
+# archive unpacks to ("behaviour_data/*.json"); it unpacks the archive itself
+# when it names the archive. "" when there is no such archive.
+.repro_archive_text <- function(structure_df, code_text) {
+  if (is.null(structure_df) || !nrow(structure_df) ||
+      !all(c("file_path_deposit", "file_path") %in% names(structure_df))) return("")
+  dep <- gsub("\\\\", "/", as.character(structure_df$file_path_deposit))
+  now <- as.character(structure_df$file_path)
+  arch_re <- "^((?:[^/]*/)*?[^/]*?\\.(?:zip|tar|tgz|tbz2?|txz|7z|rar|tar\\.(?:gz|bz2|xz)))(?:\\.contents)?/.*$"
+  arch <- ifelse(is.na(dep), NA_character_, sub(arch_re, "\\1", dep, perl = TRUE, ignore.case = TRUE))
+  ok <- !is.na(arch) & arch != dep & !is.na(now) & now != dep
+  if (!any(ok)) return("")
+  txt <- tolower(paste(unlist(code_text), collapse = "\n"))
+  if (!nzchar(txt)) return("")
+  named <- function(x) any(grepl(paste0("(^|[\"'/\\\\])", .repro_sw_escape(tolower(x)), "([\"'/\\\\]|$)"),
+                                 txt, perl = TRUE))
+  used <- character(0)
+  for (a in unique(arch[ok])) {
+    i <- which(ok & arch == a)
+    if (grepl(tolower(basename(a)), txt, fixed = TRUE)) next
+    top <- dirname(a)
+    rel <- if (top %in% c(".", "")) now[i] else substring(now[i], nchar(top) + 2L)
+    first <- unique(sub("/.*$", "", rel[grepl("/", rel, fixed = TRUE)]))
+    if (any(vapply(c(basename(now[i]), first), named, logical(1)))) used <- c(used, a)
+  }
+  if (!length(used)) return("")
+  sprintf(paste(
+    "The code reads files that are only inside %s, and no script unpacks %s. We unpacked %s in",
+    "%s folder before the run. So that others can run the code as deposited, start the code with",
+    "a line that unpacks %s (such as `unzip(\"%s\")` in R), or upload the files unpacked."),
+    paste0("`", used, "`", collapse = ", "), plural(length(used), "it", "them"),
+    plural(length(used), "it", "them"), plural(length(used), "its", "their"),
+    plural(length(used), "it", "them"), basename(used[1]))
+}
+
+# The path rewrites reproducibility_check works out for the scripts of one
+# language before a run, and the folder each script runs from: what the module
+# does for R and for Python, kept in one place so .repro_rewrite_preview() and
+# the tests see exactly what a run would. `code_text_list` is the code per
+# script (an R Markdown file's chunks, a notebook's cells), named by file;
+# `files` has `file_name` and `file_path` (code_check's table); `plan` and
+# `structure_df` as in the module. Returns a list with `io`, `script_paths`,
+# `rewrite_list`, `order_tbl`, `script_places`, `run_dirs`, and for R
+# `here_roots` and `here_dirs`.
+.repro_plan_rewrites <- function(code_text_list, files, plan, structure_df = NULL, lang = "R") {
+  n <- length(code_text_list)
+  io <- repro_file_io(code_text_list, lang)
+  if (identical(lang, "R")) io$file_path <- .repro_order_path(files)
+  script_paths <- .repro_script_path(files)
+  rewrite_list <- lapply(seq_len(n), function(i)
+    repro_rewrite_paths(code_text_list[[i]], files$file_name[i], plan, lang,
+                        structure_df = structure_df, script_path = script_paths[i]))
+  names(rewrite_list) <- files$file_name
+  order_tbl <- repro_run_order(io)
+  script_places <- .repro_script_places(files)
+  # the folder each script runs from
+  run_dirs <- .repro_run_folders(script_places, code_text_list, plan, order_tbl, lang)
+  here_roots <- here_dirs <- NULL
+  if (identical(lang, "R")) {
+    # where here() starts for each script (see .repro_here_roots() and the .here
+    # marks the module writes with the scripts): a path given to here() counts
+    # from there
+    here_roots <- .repro_here_roots(code_text_list, run_dirs, plan)
+    here_dirs <- vapply(seq_along(run_dirs), function(i)
+      .repro_here_start(run_dirs[i], here_roots[i], plan), character(1))
+  }
+  # a reference that works as written stays as it is
+  rewrite_list <- stats::setNames(lapply(seq_along(rewrite_list), function(i)
+    .repro_keep_working_refs(rewrite_list[[i]], plan, script_paths[i], run_dirs[i],
+                             here_dir = if (is.null(here_dirs)) "." else here_dirs[i])),
+    names(rewrite_list))
+  # a folder on the authors' computer held in a variable gets the deposit's folder
+  if (identical(lang, "R"))
+    rewrite_list <- stats::setNames(lapply(seq_along(rewrite_list), function(i)
+      .repro_apply_folder_vars(rewrite_list[[i]],
+                               .repro_folder_vars(code_text_list[[i]], plan, run_dirs[i],
+                                                  rw = rewrite_list[[i]]))), names(rewrite_list))
+  # a folder the script lists, where the deposit holds it (#578, item 2)
+  rewrite_list <- stats::setNames(lapply(seq_along(rewrite_list), function(i) {
+    d <- rewrite_list[[i]]
+    lf <- .repro_listed_folders(code_text_list[[i]], plan, run_dirs[i], lang)
+    dplyr::bind_rows(d, lf[!lf$ref %in% d$ref, , drop = FALSE])
+  }), names(rewrite_list))
+  list(io = io, script_paths = script_paths, rewrite_list = rewrite_list, order_tbl = order_tbl,
+       script_places = script_places, run_dirs = run_dirs, here_roots = here_roots,
+       here_dirs = here_dirs)
+}
+
+# What reproducibility_check would run, without running it: each R and Python
+# script of the folder `dir` (a deposit) as written and as the module rewrites
+# it (paths, setwd(), writes, Windows slashes), from .repro_plan_rewrites() and
+# repro_write_scripts(). For tests and for checking a change to the rewrites on
+# many deposits. Returns a data frame with `file_name`, `lang`, `run_dir`,
+# `original` and `rewritten` (each the code joined by "\n").
+.repro_rewrite_preview <- function(dir) {
+  dir <- normalizePath(dir, winslash = "/")
+  rel <- list.files(dir, recursive = TRUE, all.files = TRUE)
+  rel <- rel[!grepl("(^|/)(\\.git|__MACOSX)/", rel)]
+  structure_df <- data.frame(file_name = basename(rel), file_path = rel,
+                             file_location = file.path(dir, rel))
+  plan <- .repro_package_plan(structure_df)
+  out <- list()
+  for (lang in c("R", "Python")) {
+    rx <- if (lang == "R") "\\.(r|rmd|qmd)$" else "\\.(py|ipynb)$"
+    k <- grepl(rx, rel, ignore.case = TRUE)
+    if (!any(k)) next
+    files <- structure_df[k, , drop = FALSE]
+    files$file_name <- files$file_path
+    code <- lapply(files$file_location, function(p) {
+      if (grepl("\\.(rmd|qmd)$", p, ignore.case = TRUE)) code_extract_r(p)
+      else if (grepl("\\.ipynb$", p, ignore.case = TRUE)) code_extract_py(p)
+      else code_read(p)
+    })
+    names(code) <- files$file_name
+    rp <- .repro_plan_rewrites(code, files, plan, structure_df, lang)
+    root <- tempfile("rewrite_preview_")
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    wt <- suppressMessages(repro_write_scripts(code, rp$rewrite_list, plan, root, lang = lang,
+                                               script_paths = rp$script_places, writes_in_place = TRUE,
+                                               run_dirs = rp$run_dirs))
+    out[[lang]] <- data.frame(
+      file_name = wt$file_name, lang = lang, run_dir = rp$run_dirs,
+      original = vapply(code[wt$file_name], paste, character(1), collapse = "\n"),
+      rewritten = vapply(wt$script_path, function(p) paste(.utf8_lines(readLines(p, warn = FALSE)), collapse = "\n"),
+                         character(1)),
+      row.names = NULL)
+  }
+  if (!length(out)) return(data.frame(file_name = character(0), lang = character(0), run_dir = character(0),
+                                      original = character(0), rewritten = character(0)))
+  dplyr::bind_rows(out)
 }
 
 #' Rewrite only the references that cannot work as written
@@ -3039,7 +3319,9 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   relocate <- !in_place & !is_call & !is.na(from_script)
   up <- grepl("(^|/)\\.\\.(/|$)", ref)
   # a path built by sprintf()/file.path() is kept unless it holds an absolute path
-  absolute_call <- is_call & grepl("[\"']([A-Za-z]:[/\\\\]|/|~)", rw$ref, perl = TRUE)
+  # ("/" alone is a separator, as in paste(dir, "x.csv", sep = "/"), not a path
+  # from the top of the computer: such a call was rewritten as a whole; #648)
+  absolute_call <- is_call & grepl("[\"']([A-Za-z]:[/\\\\]|/[^\"'/]|~)", rw$ref, perl = TRUE)
   keep <- in_place | (!relocate & ((is_call & !absolute_call) | (!is_call & !absolute & !up)))
   # a name spelled otherwise than the file's does not work as written
   if ("name_in_deposit" %in% names(rw)) keep <- keep & is.na(rw$name_in_deposit)
@@ -3056,9 +3338,13 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   # 10.1002/pan3.10310 the data, a deposit of its own, lies at the top, and
   # "./kilimanjaro_..._questionnaire.csv" was kept as written and not found (#568).
   joined <- found & endsWith(tolower(tgt), paste0("/", tolower(ref)))
-  # a bare name counts as joined only when it stands in a joining call
-  if ("in_join" %in% names(rw))
-    joined <- joined & (grepl("/", ref, fixed = TRUE) | rw$in_join %in% TRUE)
+  # A bare name is not joined as a whole: where it stands in a joining call
+  # (file.path(dir, "x.csv")), that place is left as written when the rewrite
+  # is applied (.repro_path_piece() in .repro_apply_rewrites()), while the same
+  # name read directly elsewhere in the script is still pointed to its file.
+  # Kept or rewritten for the whole script, one joined place kept a direct
+  # read.csv("x.csv") from being pointed to the file (#648).
+  joined <- joined & grepl("/", ref, fixed = TRUE)
   # the one argument of here() is joined to nothing but where here() starts
   joined <- joined & !in_here
   keep <- keep & !(!in_place & !is_call & !absolute & !up & found & !joined)
@@ -3351,9 +3637,17 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   # pieces of a folder that became the run folder keep their rewrites (#578, item 4)
   dropped <- unlist(fv$pieces[!(fv$keep_pieces %in% TRUE)])
   if (nrow(rw)) rw <- rw[!rw$ref %in% dropped, , drop = FALSE]
+  # such a piece is now joined to the run folder, so it is rewritten although
+  # it is a piece of a path (.repro_path_piece()), as before #648
+  kept <- unlist(fv$pieces[fv$keep_pieces %in% TRUE])
+  if (nrow(rw) && length(kept)) {
+    if (!"whole" %in% names(rw)) rw$whole <- FALSE
+    rw$whole[rw$ref %in% kept] <- TRUE
+  }
   add <- data.frame(ref = fv$value, basename = basename(gsub("\\\\", "/", fv$value)), matched = TRUE,
                     target = fv$target, ambiguous = FALSE, n_candidates = 1L, is_call = FALSE,
-                    name_in_code = NA_character_, name_in_deposit = NA_character_, as_written = FALSE)
+                    name_in_code = NA_character_, name_in_deposit = NA_character_, as_written = FALSE,
+                    whole = TRUE)
   dplyr::bind_rows(rw, add)
 }
 
@@ -3675,6 +3969,166 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
 # 'x.csv', or \"x.csv\" inside a notebook's JSON). Replaced wherever the text
 # appeared, the reference x.csv also changed "old_x.csv" into
 # "old_data/study-x_data.csv", a file that does not exist.
+# For each character of `text` (a whole script): the position of the innermost
+# bracket, "(", "[" or "{", that holds it, 0 when none, and that bracket's
+# closing position. Text in quotes and comments does not count. One pass over
+# the script, for .repro_path_piece().
+.repro_bracket_owner <- function(text) {
+  ch <- strsplit(text, "", fixed = TRUE)[[1]]
+  n <- length(ch)
+  owner <- integer(n); close_at <- integer(n); comment <- logical(n)
+  stack <- integer(0)
+  in_str <- ""; triple <- FALSE; i <- 1L
+  while (i <= n) {
+    c1 <- ch[i]
+    owner[i] <- if (length(stack)) stack[length(stack)] else 0L
+    if (nzchar(in_str)) {
+      if (c1 == "\\") { i <- i + 1L; if (i <= n) owner[i] <- owner[i - 1L] }
+      else if (c1 == in_str) {
+        if (!triple) in_str <- ""
+        else if (i + 2L <= n && ch[i + 1L] == c1 && ch[i + 2L] == c1) {
+          owner[i + 1L] <- owner[i]; owner[i + 2L] <- owner[i]; i <- i + 2L; in_str <- ""; triple <- FALSE
+        }
+      }
+    } else if (c1 == "#") {
+      while (i <= n && ch[i] != "\n") {
+        owner[i] <- if (length(stack)) stack[length(stack)] else 0L; comment[i] <- TRUE; i <- i + 1L
+      }
+      next
+    } else if (c1 %in% c("\"", "'", "`")) {
+      in_str <- c1
+      if (c1 != "`" && i + 2L <= n && ch[i + 1L] == c1 && ch[i + 2L] == c1) {
+        triple <- TRUE; owner[i + 1L] <- owner[i]; owner[i + 2L] <- owner[i]; i <- i + 2L
+      }
+    } else if (c1 %in% c("(", "[", "{")) {
+      stack <- c(stack, i)
+    } else if (c1 %in% c(")", "]", "}") && length(stack)) {
+      close_at[stack[length(stack)]] <- i
+      stack <- stack[-length(stack)]
+    }
+    i <- i + 1L
+  }
+  list(chars = ch, owner = owner, close_at = close_at, comment = comment)
+}
+
+# Calls that join a name to a folder (with more than one part), and calls whose
+# texts are patterns or replacements rather than file paths (#648)
+.repro_join_fns <- c("file.path", "paste", "paste0", "str_c", "str_glue", "glue", "here", "path", "join",
+                     "Path", "PurePath", "PosixPath", "WindowsPath")
+.repro_regex_fns <- c("sub", "gsub", "regexpr", "gregexpr", "regexec", "regmatches", "grepl", "grep",
+                      "str_replace", "str_replace_all", "str_detect", "str_extract", "str_extract_all",
+                      "str_match", "str_remove", "str_remove_all", "str_split", "subn", "match", "search",
+                      "compile", "findall", "finditer", "split", "fullmatch")
+
+# Whether the quoted text from `from` (its opening quote) to `to` (its closing
+# quote) in `text`, a whole script, is a piece the code joins to a folder
+# itself, or no path at all, so that rewriting it to a whole path would put the
+# folder in twice (#648): an argument of a joining call with more than one part
+# (file.path(), paste0(), str_c(), here(), os.path.join(), Path()), next to a
+# "/" or "+" (pathlib's `folder / "x.csv"`, `base + "/x.csv"`), an f-string or
+# glue() text with a {}, one of several texts in a list (c(), list(), [], (),
+# {}), or a text in a pattern call (sub(), re.sub(); "regex" functions of R,
+# stringr and Python's re, by their name without the package). A name kept in a
+# variable on its own (`f <- "x.csv"`) is a piece when that variable is used
+# as one. `bo` is .repro_bracket_owner(text).
+.repro_path_piece <- function(text, from, to, bo = .repro_bracket_owner(text), depth = 0L) {
+  ch <- bo$chars; n <- length(ch)
+  # in a comment: no code reads it, so it is left as it is
+  if (isTRUE(bo$comment[from])) return(TRUE)
+  space <- c(" ", "\t", "\n", "\r")
+  prev_sig <- function(i) { while (i >= 1L && ch[i] %in% space) i <- i - 1L; if (i >= 1L) ch[i] else "" }
+  next_sig <- function(i) { while (i <= n && ch[i] %in% space) i <- i + 1L; if (i <= n) ch[i] else "" }
+  body <- paste(ch[from:to], collapse = "")
+  # a Python f-string: f"{base}/x.csv"
+  pre <- if (from > 1L) tolower(ch[max(1L, from - 2L):(from - 1L)]) else character(0)
+  if ("f" %in% pre && grepl("{", body, fixed = TRUE)) return(TRUE)
+  if (prev_sig(from - 1L) %in% c("/", "+") || next_sig(to + 1L) %in% c("/", "+")) return(TRUE)
+  # the function before the "(" at `ob`, with its package or module
+  # ("here::here", "os.path.join"); "" for another bracket
+  fn_at <- function(ob) {
+    if (ch[ob] != "(") return("")
+    j <- ob - 1L
+    while (j >= 1L && ch[j] %in% c(" ", "\t")) j <- j - 1L
+    k <- j
+    while (k >= 1L && grepl("[A-Za-z0-9_.:]", ch[k])) k <- k - 1L
+    if (k < j) paste(ch[(k + 1L):j], collapse = "") else ""
+  }
+  n_args_at <- function(ob) {
+    cl <- bo$close_at[ob]; if (cl == 0L) cl <- n
+    inside <- if (cl - 1L >= ob + 1L) seq.int(ob + 1L, cl - 1L) else integer(0)
+    1L + sum(ch[inside] == "," & bo$owner[inside] == ob)
+  }
+  is_list_at <- function(ob, fn) (ch[ob] == "(" && fn %in% c("c", "list", "")) || ch[ob] == "[" ||
+    (ch[ob] == "{" && fn == "")
+  ob <- bo$owner[from]
+  if (ob > 0L) {
+    fn <- fn_at(ob)
+    base_fn <- sub("^.*(::|\\.)", "", fn)
+    n_args <- n_args_at(ob)
+    if (base_fn %in% .repro_regex_fns && nzchar(fn)) return(TRUE)
+    if (base_fn %in% .repro_join_fns && n_args > 1L) return(TRUE)
+    if (base_fn %in% c("glue", "str_glue") && grepl("{", body, fixed = TRUE)) return(TRUE)
+    # one of several texts in a list: c("a.csv", "b.csv"), ["a.csv", "b.csv"],
+    # a tuple or a dict, also when the list holds one text and stands in a
+    # larger one: {"S4": ["x.csv"], "S5": ["y.csv"]} (5cx93_v2; #648)
+    up <- ob
+    while (up > 0L && is_list_at(up, fn_at(up))) {
+      if (n_args_at(up) > 1L) return(TRUE)
+      up <- bo$owner[up]
+    }
+    # a function of the authors' own that joins its argument to a folder:
+    # derived_path <- function(f) file.path(DERIVED, f) (rxzpa_v1; #648)
+    if (nzchar(base_fn) && !base_fn %in% c("c", "list") &&
+        .repro_joining_function(text, base_fn)) return(TRUE)
+  }
+  # a name held in a variable on its own: a piece when the variable is used as one
+  if (depth == 0L) {
+    before <- paste(ch[max(1L, from - 200L):max(1L, from - 1L)], collapse = "")
+    m <- regmatches(before, regexec("(?:^|\n)\\s*([A-Za-z_.][A-Za-z0-9_.]*)\\s*(?:<-|=)\\s*$", before,
+                                    perl = TRUE))[[1]]
+    if (length(m) == 2) {
+      v <- m[2]
+      hits <- gregexpr(paste0("(?<![A-Za-z0-9_.$])", gsub(".", "\\.", v, fixed = TRUE), "(?![A-Za-z0-9_.])"),
+                       text, perl = TRUE)[[1]]
+      for (h in hits[hits > 0]) {
+        e <- h + nchar(v) - 1L
+        # the variable being given a value is no use of it
+        if (grepl("^\\s*(<-|=)(?!=)", substr(text, e + 1L, e + 5L), perl = TRUE)) next
+        if (.repro_path_piece(text, h, e, bo, depth = 1L)) return(TRUE)
+      }
+    }
+  }
+  FALSE
+}
+
+# Whether the script `text` defines a function `fn` (R `fn <- function(x)`,
+# Python `def fn(x)`) whose first argument it joins to a folder in the lines
+# that follow: `derived_path <- function(f) file.path(DERIVED, f)`, `def
+# out(name): return OUT / name` (#648). Also when it hands the argument on to
+# another such function of the authors': `have_derived <- function(f)
+# file.exists(derived_path(f))` (rxzpa_v1); `depth` stops a loop of functions
+# that call each other.
+.repro_joining_function <- function(text, fn, depth = 0L) {
+  q <- gsub(".", "\\.", fn, fixed = TRUE)
+  m <- regexpr(paste0("(?:(?<![A-Za-z0-9_.])", q, "\\s*(?:<-|=)\\s*function\\s*\\(|\\bdef\\s+", q, "\\s*\\()",
+                      "\\s*([A-Za-z_.][A-Za-z0-9_.]*)"), text, perl = TRUE)
+  if (m < 0) return(FALSE)
+  st <- attr(m, "capture.start")[1]
+  arg <- substr(text, st, st + attr(m, "capture.length")[1] - 1L)
+  if (!nzchar(arg) || arg %in% c("self", "...")) return(FALSE)
+  body <- substr(text, m + attr(m, "match.length"), m + attr(m, "match.length") + 800L)
+  a <- gsub(".", "\\.", arg, fixed = TRUE)
+  if (grepl(paste0("\\b(file\\.path|paste0?|str_c|here|path|join|Path)\\s*\\([^()]*(?<![A-Za-z0-9_.])", a,
+                   "(?![A-Za-z0-9_.])|[/+]\\s*", a, "(?![A-Za-z0-9_.])|(?<![A-Za-z0-9_.])", a, "\\s*[/+]"),
+            body, perl = TRUE)) return(TRUE)
+  if (depth >= 3L) return(FALSE)
+  # the argument handed on as the first argument of another function
+  inner <- regmatches(body, gregexpr(paste0("(?<![A-Za-z0-9_.$])([A-Za-z_.][A-Za-z0-9_.]*)\\s*\\(\\s*", a,
+                                            "\\s*[,)]"), body, perl = TRUE))[[1]]
+  inner <- setdiff(unique(sub("\\s*\\(.*$", "", inner)), fn)
+  any(vapply(inner, function(g) .repro_joining_function(text, g, depth + 1L), logical(1)))
+}
+
 .repro_apply_rewrites <- function(txt, rw) {
   if (is.null(rw) || !nrow(rw)) return(txt)
   good <- rw$matched & !rw$ambiguous & !is.na(rw$target) & nzchar(rw$target)
@@ -3689,6 +4143,12 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   # a folder's final "/" stays, as the code pastes a file name to it
   portable <- function(p) paste0(.portable_path(p), ifelse(grepl("[/\\\\]$", p), "/", ""))
   rw$target[good] <- portable(rw$target[good])
+  # A pattern of names ("./images/*.jpg") that matched a file gets that
+  # file's folder, but keeps its pattern: it was replaced by the one file it
+  # matched, "../docs/images/_.jpg", so the script read one image (#648).
+  ref_name <- basename(gsub("\\\\", "/", rw$ref))
+  wild <- good & !(is_call_col %in% TRUE) & !is.na(rw$ref) & grepl("[*?]", ref_name)
+  if (any(wild)) rw$target[wild] <- paste0(dirname(rw$target[wild]), "/", ref_name[wild])
   unportable <- kept & !(is_call_col %in% TRUE) & !is.na(rw$ref) &
     !grepl("^([A-Za-z]:[/\\\\]|/|~)", rw$ref) & portable(rw$ref) != gsub("\\\\", "/", rw$ref)
   rw$target[unportable] <- portable(rw$ref[unportable])
@@ -3697,16 +4157,52 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   # became the unparseable `"sprintf("%s/x.xlsx", wd)"`
   # (Lakens/tue_datamanager_check#4, item 9)
   good <- good & (!kept | unportable)
-  for (k in which(good)) {
-    if (isTRUE(is_call_col[k])) {
-      txt <- gsub(rw$ref[k], paste0('"', rw$target[k], '"'), txt, fixed = TRUE)
-    } else {
-      for (q in c('\\"', '"', "'"))
-        txt <- gsub(paste0(q, rw$ref[k], q), paste0(q, rw$target[k], q), txt,
-                    fixed = TRUE)
+  for (k in which(good & is_call_col %in% TRUE))
+    txt <- gsub(rw$ref[k], paste0('"', rw$target[k], '"'), txt, fixed = TRUE)
+  plain <- which(good & !is_call_col %in% TRUE)
+  if (!length(plain)) return(txt)
+  # Each place a plain reference stands in quotes is judged on its own: a piece
+  # the code joins to a folder (file.path(RAW, "x.csv"), `folder / "x.csv"`), a
+  # text in a list or a pattern stays as written, as the folder would be put in
+  # twice (.repro_path_piece(); #648); a whole path elsewhere in the script is
+  # rewritten. The places are found in the whole script, as a call can span
+  # lines, and replaced from the last, so the earlier places keep their position.
+  # A folder held in a variable on the authors' computer (.repro_folder_vars())
+  # is a whole value, rewritten wherever it stands. A piece keeps its folders,
+  # but a file name spelled otherwise than in the deposit is still corrected
+  # in it: here("data", "x.Rds") with x.rds in the deposit (#648).
+  whole <- if ("whole" %in% names(rw)) rw$whole %in% TRUE else rep(FALSE, nrow(rw))
+  respelled <- if ("name_in_deposit" %in% names(rw)) rw$name_in_deposit else rep(NA_character_, nrow(rw))
+  full <- paste(txt, collapse = "\n")
+  bo <- .repro_bracket_owner(full)
+  edits <- list()
+  for (k in plain) {
+    for (q in c('"', "'")) {
+      needle <- paste0(q, rw$ref[k], q)
+      at <- gregexpr(needle, full, fixed = TRUE)[[1]]
+      for (s in at[at > 0]) {
+        e <- s + nchar(needle) - 1L
+        new <- if (whole[k] || !.repro_path_piece(full, s, e, bo)) rw$target[k] else
+          if (!is.na(respelled[k]) && !isTRUE(bo$comment[s]))
+            sub(paste0(gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", basename(rw$ref[k])), "$"),
+                respelled[k], rw$ref[k], perl = TRUE) else NA_character_
+        if (!is.na(new))
+          edits[[length(edits) + 1L]] <- list(s = s, e = e, new = paste0(q, new, q))
+      }
     }
   }
-  txt
+  if (length(edits)) {
+    starts <- vapply(edits, `[[`, integer(1), "s")
+    for (ed in edits[order(starts, decreasing = TRUE)])
+      full <- paste0(substr(full, 1L, ed$s - 1L), ed$new, substr(full, ed$e + 1L, nchar(full)))
+  }
+  # a notebook's JSON escapes its quotes (\"x.csv\"); replaced as before
+  for (k in plain)
+    full <- gsub(paste0('\\"', rw$ref[k], '\\"'), paste0('\\"', rw$target[k], '\\"'), full, fixed = TRUE)
+  out <- strsplit(full, "\n", fixed = TRUE)[[1]]
+  # strsplit() drops empty lines at the end
+  if (length(out) < length(txt)) out <- c(out, rep("", length(txt) - length(out)))
+  out
 }
 
 # Replace each setwd()/os.chdir() line of a script with a statement that does
@@ -3948,6 +4444,11 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
       hit <- regmatches(m, regexec(p, m, perl = TRUE))[[1]]
       if (length(hit) > 1) return(trimws(hit[2]))
     }
+    # programs R packages start: Chrome for chrome_print() and webshot2, pandoc
+    # for rmarkdown and Word tables, Python for reticulate and argparse (#648)
+    if (grepl("Cannot find (Chromium or )?(Google )?Chrome|find_chrome\\(\\)", m, perl = TRUE)) return("Chrome")
+    if (grepl("[Pp]andoc[^\n]{0,40}(is required|not found|was not found|is not available)", m, perl = TRUE)) return("pandoc")
+    if (grepl("\\b[Pp]ython3? (is required|was not found|not found)|Python was not found", m, perl = TRUE)) return("Python")
     if (grepl("subprocess", m, fixed = TRUE)) {
       hit <- regmatches(m, regexec("FileNotFoundError: \\[Errno 2\\] No such file or directory: '([^'/]+)'", m))[[1]]
       if (length(hit) > 1) return(hit[2])
@@ -4013,6 +4514,17 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   out[outcome %in% c("download_too_large")] <- "download"
   out[outcome %in% c("timed_out") & has("while a download was still arriving")] <- "download"
   out[outcome %in% c("skipped_missing_inputs")] <- "file"
+  # A Python module that exists only on one platform (Google Colab, Kaggle,
+  # Windows, OpenSAFELY): the script can be checked only there, so neither a
+  # package that was not available nor an error of the code (#580, #648; in the
+  # medRxiv runs google.colab, win32com and ehrql).
+  out[outcome %in% c("errored", "dependency_unavailable") & !is.na(.repro_platform_of(msg))] <- "platform"
+  # A file of a package of the code, which imports its other files with "from .",
+  # run on its own: Python runs such a file only as a module of its package
+  # (python -m package.module), so this says how the run started it, not that a
+  # package was missing (#580, #648; 8 of 620 medRxiv papers)
+  out[outcome %in% "errored" & has("attempted relative import (?:with no known parent package|beyond top-level package)")] <-
+    "how_to_run"
   err <- outcome == "errored"
   set <- function(pat, label) out[err & is.na(out) & has(pat)] <<- label
   # stopped by the memory limit of the run (see .repro_oom_text()), before any
@@ -4032,24 +4544,97 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   }, character(1), USE.NAMES = FALSE)
   # provided by Snakemake when it runs the script, so only there
   set("object 'snakemake' not found|name 'snakemake' is not defined", "environment")
+  # a setting from the authors' computer that a deposit cannot hold: an
+  # environment variable with the place of restricted data, or a personal key
+  # for an online service ("LEVELS_DB is not set", "ANTHROPIC_API_KEY
+  # environment variable is required", openai's "Missing credentials") (#648)
+  set(paste0("\\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\\b[^\n]{0,40}?\\b(?:is not set|not set\\b|is required|must be set)|",
+             "environment variable[^\n]{0,60}?\\b(?:is not set|not set|is required|must be set|missing)|",
+             "[Ss]et the [^\n]{0,40}?environment variable|Missing credentials|api[_ ]?key[^\n]{0,40}?(?:not set|missing|required)|",
+             # a key, token or password the authors' own message asks for
+             # ("ERROR: set ZENODO_TOKEN", "Either set OPENAI_API_KEY"), a
+             # cloud sign-in (Google's "default credentials were not found"),
+             # and a variable a platform sets, read from the environment
+             # (All of Us: KeyError: 'WORKSPACE_CDR') (#648, K4)
+             "(?i:\\b(?:set|provide|missing|export|define)\\b)[^\n]{0,40}?\\b[A-Z][A-Z0-9]*_(?:[A-Z0-9]+_)*",
+             "(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?|API)\\b|",
+             "DefaultCredentialsError|default credentials were not found|",
+             "could not automatically determine credentials"),
+      "settings")
+  out[err & is.na(out) & has("KeyError: '[A-Z][A-Z0-9_]{2,}'") &
+        grepl("environ|os\\.py", full, perl = TRUE)] <- "settings"
   set("there is no package called|ModuleNotFoundError|No module named|ImportError|package or namespace|Error: package ", "package")
+  # a package that another package loads only when one of its functions is
+  # used, so the run did not install it: "Please install the 'cmdstanr'
+  # package", 'The package "broom.helpers" (>= 1.20.0) is required' (#648)
+  set(paste0("[Pp]lease install the ['\"`\u2018][^'\"`\u2019]+['\"`\u2019] package|",
+             "[Tt]he package ['\"`\u2018][^'\"`\u2019]+['\"`\u2019] (?:\\([^)]*\\) )?is required|",
+             "requires the ['\"`\u2018][^'\"`\u2019]+['\"`\u2019] package"), "package")
+  # a program our run does not have (git, pandoc, Chrome): a gap in our run
+  out[err & is.na(out) & !is.na(.repro_missing_program(full))] <- "environment"
   # "does not exist" only of a file: Stan's "variable does not exist" is not one
   # (10.1111/1365-2435.14436; #575, item 10)
   file_pat <- paste0("cannot open the connection|cannot open file|No such file|FileNotFoundError|",
                      "(?:[Ff]ile|[Pp]ath|[Dd]irectory|[Ff]older|['\"\u2018\u2019`])[^\n]{0,300}?does not exist|",
-                     "does not exist:? *['\"\u2018`/~.]|Cannot find the file|Could not find a root|cannot open compressed")
+                     "does not exist:? *['\"\u2018`/~.]|Cannot find the file|Could not find a root|cannot open compressed|",
+                     # "Data file not found: x", "model file(s) not found", h5py's
+                     # "unable to open file", ggsave's "Cannot find directory",
+                     # sf's "The file doesn't seem to exist" (#648)
+                     "[Ff]ile(?:\\(s\\)|s)? not found|[Uu]nable to open file|",
+                     "[Cc]annot find (?:the )?(?:directory|folder)|doesn't seem to exist")
   # a file error after a program could not be started is about the program
   # (#575, item 7): "Output file does not exist. Unable to find or run mark.exe"
   out[err & is.na(out) & has(file_pat) & !is.na(.repro_missing_program(full))] <- "environment"
   set(file_pat, "file")
+  # a function only R for Windows has, which the run's Linux lacks: the plot
+  # windows (windows(), win.graph(), bringToTop()), its own plot files and fonts.
+  # Without this, "could not find function \"windows\"" counted as something the
+  # code does not define (#580).
+  set(paste0("could not find function \"(?:windows|win\\.graph|win\\.metafile|win\\.print|",
+             "bringToTop|msgWindow|windowsFonts?)\""), "environment")
+  # names Jupyter itself provides to a notebook, run here as plain Python
+  # (ufpgn_v1's display(); #648)
+  set("name '(?:display|get_ipython)' is not defined", "environment")
   set("object '[^']*' not found|could not find function|NameError|is not defined", "undefined")
   set("SyntaxError|IndentationError", "syntax")
-  set("shared object|ImproperlyConfigured|cannot cache function|cannot open display|X11|can only print from a screen device", "environment")
+  set(paste0("shared object|ImproperlyConfigured|cannot cache function|cannot open display|X11|",
+             "can only print from a screen device|unable to start data viewer"), "environment")
   # R itself crashed, in a package's compiled code: rgeos, installed from the
   # CRAN Archive, crashes on every geometry against the GEOS of the image (#568)
   set("caught segfault|Segmentation fault|core dumped|caught illegal operation", "environment")
   out[err & is.na(out) & !grepl("\\S", msg)] <- "no_message"
   out[err & is.na(out)] <- "other"
+  out
+}
+
+# Which run results are of code recovered from a knitted report (`from_report`,
+# file names) and stopped on what would otherwise count against the code: a
+# file, a name not defined, a syntax error, or another error. A knitted report
+# leaves out the chunks it does not show (echo = FALSE, include = FALSE), so
+# such code is incomplete, and its failure says nothing about the authors'
+# analysis (#648, K8a).
+.repro_from_report_failed <- function(run_results, from_report) {
+  if (is.null(run_results) || !nrow(run_results) || !length(from_report)) return(rep(FALSE, NROW(run_results)))
+  run_results$outcome %in% "errored" & run_results$file_name %in% from_report &
+    run_results$reason %in% c("file", "undefined", "syntax", "other", "no_message")
+}
+
+# The platform a Python module that exists only there belongs to, from an error
+# "No module named '<module>'": "Google Colab" (google.colab), "Kaggle"
+# (kaggle_secrets and the like), "Windows" (pywin32's win32com, win32api and
+# the like; winreg and msvcrt of Python on Windows) or "OpenSAFELY" (ehrql,
+# cohortextractor). NA for any other message.
+.repro_platform_of <- function(msg) {
+  msg <- ifelse(is.na(msg), "", msg)
+  mod <- regmatches(msg, regexec("No module named ['\"]([A-Za-z0-9_.]+)['\"]", msg))
+  mod <- vapply(mod, function(m) if (length(m) > 1) m[[2]] else "", character(1))
+  top <- sub("\\..*$", "", mod)
+  out <- rep(NA_character_, length(msg))
+  out[grepl("^google\\.colab(\\.|$)", mod)] <- "Google Colab"
+  out[grepl("^kaggle_(secrets|datasets|web_client|gcp)$", top)] <- "Kaggle"
+  out[top %in% c("win32com", "win32api", "win32con", "win32gui", "win32file", "win32process",
+                 "win32clipboard", "pywintypes", "pythoncom", "winreg", "_winreg", "msvcrt")] <- "Windows"
+  out[top %in% c("ehrql", "cohortextractor")] <- "OpenSAFELY"
   out
 }
 
@@ -4061,6 +4646,18 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
     return(character(0))
   unique(install_results$package[!install_results$installed &
                                    install_results$category %in% "source_unknown"])
+}
+
+# The report's sentence on the packages installed before the run. It named
+# every package tried as installed, also those that failed: "6 succeeded, 1
+# failed. matplotlib, monai, ... were installed." (#648)
+.repro_install_sentence <- function(install_results, pip = FALSE) {
+  ok <- install_results$package[install_results$installed %in% TRUE]
+  n_ok <- length(ok)
+  n_fail <- nrow(install_results) - n_ok
+  paste0(sprintf("Dependencies were installed into a throwaway library before running%s: %d succeeded, %d failed.",
+                 if (pip) " (`pip install`)" else "", n_ok, n_fail),
+         if (n_ok) sprintf(" %s %s installed.", paste(ok, collapse = ", "), plural(n_ok, "was", "were")) else "")
 }
 
 .repro_source_unknown_text <- function(pkgs) {
@@ -4077,8 +4674,121 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
 # Every reason .repro_failure_reason() gives, so each paper's row of summary_table
 # has the same columns, also for a reason none of its scripts had.
 .repro_reason_levels <- c("file", "package", "undefined", "syntax", "environment",
-                          "internet", "download", "interactive", "time",
-                          "no_message", "other")
+                          "settings", "platform", "how_to_run", "from_report", "internet", "download",
+                          "interactive", "time", "no_message", "other")
+
+# Outcomes of files that are not scripts with a result of their own: run by
+# another script, files of software or of functions only, not downloaded,
+# empty. The summary counted them as scripts run: "0 of 5 scripts ran" when 4
+# were files of a package that were rightly not run (#648).
+.repro_not_own_outcomes <- c("run_by_source", "run_by_import", "jags_model", "not_r_content",
+                             "static_jags_model", "static_not_r_content",
+                             "defines_functions", "not_analysis",
+                             "static_defines_functions", "static_not_analysis",
+                             "not_downloaded", "empty", "static_empty")
+# Outcomes of scripts that were started. The summary said "We assessed AND ran
+# 32 Python code files" when none was started (#648).
+.repro_started_outcomes <- c("ran_ok", "errored", "timed_out", "needs_a_person", "needs_internet",
+                             "download_too_large", "out_of_memory")
+
+# What the run of each script says about the code (#580), in five groups, so
+# that a script that does not reproduce is kept apart from one the check could
+# not test:
+# - "ran": it ran to the end;
+# - "code_error": it did not reproduce: it stopped with an error of the code or
+#   the deposit (a file it reads, something it does not define), could not be
+#   read, is Python 2 code, or needs a file the deposit does not hold;
+# - "dependency": a package or a program was not available: a package that
+#   could not be installed or was not loaded ("there is no package called"), a
+#   program outside R and Python, a system library ("shared object"), or R
+#   crashing in a package's compiled code, which comes from a system library
+#   of our computer that does not match the package (#652);
+# - "time": it did not finish within the time limit for one script, or was not
+#   started because the time for all scripts together had run out;
+# - "not_checkable": it could not be checked automatically, because it needs a
+#   person, the internet, a key or another setting of the authors' computer,
+#   one platform (Google Colab, Kaggle, Windows, OpenSAFELY), more memory than
+#   the run allows, a download that was too large, a file we did not download,
+#   a screen, or a program that runs it (Snakemake), or it is a file of a
+#   package of the code that Python runs only as a module of that package.
+# NA for what is not a result of the script itself: a file run inside another
+# script, a file that is not an analysis, a file not read, and a Docker failure,
+# which says nothing about the code. `reason` is .repro_failure_reason()'s, and
+# `msg` the script's output, which tells a missing program or system library
+# apart from the other needs of the reason "environment".
+.repro_check_groups <- c("ran", "code_error", "dependency", "time", "not_checkable")
+.repro_check_group <- function(outcome, reason = NULL, msg = NULL) {
+  n <- length(outcome)
+  if (!n) return(character(0))
+  reason <- rep_len(reason %||% NA_character_, n)
+  msg <- rep_len(msg %||% "", n)
+  msg[is.na(msg)] <- ""
+  err <- outcome %in% "errored"
+  out <- rep(NA_character_, n)
+  out[outcome %in% "ran_ok"] <- "ran"
+  out[outcome %in% c("errored", "not_parsed", "python2", "skipped_missing_inputs")] <- "code_error"
+  out[outcome %in% "dependency_unavailable" | (err & reason %in% "package")] <- "dependency"
+  out[outcome %in% c("timed_out", "skipped_time_limit")] <- "time"
+  out[outcome %in% c("needs_a_person", "needs_internet", "out_of_memory", "download_too_large",
+                     "not_downloaded")] <- "not_checkable"
+  out[err & reason %in% c("settings", "internet", "interactive", "download")] <- "not_checkable"
+  # a module of one platform, or a file of a package run on its own, also when
+  # the install tried to find the module as a package
+  out[outcome %in% c("errored", "dependency_unavailable") & reason %in% c("platform", "how_to_run", "from_report")] <-
+    "not_checkable"
+  env <- err & reason %in% "environment"
+  missing_software <- env & !.repro_out_of_memory(msg) &
+    (!is.na(.repro_missing_program(msg)) |
+       grepl("shared object|caught segfault|Segmentation fault|core dumped|caught illegal operation",
+             msg, perl = TRUE))
+  out[missing_software] <- "dependency"
+  out[env & !missing_software] <- "not_checkable"
+  out
+}
+
+# The module summary's sentence on the scripts that did not run to the end,
+# by group (#580): "Of the others, 2 did not reproduce, 1 could not run because
+# a package or program was not available, and 1 could not be checked
+# automatically." Only scripts with a result of their own count (as in "3 of 6
+# scripts ran without error"), and not a Docker failure. NULL when there are none.
+.repro_groups_sentence <- function(run_results) {
+  if (is.null(run_results) || !nrow(run_results)) return(NULL)
+  oc <- run_results$outcome
+  group <- run_results$checked %||% .repro_check_group(
+    oc, run_results$reason, paste(run_results$error %||% "", run_results$stderr %||% ""))
+  own <- !oc %in% .repro_not_own_outcomes
+  n <- vapply(c("code_error", "dependency", "time", "not_checkable"),
+              function(g) sum(own & group %in% g), integer(1))
+  parts <- c(code_error = "did not reproduce",
+             dependency = "could not run because a package or program was not available",
+             time = "did not finish within the time limit",
+             not_checkable = "could not be checked automatically")
+  parts <- sprintf("%d %s", n, parts)[n > 0]
+  if (!length(parts)) return(NULL)
+  if (length(parts) > 1) parts <- c(parts[-length(parts)], paste("and", parts[[length(parts)]]))
+  paste0("Of the others, ", paste(parts, collapse = if (length(parts) > 2) ", " else " "), ".")
+}
+
+# The light after a run of one language, from the light before it (`tl`, from
+# the files the code reads) and the scripts' outcomes and reasons. A script
+# that stopped on an error of the code makes it red. Yellow, when nothing is
+# red: a script whose package or program was not available, that ran past a
+# time limit (a slow analysis is not an error of the code; a time-out alone
+# made 5 papers red, #648), or that could not be checked automatically (see
+# .repro_check_group(); #580); a Docker failure or a file not read on our
+# side; and a run in which no script ran to the end, which was green when
+# every script was set aside or could not install its packages (#648).
+.repro_run_light <- function(tl, run_results) {
+  if (is.null(run_results) || !nrow(run_results)) return(tl)
+  oc <- run_results$outcome
+  group <- run_results$checked %||% .repro_check_group(
+    oc, run_results$reason, paste(run_results$error %||% "", run_results$stderr %||% ""))
+  if (any(oc %in% "errored" & group %in% "code_error")) return("red")
+  unfinished <- any(group %in% c("dependency", "time", "not_checkable")) ||
+    any(oc %in% c("docker_failed", "not_read")) ||
+    !any(oc %in% c("ran_ok", "run_by_source", "run_by_import"))
+  if (unfinished && identical(tl, "green")) "yellow" else tl
+}
 
 # Per-paper counts for summary_table (#568, item 24): the scripts with a result
 # of their own, the files of software that were not run (not analyses, counted
@@ -4087,8 +4797,12 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
 # failure or a file not read on our side are not scripts with a result of their
 # own, nor is a script that stopped on
 # a file we did not download (counted apart as well). NA when nothing was run.
+# Also, per group of .repro_check_group(), how many of these scripts are in it
+# (`repro_ran_n`, `repro_code_error_n`, `repro_dependency_n`, `repro_time_n`,
+# `repro_not_checkable_n`; #580).
 .repro_run_counts <- function(run_results) {
   cols <- c("repro_scripts_n", "repro_not_analysis_n", "repro_not_downloaded_n",
+            paste0("repro_", .repro_check_groups, "_n"),
             paste0("repro_fail_", .repro_reason_levels))
   if (is.null(run_results) || !nrow(run_results) || !"outcome" %in% names(run_results))
     return(as.data.frame(as.list(stats::setNames(rep(NA_integer_, length(cols)), cols))))
@@ -4100,8 +4814,11 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
                              "not_downloaded", "not_read", "empty") &
     !is.na(outcome)
   fails <- vapply(.repro_reason_levels, function(r) sum(counted & reason %in% r), integer(1))
+  group <- run_results$checked %||% .repro_check_group(
+    outcome, reason, paste(run_results$error %||% "", run_results$stderr %||% ""))
+  groups <- vapply(.repro_check_groups, function(g) sum(counted & group %in% g), integer(1))
   as.data.frame(as.list(stats::setNames(
-    c(sum(counted), sum(outcome %in% "not_analysis"), sum(outcome %in% "not_downloaded"), fails),
+    c(sum(counted), sum(outcome %in% "not_analysis"), sum(outcome %in% "not_downloaded"), groups, fails),
     cols)))
 }
 
@@ -4163,10 +4880,18 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
     if (identical(lang, "Python")) "argparse|sys[.]argv|getopt|docopt|click[.](command|argument|option)"
     else "commandArgs[(]|optparse|OptionParser[(]|parse_args[(]|argparser::|arg_parser[(]|docopt[(]",
     paste(s, collapse = "\n"), perl = TRUE), logical(1))
+  # The script's own message about its arguments, in either language: "Provide
+  # the file index as the first command-line argument", "--units is required",
+  # argparse's "error: one of --synthetic / --real is required", "One of -x,
+  # -y, or -z should be given" (#648)
+  own <- paste0("command[- ]line arguments?\\b|",
+                "(?:^|[\\s'\"`])--?[A-Za-z][\\w-]*\\b[^\n]{0,60}?\\b(?:is|are) required|",
+                "\\b[Oo]ne of --?[A-Za-z][\\w-]*|",
+                "--?[A-Za-z][\\w-]*\\b[^\n]{0,60}?\\b(?:should|must) be (?:given|specified|provided|supplied)")
   points <- if (identical(lang, "Python"))
-    grepl(paste0("the following arguments are required|: error: (argument|unrecognized arguments)|",
-                 "Use '-h'|sys[.]argv\\[|parse_args\\("), txt, perl = TRUE)
-  else grepl("Error in [^\n:]*(\\bargs?\\[|\\bargv\\[|commandArgs)", txt, perl = TRUE)
+    grepl(paste0("the following arguments are required|: error: (argument|unrecognized arguments|one of)|",
+                 "Use '-h'|sys[.]argv\\[|parse_args\\(|", own), txt, perl = TRUE)
+  else grepl(paste0("Error in [^\n:]*(\\bargs?\\[|\\bargv\\[|commandArgs)|", own), txt, perl = TRUE)
   usage <- grepl("(?im)^\\s*usage\\s*:|Show this help message and exit", paste(txt, out), perl = TRUE)
   unname(reads & (points | usage))
 }
@@ -4249,6 +4974,66 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   out
 }
 
+# The calls of R code that need a screen, which the run does not have (#580).
+# Code written in RStudio or R on Windows always has one, so these calls are
+# no error of the code, but they stopped the script: dev.print(),
+# dev.copy2pdf() and dev.copy2eps() with "can only print from a screen
+# device", savePlot() with "can only copy from 'X11(type="*cairo")' devices",
+# x11() with "unable to start device X11cairo", View() with "unable to start
+# data viewer", and windows() with "could not find function". The name of each
+# call is replaced by a function written in its place, so the script's own
+# arguments stay as they are (also over several lines and in a pipe, "df %>%
+# View()") and the script keeps its number of lines:
+# - dev.print(), dev.copy2pdf(), dev.copy2eps() and savePlot() copy the plot
+#   to the file with dev.copy(), which needs no screen, close that copy, and
+#   go back to the plot that was open, as the originals do; savePlot()'s type
+#   chooses the device ("png" when it names none we have) and is added to a
+#   file name without an extension, as R for Windows does;
+# - windows(), win.graph(), x11(), X11() and quartz() open nothing: the next
+#   plot opens the run's default device, which writes to a file;
+# - View() shows nothing.
+# Each replacement says what it replaced. Returns list(txt, calls = the name of
+# each call replaced, once per call).
+.repro_screen_replacements <- local({
+  back <- "if (.d %in% grDevices::dev.list()) grDevices::dev.set(.d)"
+  copy_to <- function(device) sprintf(paste0(
+    "(function(...) { .d <- grDevices::dev.cur(); grDevices::dev.copy(device = %s, ...); ",
+    "grDevices::dev.off(); %s; invisible(.d) })"), device, back)
+  nothing <- function(name) sprintf(
+    "(function(...) invisible(\"reproducibility_check removed %s(), which needs a screen\"))", name)
+  c(dev.print = sprintf(paste0(
+      "(function(device = grDevices::postscript, ...) { .d <- grDevices::dev.cur(); ",
+      "grDevices::dev.copy(device = device, ...); grDevices::dev.off(); %s; invisible(.d) })"), back),
+    dev.copy2pdf = sub("(function(...)", "(function(..., out.type = \"pdf\")",
+                       copy_to("grDevices::pdf"), fixed = TRUE),
+    dev.copy2eps = copy_to("grDevices::postscript"),
+    savePlot = paste0(
+      "(function(filename = \"Rplot\", type = \"png\", device = grDevices::dev.cur(), ...) { ",
+      "type <- type[[1]]; to <- switch(type, jpg = , jpeg = grDevices::jpeg, tif = , tiff = grDevices::tiff, ",
+      "bmp = grDevices::bmp, pdf = grDevices::pdf, ps = , eps = grDevices::postscript, grDevices::png); ",
+      "if (!grepl(\".\", basename(filename), fixed = TRUE)) filename <- paste0(filename, \".\", type); ",
+      ".d <- grDevices::dev.cur(); grDevices::dev.set(device); grDevices::dev.copy(device = to, filename); ",
+      "grDevices::dev.off(); ", back, "; invisible(NULL) })"),
+    windows = nothing("windows"), win.graph = nothing("win.graph"), x11 = nothing("x11"),
+    X11 = nothing("X11"), quartz = nothing("quartz"), View = nothing("View"))
+})
+
+.repro_replace_screen_calls <- function(txt) {
+  calls <- character(0)
+  if (!length(txt)) return(list(txt = txt, calls = calls))
+  for (f in names(.repro_screen_replacements)) {
+    pat <- paste0("(?<![\\w.:$@])(?:(?:grDevices|utils)::)?", gsub(".", "\\.", f, fixed = TRUE),
+                  "(?=\\s*\\()")
+    # not in a line that is a comment, which would count a call never made
+    hit <- grepl(pat, txt, perl = TRUE) & !grepl("^\\s*#", txt)
+    if (!any(hit)) next
+    n <- sum(lengths(regmatches(txt[hit], gregexpr(pat, txt[hit], perl = TRUE))))
+    calls <- c(calls, rep(paste0(f, "()"), n))
+    txt[hit] <- gsub(pat, .repro_screen_replacements[[f]], txt[hit], perl = TRUE)
+  }
+  list(txt = txt, calls = calls)
+}
+
 # The same for a project's .Rprofile, which R runs when it starts: it usually
 # holds source("renv/activate.R"), which downloads renv and changes the library
 # the run uses. The rest of the file stays, since it can set options the analysis
@@ -4258,7 +5043,7 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
   paths <- list.files(root, pattern = "^\\.Rprofile$", recursive = TRUE, all.files = TRUE, full.names = TRUE)
   n <- 0L
   for (path in paths) {
-    txt <- tryCatch(readLines(path, warn = FALSE), error = function(e) NULL)
+    txt <- tryCatch(.utf8_lines(readLines(path, warn = FALSE)), error = function(e) NULL)
     if (is.null(txt)) next
     res <- .repro_neutralise_env_calls(txt)
     if (res$n > 0) tryCatch(writeLines(res$txt, path), error = function(e) NULL)
@@ -4477,6 +5262,8 @@ repro_materialize_layout <- function(plan, structure_df, root, deadline = NULL) 
 #'   `setwd_removed` (count of `setwd()`/`os.chdir()` calls replaced with a
 #'   statement that does nothing),
 #'   `env_calls_replaced` (count of groundhog, checkpoint and renv calls replaced),
+#'   `screen_calls_replaced` (the calls that need a screen replaced in R code,
+#'   one name per call, joined by "; "; see `.repro_replace_screen_calls()`),
 #'   `slashes_fixed` (the quoted Windows paths given `/`, as they were, joined by
 #'   "; "; see `.repro_slash_paths()`),
 #'   `setwd_folder_removed` (the paths made relative to the working folder
@@ -4599,6 +5386,11 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
       env_n <- env$n
     }
 
+    # calls that need a screen, which the run does not have (#580)
+    screen <- if (identical(fn_lang, "R")) .repro_replace_screen_calls(txt) else
+      list(txt = txt, calls = character(0))
+    txt <- screen$txt
+
     # lib.loc pointing to a folder on the authors' computer (#594)
     lib_loc <- if (identical(fn_lang, "R")) .repro_drop_author_lib_loc(txt) else
       list(txt = txt, paths = character(0))
@@ -4655,6 +5447,14 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     if (fn %in% names(prepend)) txt <- c(prepend[[fn]], txt)
 
     tgt  <- script_target(fn, i)
+    # A document (R Markdown, Quarto, a Jupyter notebook) runs as the code taken
+    # out of it, written next to it under its own name with the language's
+    # extension ("analysis.Rmd.R"); the document stays as deposited, so a script
+    # that renders it (rmarkdown::render(), quarto::quarto_render(), nbconvert)
+    # finds it whole. In vtwbs_v2 the .qmd files had become bare R code, so the
+    # main script rendered nothing and was reported as having run (#648).
+    run_ext <- if (identical(fn_lang, "Python")) "py" else "R"
+    if (!grepl(paste0("\\.", run_ext, "$"), tgt, ignore.case = TRUE)) tgt <- paste0(tgt, ".", run_ext)
     dest <- file.path(root, .portable_path(tgt))
     dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
     # A script that cannot be written (a path too long for the system) is run and
@@ -4672,6 +5472,7 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
                run_dir = if (run_dir == ".") root else file.path(root, .portable_path(run_dir)),
                setwd_removed = setwd_n,
                env_calls_replaced = env_n,
+               screen_calls_replaced = paste(screen$calls, collapse = "; "),
                slashes_fixed = paste(slashed$paths, collapse = "; "),
                setwd_folder_removed = paste(under_setwd$paths, collapse = "; "),
                setwd_paths = paste(setwd_paths, collapse = ", "),
@@ -4835,7 +5636,7 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
 .repro_upgrade_stan_files <- function(root) {
   files <- list.files(root, pattern = "\\.stan$", recursive = TRUE, full.names = TRUE, ignore.case = TRUE)
   rows <- lapply(files, function(f) {
-    txt <- tryCatch(readLines(f, warn = FALSE), error = function(e) NULL)
+    txt <- tryCatch(.utf8_lines(readLines(f, warn = FALSE)), error = function(e) NULL)
     if (is.null(txt)) return(NULL)
     up <- .repro_upgrade_stan(txt)
     if (!length(up$changes)) return(NULL)
@@ -4927,6 +5728,12 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
     # a regular expression: an escaped dot, or one of ^ $ * + ? | ( ) [ ] { }
     path_like <- !grepl("\\\\\\\\\\.", inner, perl = TRUE) &
       !grepl("[\\^$*+?|()\\[\\]{}]", inner, perl = TRUE)
+    # the replacement of a pattern call, where \\1 is the first group:
+    # sub("^key(.*)[.]csv$", "sheet\\1_scored.xlsx", x) gave "sheet/1_scored.xlsx" (#648)
+    in_pattern_call <- vapply(m, function(at) grepl(paste0(
+      "\\b(sub|gsub|str_replace(_all)?|regmatches|re\\.subn?)\\s*\\("), substr(line, 1L, at - 1L), perl = TRUE),
+      logical(1))
+    path_like <- path_like & !(in_pattern_call & grepl("\\\\\\\\[0-9]", inner, perl = TRUE))
     if (!any(path_like)) return(line)
     new <- hits
     new[path_like] <- paste0(substr(hits[path_like], 1, 1),
@@ -5180,9 +5987,20 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
 
 # What installing recorded versions does not do, as sentences: the limitation
 # stated in both the warning before a run and the report after it.
+# The recorded R version a run used, or NA when it kept its own: only a
+# Docker run with docker_use_declared_version = TRUE uses it, in the image
+# rocker/r-ver:<version> (.repro_docker_image_for(), which takes "latest" for
+# a version it cannot use as a tag).
+.repro_recorded_r_used <- function(version_pin, sandbox, use_declared = FALSE) {
+  declared <- version_pin$r_versions %||% character(0)
+  if (!identical(sandbox, "docker") || !isTRUE(use_declared) || !length(declared)) return(NA_character_)
+  tag <- sub("^rocker/r-ver:", "", .repro_docker_image_for(declared, use_declared_version = TRUE))
+  if (identical(tag, "latest")) NA_character_ else tag
+}
+
 .repro_recorded_limits <- function(recorded, version_pin, sandbox, use_declared = FALSE) {
   declared <- version_pin$r_versions %||% character(0)
-  r_kept <- !(sandbox == "docker" && isTRUE(use_declared) && length(declared) > 0)
+  r_kept <- is.na(.repro_recorded_r_used(version_pin, sandbox, use_declared))
   bioc <- recorded$deps$package[recorded$deps$source == "bioc" & !is.na(recorded$deps$version)]
   kept <- recorded$kept_with_r$package
   c(if (r_kept) sprintf(
@@ -5228,15 +6046,25 @@ repro_write_scripts <- function(code_text_list, rewrite_list, plan, root,
        replaced = installed & !same, failed = !installed)
 }
 
-# One sentence for the summary and the checklist. NULL without recorded versions.
-.repro_recorded_summary <- function(recorded, install_results) {
+# One sentence for the summary and the checklist. NULL without recorded
+# versions. It said "but did not change the R version" also when a Docker run
+# with docker_use_declared_version = TRUE used the recorded R version (#649).
+.repro_recorded_summary <- function(recorded, install_results, version_pin = NULL,
+                                    sandbox = "none", use_declared = FALSE) {
   if (is.null(recorded) || is.null(install_results) || !nrow(install_results)) return(NULL)
   counts <- .repro_recorded_counts(recorded, install_results)
   n <- nrow(counts$listed)
+  r_used <- .repro_recorded_r_used(version_pin, sandbox, use_declared)
+  if (is.na(r_used)) {
+    return(sprintf(paste0("We installed %d of the %d package%s the scripts load and the repository ",
+                          "lists at the recorded version, but did not change the R version, so ",
+                          "this is not an exact copy of the authors' setup."),
+                   sum(counts$exact), n, plural(n)))
+  }
   sprintf(paste0("We installed %d of the %d package%s the scripts load and the repository ",
-                 "lists at the recorded version, but did not change the R version, so ",
-                 "this is not an exact copy of the authors' setup."),
-          sum(counts$exact), n, plural(n))
+                 "lists at the recorded version, and used the recorded R version (%s)%s."),
+          sum(counts$exact), n, plural(n), r_used,
+          if (sum(counts$exact) < n) ", so this is not an exact copy of the authors' setup" else "")
 }
 
 # The section of the report on the recorded versions a run used. NULL without them.
@@ -6123,7 +6951,8 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE,
 .repro_shown_location <- function(files, idx) {
   col <- function(nm) if (nm %in% names(files)) as.character(files[[nm]][idx]) else rep(NA_character_, length(idx))
   url <- col("file_url")
-  path <- col("file_path")
+  # the path in the deposit, not where unpacking its archive put the file (#648)
+  path <- dplyr::coalesce(col("file_path_deposit"), col("file_path"))
   ifelse(!is.na(url) & grepl("^https?://", url), url,
          ifelse(!is.na(path) & nzchar(path), path, NA_character_))
 }
@@ -6266,7 +7095,11 @@ repro_install_deps <- function(install_deps, lib_dir, cran_to_main_lib = FALSE,
 #'   `elapsed` (seconds), and `script_lines` (list-column: the EXECUTED script's
 #'   own text, one element per source line — the exact text `stdout`'s echoed
 #'   statements were run from, so [read_r_output()] can match them back to a
-#'   line number; empty character(0) for a script that did not run).
+#'   line number; empty character(0) for a script that did not run),
+#'   `captures`, and `started_at`, `ended_at` (when the run started and ended,
+#'   ISO 8601 in UTC) and `exit_status` (the process's exit status, as callr
+#'   reports it; NA for a script that did not run or reached a time limit),
+#'   kept for a TRO (see `R/provenance.R`).
 #' @param deadline the time ([Sys.time()] plus the time for all scripts
 #'   together) after which no script is started, recorded as
 #'   `skipped_time_limit`; a running script is stopped then. `NULL` (the
@@ -6291,7 +7124,7 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
                       error = character(0), error_type = character(0),
                       undefined_var = character(0), stdout = character(0),
                       stderr = character(0), elapsed = numeric(0)) |>
-             dplyr::mutate(script_lines = list(), captures = list()))
+             dplyr::mutate(script_lines = list(), captures = list()) |> .repro_add_run_clock())
   if (!requireNamespace("callr", quietly = TRUE))
     stop("the 'callr' package is required to execute code (execute = TRUE).",
          call. = FALSE)
@@ -6306,7 +7139,10 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
   on.exit(pb_run$terminate())
   run_started <- Sys.time()
 
-  rows <- lapply(ordered_names, function(fn) {
+  # each script's start, end and exit status, for run_results' started_at,
+  # ended_at and exit_status (see .repro_add_run_clock(), R/provenance.R)
+  clock <- new.env()
+  run_one <- function(fn) {
     pb_run$tick(1, list(what = sprintf("Running %s (%s so far)", fn, .repro_duration(
       as.numeric(difftime(Sys.time(), run_started, units = "secs"))))))
     row <- run_tbl[run_tbl$file_name == fn, ][1, ]
@@ -6340,7 +7176,7 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
     # matches echoed statements against to recover a line number, so it must be
     # read from script_path (not the pre-rewrite code_text_list) to stay aligned
     # with what the echo in stdout actually shows.
-    exec_lines <- tryCatch(readLines(row$script_path, warn = FALSE),
+    exec_lines <- tryCatch(.utf8_lines(readLines(row$script_path, warn = FALSE)),
                            error = function(e) character(0))
 
     # DEBUG (TEMPORARY — remove before release): announce each script as it starts
@@ -6363,6 +7199,7 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
     # case the stdout path alone is used.
     cap_file <- tempfile(fileext = ".rds")
     t0 <- Sys.time()
+    clock$started <- t0
     out <- tryCatch(
       callr::r(
         # callr::r() has no working-directory argument, so set it INSIDE the
@@ -6377,13 +7214,15 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
         stdout = out_file, stderr = err_file),
       error = function(e) e)
     elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
+    clock$ended <- Sys.time()
+    clock$status <- if (inherits(out, "condition")) .repro_exit_status(out) else 0L
     captures <- if (file.exists(cap_file))
       tryCatch(readRDS(cap_file), error = function(e) NULL) else NULL
     unlink(cap_file)
 
     # Read whatever the child wrote before it finished / errored / timed out.
     read_cap <- function(f) if (file.exists(f))
-      paste(readLines(f, warn = FALSE), collapse = "\n") else ""
+      paste(.utf8_lines(readLines(f, warn = FALSE)), collapse = "\n") else ""
     so <- read_cap(out_file); se <- read_cap(err_file)
     unlink(c(out_file, err_file))
 
@@ -6464,6 +7303,10 @@ repro_run_scripts <- function(run_tbl, order, lib_dir = NULL, timeout = 600,
         dplyr::mutate(script_lines = list(exec_lines),
                       captures = list(captures))
     }
+  }
+  rows <- lapply(ordered_names, function(fn) {
+    rm(list = ls(clock), envir = clock)
+    .repro_add_run_clock(run_one(fn), clock)
   })
-  dplyr::bind_rows(rows)
+  .repro_add_run_clock(dplyr::bind_rows(rows))
 }

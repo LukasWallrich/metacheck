@@ -1253,6 +1253,180 @@ test_that("the Dryad bulk download is used for every Dryad DOI form", {
   }
 })
 
+test_that(".github_raw_parts reads the repository, branch and path of a GitHub file address (#675)", {
+  p <- metacheck:::.github_raw_parts(c(
+    "https://raw.githubusercontent.com/Lakens/open_peer_review/master/peerj/10.txt",
+    "https://raw.githubusercontent.com/o/r/main/data%20raw/a%20b.csv",
+    "https://osf.io/download/abcde/", NA))
+  expect_equal(p$repo, c("Lakens/open_peer_review", "o/r", NA, NA))
+  expect_equal(p$ref, c("master", "main", NA, NA))
+  expect_equal(p$path, c("peerj/10.txt", "data raw/a b.csv", NA, NA))
+})
+
+test_that(".osf_storage_totals counts each OSF storage once per file (#675)", {
+  f <- data.frame(
+    osf_node = c("n1", "n1", "n1", "n2", "n1", NA),
+    provider = c("osfstorage", "osfstorage", "github", "osfstorage", "osfstorage", "osfstorage"),
+    file_path = c("a.csv", "b.csv", "c.R", "a.csv", "a.csv", "x.csv"),
+    file_size = c(100, 50, 10, NA, 100, 5))
+  t <- metacheck:::.osf_storage_totals(f)
+  # the 5th row repeats the 1st (listed through a registration and its project)
+  expect_equal(t$storage_size, c(150, 150, 10, NA, 150, NA))
+  expect_equal(t$storage_n, c(2L, 2L, 1L, 1L, 2L, NA))
+  # a table without the columns is returned as it is
+  expect_identical(metacheck:::.osf_storage_totals(data.frame(repo_name = character(0))),
+                   data.frame(repo_name = character(0)))
+})
+
+test_that(".osf_storage_totals counts only listings of whole storages, and the archive needs them (#679)", {
+  # a project listed in full (rows 1-3) and two single files linked from
+  # another storage (rows 4-5); row 6 is row 1's file, linked on its own too
+  f <- data.frame(
+    osf_node = c("n1", "n1", "n1", "n2", "n2", "n1"),
+    provider = "osfstorage",
+    file_path = c("a.csv", "b.csv", "c.R", "x.R", "y.R", "a.csv"),
+    file_size = c(100, 50, 10, 20, 30, 100))
+  t <- metacheck:::.osf_storage_totals(f, complete = c(TRUE, TRUE, TRUE, FALSE, FALSE, FALSE))
+  expect_equal(t$storage_size, c(160, 160, 160, NA, NA, 160))
+  expect_equal(t$storage_n, c(3L, 3L, 3L, NA, NA, 3L))
+  # the counted copy is kept when a file not counted comes first
+  t2 <- metacheck:::.osf_storage_totals(f[c(6, 1:3), ], complete = c(FALSE, TRUE, TRUE, TRUE))
+  expect_equal(t2$storage_size, rep(160, 4))
+  # unknown totals: no archive, whatever the wanted files would suggest
+  why <- metacheck:::.storage_archive_skip(t, 4:5, max_download_size = 500, mb = 1024^2)
+  expect_match(why, "not listed in full", fixed = TRUE)
+  expect_true(is.na(metacheck:::.storage_archive_skip(t, 1:3, max_download_size = 500, mb = 1024^2)))
+})
+
+test_that("files of an OSF project's GitHub storage and its OSF Storage under the same path are kept apart (#679)", {
+  rel <- metacheck:::.repo_cache_rel
+  expect_equal(rel("https://osf.io/haz6u", "Data/a.csv", "github"), "osf.io_haz6u/_storage_github/Data/a.csv")
+  expect_equal(rel("https://osf.io/haz6u", "Data/a.csv", "osfstorage"), "osf.io_haz6u/Data/a.csv")
+  expect_equal(rel("https://osf.io/haz6u", "Data/a.csv"), "osf.io_haz6u/Data/a.csv")
+  expect_equal(rel("https://github.com/o/r", c("x.R", "y.R"), NA), c("github.com_o_r/x.R", "github.com_o_r/y.R"))
+
+  # osf.io/haz6u: the same path in its GitHub storage and in its OSF Storage,
+  # two different files
+  repo <- "https://osf.io/haz6u-679"
+  files <- data.frame(
+    repo_url = repo, file_name = "a.csv", file_path = "Data/a.csv",
+    file_url = c("https://raw.githubusercontent.com/o/r/master/Data/a.csv", "https://osf.io/download/zz1/"),
+    file_size = c(1, 2), provider = c("github", "osfstorage"), osf_node = "haz6u",
+    storage_size = NA_real_, storage_n = NA_integer_, file_location = NA_character_)
+  unlink(metacheck:::.repo_cache_subdir(repo), recursive = TRUE)
+  local_mocked_bindings(
+    .download_many_parallel = function(urls, dests, ...) {
+      for (k in seq_along(dests)) {
+        dir.create(dirname(dests[k]), FALSE, TRUE)
+        writeLines(if (grepl("github", urls[k])) "from github" else "from osf", dests[k])
+      }
+      rep(NA_character_, length(urls))
+    },
+    # a GitHub file is fetched on its own (.download_one())
+    .download_one = function(url, dest, ...) {
+      dir.create(dirname(dest), FALSE, TRUE)
+      writeLines(if (grepl("github", url)) "from github" else "from osf", dest)
+      NA_character_
+    },
+    .package = "metacheck"
+  )
+  dl <- suppressMessages(download_repo_files(files, max_file_size = 10, max_download_size = 100))
+  expect_false(anyNA(dl$file_location))
+  expect_false(identical(dl$file_location[1], dl$file_location[2]))
+  expect_equal(readLines(dl$file_location[1]), "from github")
+  expect_equal(readLines(dl$file_location[2]), "from osf")
+  expect_match(dl$file_location[1], "_storage_github", fixed = TRUE)
+  unlink(metacheck:::.repo_cache_subdir(repo), recursive = TRUE)
+})
+
+test_that(".zip_timeout_for_size also allows time for each file in the archive (#679)", {
+  fn <- metacheck:::.zip_timeout_for_size
+  # 612 files, 8.5 MB, as the OSF zip of osf.io/xe9v7 that took 178 s
+  t <- fn(120, 8463365, expected_files = 612)
+  expect_gt(t, 178)
+  expect_equal(t, 8463365 / (200 * 1024) + 612 * 0.4)
+  expect_equal(fn(120, NA_real_, expected_files = 10), 120)   # the floor
+  expect_equal(fn(120, NA_real_, expected_files = 1000), 400)
+  expect_equal(fn(120, 1024), 120)                             # as before without files
+})
+
+test_that(".archive_worth_it needs enough files and not much more data than they hold (#675)", {
+  w <- metacheck:::.archive_worth_it
+  expect_true(w(n_wanted = 3, record_n = 3, wanted_bytes = 100, archive_bytes = 100))
+  expect_true(w(n_wanted = 60, record_n = 500, wanted_bytes = 1e6, archive_bytes = 1.5e6))
+  expect_false(w(n_wanted = 3, record_n = 500, wanted_bytes = 1e6, archive_bytes = 1.1e6))   # too few files
+  expect_false(w(n_wanted = 60, record_n = 61, wanted_bytes = 1e6, archive_bytes = 1e9))     # too much data
+  expect_false(w(n_wanted = 3, record_n = 3, wanted_bytes = 0, archive_bytes = 100))         # sizes unknown
+  expect_false(w(n_wanted = 3, record_n = 3, wanted_bytes = 100, archive_bytes = NA))
+})
+
+test_that("download_repo_files fetches a GitHub repository behind an OSF project and OSF Storage as archives (#675)", {
+  repo <- "https://osf.io/abcde-675"
+  gh <- sprintf("https://raw.githubusercontent.com/own/rep/master/%s", c("a.R", "dir%20x/b.csv"))
+  files <- data.frame(
+    repo_url = repo,
+    file_name = c("a.R", "b.csv", "c.csv", "d.csv", "e.csv"),
+    file_path = c("a.R", "dir x/b.csv", "c.csv", "d.csv", "e.csv"),
+    file_url = c(gh, sprintf("https://osf.io/download/f%d/", 3:5)),
+    file_size = c(1000, 1000, 1000, 1000, 1000),
+    provider = c("github", "github", "osfstorage", "osfstorage", "osfstorage"),
+    osf_node = c("abcde", "abcde", "abcde", "abcde", "kid12"),
+    storage_size = c(2000, 2000, 2000, 2000, 1e6),
+    storage_n = c(2L, 2L, 2L, 2L, 400L),
+    file_location = NA_character_)
+  unlink(metacheck:::.repo_cache_subdir(repo), recursive = TRUE)
+  calls <- list()
+  one_by_one <- character(0)
+  local_mocked_bindings(
+    .download_zip_to_cache = function(files, row_idx, zip_url, strip_dir = FALSE, ...,
+                                      rel_paths = NULL) {
+      calls[[length(calls) + 1L]] <<- list(url = zip_url, strip_dir = strip_dir,
+                                           rel = rel_paths %||% files$file_path[row_idx])
+      files$file_location[row_idx] <- files$.cache_path[row_idx]
+      files
+    },
+    .download_many_parallel = function(urls, dests, ...) {
+      one_by_one <<- c(one_by_one, urls)
+      for (d in dests) { dir.create(dirname(d), FALSE, TRUE); writeBin(raw(1), d) }
+      rep(NA_character_, length(urls))
+    },
+    .package = "metacheck"
+  )
+  dl <- suppressMessages(download_repo_files(files, max_file_size = 10, max_download_size = 100))
+  expect_true(all(!is.na(dl$file_location)))
+  urls <- vapply(calls, `[[`, "", "url")
+  # the GitHub repository's archive, matched by the paths in the addresses
+  expect_equal(urls[1], "https://api.github.com/repos/own/rep/zipball/master")
+  expect_true(calls[[1]]$strip_dir)
+  expect_equal(calls[[1]]$rel, c("a.R", "dir x/b.csv"))
+  # component abcde's OSF Storage (2 of its 2 files wanted) as one zip
+  expect_equal(urls[2], "https://files.osf.io/v1/resources/abcde/providers/osfstorage/?zip=")
+  expect_false(calls[[2]]$strip_dir)
+  expect_length(calls, 2)
+  # component kid12: 1 file wanted of 400, so not its archive
+  expect_equal(one_by_one, "https://osf.io/download/f5/")
+
+  # files whose storage was not listed in full (single files linked, #679)
+  # go file by file, though the 2 wanted would make the archive look worth it
+  calls <- list(); one_by_one <- character(0)
+  single <- files[3:4, ]
+  single$repo_url <- "https://osf.io/abcde-679"
+  single$file_url <- sprintf("https://osf.io/download/s%d/", 3:4)
+  single$storage_size <- NA_real_; single$storage_n <- NA_integer_
+  unlink(metacheck:::.repo_cache_subdir(single$repo_url[1]), recursive = TRUE)
+  dl <- suppressMessages(download_repo_files(single, max_file_size = 10, max_download_size = 100))
+  expect_length(calls, 0)
+  expect_length(one_by_one, 2)
+
+  # a listing made before the component was recorded goes file by file
+  calls <- list(); one_by_one <- character(0)
+  old <- files[3:4, setdiff(names(files), c("osf_node", "storage_size", "storage_n"))]
+  unlink(metacheck:::.repo_cache_subdir(repo), recursive = TRUE)
+  dl <- suppressMessages(download_repo_files(old, max_file_size = 10, max_download_size = 100))
+  expect_length(calls, 0)
+  expect_length(one_by_one, 2)
+})
+
 # #508: the OSF moved its storage to Oracle, which refuses a pre-signed address
 # that also carries an Authorization header (HTTP 400). The token used to
 # follow every redirect (unrestricted_auth); now the first redirect, to the

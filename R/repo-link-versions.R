@@ -176,6 +176,27 @@
 # - an ending written twice gets its single form when the paper's own link
 #   list has it (.repo_link_undoubled()).
 # Counts from the text of the 17 corpora (13,706 papers), 2026-11-12.
+# The form of a link by which two ways of writing one address are found
+# (.repo_links_tidy()): without "https://", "www.", "dx.", "doi.org/" and a
+# closing "/", the website's name in small letters, and a DOI all in small
+# letters (DOIs do not depend on case).
+# An OSF project is one address however it is written: its DOI
+# ("10.17605/OSF.IO/W4Q6J"), its page ("osf.io/bt2xy/overview"), with a
+# view-only key ("osf.io/qhwds/?view_only=..."), or a file in it
+# ("osf.io/pcjnb/files/qkx9f"), and its five-character identifier does not
+# depend on case. Each such pair was two repositories (#648, K8c: 23 of 132
+# preprints).
+.repo_link_same_key <- function(url) {
+  b <- sub("^(?:https?://)?(?:www\\.|dx\\.)?(?:doi\\.org/)?", "", url, perl = TRUE, ignore.case = TRUE)
+  b <- sub("/+$", "", b)
+  host <- sub("/.*$", "", b)
+  b <- paste0(tolower(host), substring(b, nchar(host) + 1L))
+  b <- ifelse(grepl("^10\\.\\d{4,9}/", b, perl = TRUE), tolower(b), b)
+  osf <- grepl("^(?:10\\.17605/)?osf\\.io/[a-z0-9]{5}(?:$|[/?#])", b, perl = TRUE, ignore.case = TRUE)
+  b[osf] <- tolower(sub("^(?:10\\.17605/)?(osf\\.io/[a-z0-9]{5}).*$", "\\1", b[osf], perl = TRUE, ignore.case = TRUE))
+  b
+}
+
 .repo_links_tidy <- function(repos, paper) {
   if (!nrow(repos)) return(repos)
   u <- vapply(repos$repo_url, .repo_link_unwrapped, character(1), USE.NAMES = FALSE)
@@ -220,6 +241,21 @@
     grepl("^(?:doi\\.org/)?10\\.\\d{4,9}$", bare, perl = TRUE)
   repos <- repos[!home, , drop = FALSE]
   repos <- dplyr::distinct(repos)
+  # one address written in two ways ("https://osf.io/abcde" and
+  # "osf.io/abcde/", "github.com/x" and "www.github.com/x") is one
+  # repository: it was checked, listed and counted twice (#648). Compared
+  # without "https://", "www.", "dx.", "doi.org/" and a closing "/", with the
+  # website's name in small letters (and a DOI, which is the same in either
+  # case); the form written in full is kept.
+  same <- .repo_link_same_key(repos$repo_url)
+  # the form with a view-only key first, as only it opens a private project;
+  # then the project's own address before a file in it
+  first <- order(!grepl("view_only=", repos$repo_url, ignore.case = TRUE),
+                 grepl("/files/", repos$repo_url, ignore.case = TRUE),
+                 !grepl("^https?://", repos$repo_url, ignore.case = TRUE), seq_len(nrow(repos)))
+  dup <- logical(nrow(repos))
+  dup[first] <- duplicated(paste(repos$paper_id, repos$repo_type, same, sep = "\r")[first])
+  repos <- repos[!dup, , drop = FALSE]
   # a link cut inside a name, beside its longer form; an account beside one
   # of its repositories
   key <- sub("[/.]+$", "", sub("^(?:https?://)?(?:www\\.|dx\\.)?(?:doi\\.org/)?", "",

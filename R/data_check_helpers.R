@@ -397,8 +397,12 @@
     # Java Web Start launcher (XML pointing at a Java app to fetch and run).
     r("elf",  "materials"), r("msix", "materials"), r("msixbundle", "materials"),
     r("jnlp", "materials"),
-    r("sh",   "materials"), r("bash", "materials"), r("zsh",  "materials"),
-    r("bat",  "materials"), r("cmd",  "materials"), r("ps1",  "materials"),
+    # Shell scripts are code the authors wrote to run their analysis (in one
+    # deposit the 9 .sh files were the pipeline its README describes), not
+    # materials; they were code in repo_check's counts and materials in its
+    # File Classification (#648). metacheck does not run them, so no code_lang.
+    r("sh",   "code"), r("bash", "code"), r("zsh",  "code"),
+    r("bat",  "code"), r("cmd",  "code"), r("ps1",  "code"),
     r("dll",  "materials"), r("so",   "materials"), r("dylib","materials"),
     r("lua",  "materials"), r("psyexp","materials"), r("osexp","materials"),
     # E-Prime .edat/.edat2 are proprietary BINARY (OLE compound documents)
@@ -513,6 +517,10 @@
     r("aux", "documentation"), r("fff", "documentation"),
     r("thmx","documentation"), r("dcf", "documentation"),
     r("drawio","documentation"), r("key", "documentation"),
+    # Stata's help files, which come with every Stata command a deposit
+    # bundles (#648: 20 .sthlp/.hlp files beside the .ado files in one
+    # deposit's extra_ados/ folder were "unknown")
+    r("sthlp", "documentation"), r("hlp", "documentation"),
     # .cgi is a generic Common-Gateway-Interface script marker; in real
     # corpus context it names a saved Ovid literature-search results
     # webpage ("ovidweb.cgi"), not an executable script -- reference
@@ -523,7 +531,9 @@
 
 # Text-document formats the "data" name keyword never turns into data (see
 # data_classify_files()).
-.document_exts <- c("doc", "docx", "odt", "pdf", "rtf")
+# A web page or Markdown file is a document too: "data_report.html", a knitted
+# report, was classed as data for the word in its name (#648, K8d).
+.document_exts <- c("doc", "docx", "odt", "pdf", "rtf", "html", "htm", "md")
 
 # Which .tif/.tiff files in a listing are GIS rasters rather than images: those
 # in a folder that also holds a GIS file (a shapefile part, a world file, a
@@ -570,6 +580,12 @@
 #'   classifies by its real format, since the extension is stronger evidence
 #'   of what the file actually IS than a name is. `NULL` (the default)
 #'   disables this layer entirely, unchanged from before.
+#' @param group optional vector, same length as `file_name`: the repository
+#'   each file is in. Code in a folder named after a release of a program
+#'   (`"jspsych-6.3.1/"`) is material by others only when its repository also
+#'   holds code outside that folder; the authors' own code released from
+#'   GitHub sits in such a folder too (`"analysis-v2.1.0/"`). `NULL` counts
+#'   all files as one repository.
 #'
 #' @returns a character vector of data_check types (see `.data_check_types`);
 #'   `"unknown"` when no rule fires. See `.data_doc_role()` for the finer
@@ -579,7 +595,7 @@
 #'
 #' @examples
 #' data_classify_files(c("data.csv", "analysis.R", "README.md", "codebook.xlsx"))
-data_classify_files <- function(file_name, file_path = NULL) {
+data_classify_files <- function(file_name, file_path = NULL, group = NULL) {
   n <- length(file_name)
   if (n == 0) return(character(0))
   # a name that is not valid UTF-8 (a zip's old Windows name) stopped the
@@ -681,12 +697,44 @@ data_classify_files <- function(file_name, file_path = NULL) {
   # recognised it, and it was "unknown".
   base_lc <- tolower(basename(file_name))
   type[grepl("^(licen[sc]e|copying)$", base_lc)] <- "documentation"
+  # A licence that names what it covers ("LICENSE_code_MIT.txt",
+  # "license_data.txt") is a licence too, not code or data for the word in its
+  # name (#648, K8d); only as a text document.
+  type[grepl("^(licen[sc]e|copying)[_. -]", base_lc) &
+         ext %in% c("", "txt", "md", "rst", "html", "htm", "pdf", "rtf")] <- "documentation"
   # A list of the packages a program needs (requirements.txt, Pipfile) belongs
   # with the code that uses it; as a .txt it was classified as documentation.
   type[grepl("^(requirements|constraints)([_.-][a-z0-9]+)*\\.(txt|in)$|^pipfile(\\.lock)?$",
              base_lc)] <- "code"
+  # A file that builds or runs the analysis has a fixed name without an
+  # extension (Makefile, Dockerfile, Snakefile, Binder's postBuild), and a
+  # project's notices are named like its licence (NOTICE, NEWS, CHANGELOG);
+  # all were "unknown" (#648: 290 files in 68 of 563 papers had no extension).
+  # Only files nothing else typed ("makefile.txt" stays documentation).
+  type[is.na(type) & grepl("^(makefile|gnumakefile|dockerfile|containerfile|snakefile|vagrantfile|justfile|postbuild)([_.-][a-z0-9_]+)?$",
+                           base_lc)] <- "code"
+  type[is.na(type) & grepl("^(notice|news|changelog|changes|authors|contributors|citation|copyright)$",
+                           base_lc)] <- "documentation"
 
   type[is.na(type)] <- "unknown"
+
+  # Code by others that the deposit bundles (a library, a toolbox, Stata
+  # packages; see .is_others_code_path()) is material the analysis uses, not
+  # the authors' code (#648, K5). Only code: data in such a folder stays data.
+  type[type == "code" & .is_others_code_path(path_for_kw, is_code = type == "code",
+                                             group = group)] <- "materials"
+
+  # A single compressed file ("scan.nii.gz", "trials.csv.gz", not a .tar.gz)
+  # holds one file, which is what it is (see .file_type_crosswalk); as an
+  # archive it was "unknown" until data_check opened it. data_check still
+  # downloads and opens it by its name (.is_single_compress()).
+  gz <- type == "unknown" & .is_single_compress(file_name)
+  if (any(gz)) {
+    strip <- function(x) sub("\\.(gz|bz2|xz)$", "", x, ignore.case = TRUE)
+    inner <- data_classify_files(strip(file_name[gz]),
+                                 if (!is.null(file_path)) strip(path_for_kw[gz]))
+    type[gz] <- inner
+  }
   type
 }
 
@@ -742,10 +790,13 @@ data_classify_files <- function(file_name, file_path = NULL) {
 #' repository that happens to bundle a vendored copy of someone else's
 #' package alongside the study's own files (here the vendored package's
 #' DESCRIPTION/NAMESPACE sits alongside the study's own real data/code, so
-#' only the vendored package's own files are excluded). A package detected in
-#' a NESTED subfolder is always excluded regardless of this check, since by
-#' construction there is always an "outside" for a nested package (at
-#' minimum, the parent folder itself).
+#' only the vendored package's own files are excluded). The same check holds
+#' for a package in a subfolder: a paper's own package can sit one folder
+#' down with nothing beside it ("good 2/" in github.com/afernandez1303/good,
+#' 10.1111/2041-210X.14387, #505), and leaving it out left the paper with no
+#' files at all. The check is made once for the repository: files of any
+#' package do not count as content outside the packages, so a repository of
+#' nothing but packages keeps all of them.
 #'
 #' @param file_path a character vector of repo-relative file paths (as found
 #'   in `all_files$file_path`, all belonging to the same `repo_url`)
@@ -753,8 +804,8 @@ data_classify_files <- function(file_name, file_path = NULL) {
 #' @returns a logical vector, same length as `file_path`: `TRUE` for every
 #'   file that is part of a detected R package (the `DESCRIPTION`/`NAMESPACE`
 #'   themselves, plus their standard package subdirectories) AND that package
-#'   is being excluded (root-level packages are only excluded when real
-#'   content survives outside them; nested packages are always excluded).
+#'   is being excluded (packages are only excluded when real data or code is
+#'   in the repository outside every package, wherever the package sits).
 #' @keywords internal
 .is_r_package_file <- function(file_path) {
   n <- length(file_path)
@@ -799,30 +850,30 @@ data_classify_files <- function(file_name, file_path = NULL) {
   owner <- vapply(seq_len(n), member_of, character(1))
   is_pkg_member <- known & !is.na(owner)
 
-  for (pd in pkg_dirs) {
-    if (!identical(pd, ".")) next  # nested packages are always excluded
-    outside_idx <- which(!is_pkg_member & known)
-    # an RStudio project marker (e.g. "BaBA.Rproj") classifies as "code" by
-    # extension alone under data_classify_files(), but it is packaging
-    # config, not a real analysis script -- exclude it here rather than loosen
-    # the general-purpose classifier just for this one packaging artifact.
-    outside_idx <- outside_idx[!grepl("\\.rproj$", basename(path[outside_idx]), ignore.case = TRUE)]
-    # The same holds for the configuration files of a package's build, test
-    # and website services (Travis, AppVeyor, GitHub Actions, codecov,
-    # pkgdown, ...): .yml files classify as "code" by extension, so a
-    # .travis.yml or codecov.yml next to a root-level package made the
-    # package look vendored and discarded all of its real files (#469).
-    # Matched by exact name or folder, not every .yml: a paper's own
-    # config.yml can be real analysis settings. These files are only left
-    # out of this decision; they stay in the file list.
-    outside_idx <- outside_idx[!.is_r_package_service_file(path[outside_idx])]
-    outside_types <- data_classify_files(basename(path[outside_idx]), path[outside_idx])
-    has_real_content <- any(outside_types %in% c("data", "code"))
-    if (!has_real_content) {
-      # nothing data/code-shaped survives outside this root-level package:
-      # the package IS the deposit, so do not exclude any of its files.
-      is_pkg_member[owner == pd & !is.na(owner)] <- FALSE
-    }
+  outside_idx <- which(!is_pkg_member & known)
+  # an RStudio project marker (e.g. "BaBA.Rproj") classifies as "code" by
+  # extension alone under data_classify_files(), but it is packaging
+  # config, not a real analysis script -- exclude it here rather than loosen
+  # the general-purpose classifier just for this one packaging artifact.
+  outside_idx <- outside_idx[!grepl("\\.rproj$", basename(path[outside_idx]), ignore.case = TRUE)]
+  # The same holds for the configuration files of a package's build, test
+  # and website services (Travis, AppVeyor, GitHub Actions, codecov,
+  # pkgdown, ...): .yml files classify as "code" by extension, so a
+  # .travis.yml or codecov.yml next to a root-level package made the
+  # package look vendored and discarded all of its real files (#469).
+  # Matched by exact name or folder, not every .yml: a paper's own
+  # config.yml can be real analysis settings. These files are only left
+  # out of this decision; they stay in the file list.
+  outside_idx <- outside_idx[!.is_r_package_service_file(path[outside_idx])]
+  # A README is not data or code, also when written as R Markdown (the
+  # README.Rmd from which a package's README.md is made classifies as code
+  # by its extension); repo_check counts it as a README (.is_readme_name()).
+  outside_idx <- outside_idx[!.is_readme_name(basename(path[outside_idx]))]
+  outside_types <- data_classify_files(basename(path[outside_idx]), path[outside_idx])
+  if (!any(outside_types %in% c("data", "code"))) {
+    # nothing data/code-shaped outside the packages, wherever they sit: the
+    # packages ARE the deposit, so none of their files is excluded (#505)
+    is_pkg_member[] <- FALSE
   }
 
   is_pkg_member
@@ -1391,26 +1442,71 @@ manifest_merge <- function(path, patch) {
 
   batches <- split(seq_len(n), ceiling(seq_len(n) / batch_size))
   model_used <- NA_character_
-  for (rows in batches) {
+  unanswered <- integer(0)   # items no request (or retry) gave a usable value
+
+  # The answer's length limit: the caller's own, else the session's, else
+  # llm()'s default. A cut-off answer is asked again with four times it (#673):
+  # a reasoning model (gpt-oss) can spend the whole limit reasoning before it
+  # answers, while the answer for 50 items needs about a fifth of 4,096.
+  limit <- params$max_tokens %||% llm_max_tokens() %||% 4096
+  raised <- utils::modifyList(params, list(max_tokens = limit * 4))
+
+  # Ask about one batch of items; returns the items left without a usable
+  # value, and whether the answer was cut off at the length limit. llm()'s own
+  # note on a failed answer is not shown: the item is asked again, and what is
+  # still unanswered at the end is counted (attribute "llm_unanswered") and
+  # reported once below.
+  ask <- function(rows, prm) {
     listing <- paste(seq_along(rows), item_texts[rows], sep = ". ",
                      collapse = "\n")
     resp <- tryCatch(
-      llm(text = data.frame(text = listing), text_col = "text",
-          system_prompt = system_prompt, type = type_spec, model = model,
-          params = params, phase = phase),
+      withCallingHandlers(
+        llm(text = data.frame(text = listing), text_col = "text",
+            system_prompt = system_prompt, type = type_spec, model = model,
+            params = prm, phase = phase),
+        warning = function(w) {
+          if (startsWith(conditionMessage(w), "Note (not fatal)"))
+            invokeRestart("muffleWarning")
+        }),
       error = function(e) NULL
     )
+    cut <- is.data.frame(resp) && ".error_msg" %in% names(resp) &&
+      any(grepl("max_tokens", resp$.error_msg, fixed = TRUE))
     resp <- .strip_llm_wrapper(resp, "results")
     if (is.null(resp) || nrow(resp) == 0 ||
-        !all(c("index", "value") %in% names(resp))) next
-    if (is.na(model_used)) model_used <- attr(resp, "llm")$model %||% NA_character_
+        !all(c("index", "value") %in% names(resp)))
+      return(list(left = rows, cut = cut))
+    if (is.na(model_used)) model_used <<- attr(resp, "llm")$model %||% NA_character_
     idx <- suppressWarnings(as.integer(resp$index))
     val <- tolower(trimws(as.character(resp$value)))
     good <- !is.na(idx) & idx >= 1 & idx <= length(rows) & nzchar(val)
     if (!is.null(valid)) good <- good & val %in% valid
-    if (any(good)) out[rows[idx[good]]] <- val[good]
+    if (any(good)) out[rows[idx[good]]] <<- val[good]
+    list(left = rows[setdiff(seq_along(rows), idx[good])], cut = cut)
   }
+
+  for (rows in batches) {
+    a <- ask(rows, params)
+    # cut off at the length limit: once more with the higher limit, unless the
+    # caller set the limit itself
+    if (a$cut && length(a$left) && is.null(params$max_tokens))
+      a <- ask(a$left, raised)
+    left <- a$left
+    # ONE retry at half the batch size, as .llm_assign_groups() does: a
+    # shorter list is less to reason about and a shorter answer
+    if (length(left) > 1L) {
+      halves <- split(left, ceiling(seq_along(left) / ceiling(length(left) / 2)))
+      left <- unlist(lapply(halves, function(h) ask(h, params)$left), use.names = FALSE)
+    }
+    unanswered <- c(unanswered, left)
+  }
+  if (length(unanswered))
+    warning(sprintf("%s: %d of %d item%s got no usable answer from the model, also when asked again in smaller batches, and %s left to the rules.",
+                    phase %||% "LLM classification", length(unanswered), n, plural(n),
+                    if (length(unanswered) == 1) "was" else "were"),
+            call. = FALSE)
   attr(out, "llm_model") <- model_used
+  attr(out, "llm_unanswered") <- sort(unique(as.integer(unanswered)))
   out
 }
 
@@ -1481,6 +1577,9 @@ data_group_llm <- function(files, model = llm_model(), params = list(),
 #' ignored. Sorted by number then letter, so the order is stable.
 #'
 #' @param paper a paper object
+#' @param words the words that name a study; by default study, experiment and
+#'   pilot. Give one word to learn which numbers the paper uses for that word
+#'   only (used to read short labels such as `E1A` in file names).
 #'
 #' @returns a character vector of group codes, or `character(0)` when the text
 #'   names no numbered study.
@@ -1490,10 +1589,12 @@ data_group_llm <- function(files, model = llm_model(), params = list(),
 #' paper <- demopaper()
 #' paper$text$text[1] <- "We report Study 1, Study 2a and a pilot (Pilot 1)."
 #' data_study_roster(paper)
-data_study_roster <- function(paper) {
+#' data_study_roster(paper, words = "pilot")
+data_study_roster <- function(paper, words = c("study", "experiment", "pilot")) {
   if (!.is_paper(paper)) return(character(0))
   hits <- tryCatch(
-    text_search(paper, "\\b(?:study|experiment|pilot)[ ._-]?[0-9]{1,2}[a-z]?\\b",
+    text_search(paper, paste0("\\b(?:", paste(words, collapse = "|"),
+                              ")[ ._-]?[0-9]{1,2}[a-z]?\\b"),
                 return = "match", ignore.case = TRUE, perl = TRUE),
     error = function(e) NULL)
   if (is.null(hits) || !nrow(hits)) return(character(0))
@@ -1564,7 +1665,7 @@ data_study_roster <- function(paper) {
   # something that doesn't survive a size check even though it "exists").
   sz <- file.size(path)
   if (is.na(sz) || sz > max_bytes) return(character(0))   # not a script
-  txt <- tryCatch(paste(readLines(path, warn = FALSE), collapse = "\n"),
+  txt <- tryCatch(paste(.utf8_lines(readLines(path, warn = FALSE)), collapse = "\n"),
                   error = function(e) NULL)
   if (is.null(txt) || !nzchar(txt)) return(character(0))
   # A script saved in another encoding (an older Stata .do file is often
@@ -1595,16 +1696,30 @@ data_study_roster <- function(paper) {
 # in smashed-together names. A trailing letter counts as a sub-study suffix
 # only when it ends its token ("study2a_data" -> ex2a), not when the next word
 # merely starts with a letter ("experiment3explicit" -> ex3).
+# The number must end there and not run on into a code (#648, K7): "study104"
+# (an id) was study 10, "study03032026" (a date) study 3 and "STUDY-20-00338"
+# (a protocol number) study 20. And a pilot named before its study word,
+# "Pilot Study 1A", is a pilot, not study 1A.
 .data_group_from_path <- function(paths) {
+  # five digits or more after it: a protocol or record number, not a year
+  # ("study2_2019.csv" stays study 2) and not a date of eight digits, the
+  # year first or last ("study1_20230512.csv" stays study 1)
+  dm <- "(?:(?:0[1-9]|[12][0-9]|3[01])(?:0[1-9]|1[0-2])|(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01]))"
+  date8 <- paste0("(?:(?:19|20)[0-9]{2}", dm, "|", dm, "(?:19|20)[0-9]{2})(?![0-9])")
+  num_end <- paste0("(?![0-9])(?![ ._-]?(?!", date8, ")[0-9]{5,})")
   ex_pat <- paste0(
     "(?:experiment|study|(?<![a-z])expt?|(?<![a-z])ex)",
-    "[ ._-]?([0-9]{1,2})([a-z](?![a-z]))?"
+    "[ ._-]?([0-9]{1,2})", num_end, "([a-z](?![a-z]))?"
   )
+  pilot_study_pat <- paste0("(?<![a-z])pilot[ ._-]?(?:study|experiment|expt?)?[ ._-]?([0-9]{1,2})",
+                            num_end, "([a-z](?![a-z]))?")
   pilot_pat <- "(?<![a-z])pilot[ ._-]?([0-9]{1,2})?"
   vapply(paths, function(path) {
     if (is.na(path) || !nzchar(path)) return(NA_character_)
     parts <- rev(strsplit(tolower(path), "/", fixed = TRUE)[[1]])
     for (part in parts) {
+      m <- regmatches(part, regexec(pilot_study_pat, part, perl = TRUE))[[1]]
+      if (length(m) > 0) return(paste0("pilot", m[2], m[3]))
       m <- regmatches(part, regexec(ex_pat, part, perl = TRUE))[[1]]
       if (length(m) > 0) return(paste0("ex", m[2], m[3]))
       m <- regmatches(part, regexec(pilot_pat, part, perl = TRUE))[[1]]
@@ -1613,6 +1728,49 @@ data_study_roster <- function(paper) {
     }
     NA_character_
   }, character(1), USE.NAMES = FALSE)
+}
+
+# Read a one-letter study label in a file path, "Shift_E1A.csv" (Experiment 1A)
+# or "df_s1.csv" (Study 1), as a study code, or NA (#648). One letter is
+# ambiguous: "s1" is also session 1, subject 1 or supplementary file 1, and
+# "e1" an electrode. So a letter is read as a study only when the paper itself
+# settles it:
+#   * E stands for "experiment" and S for "study", and the paper names numbered
+#     studies with that word;
+#   * every label with that letter in the deposit is a study the paper names
+#     (one s9 in a paper with Studies 1 and 2 means the letter counts something
+#     else, and then no file is placed by it);
+#   * for S, the paper names no numbered session and does not use S<n> itself
+#     ("Table S1", "S2 Fig" label supplementary material).
+# The filename is searched first, then its folders from the innermost out, as
+# in .data_group_from_path(); a file extension is never read as a label.
+.data_group_from_short_label <- function(paths, paper = NULL) {
+  out <- rep(NA_character_, length(paths))
+  if (!length(paths) || is.null(paper) || !.is_paper(paper)) return(out)
+  tok <- "(?<![a-z0-9])%s([0-9]{1,2})([a-z]?)(?![a-z0-9])"
+  label_of <- function(letter) vapply(paths, function(path) {
+    if (is.na(path) || !nzchar(path)) return(NA_character_)
+    parts <- strsplit(tolower(gsub("\\\\", "/", path)), "/", fixed = TRUE)[[1]]
+    parts[length(parts)] <- tools::file_path_sans_ext(parts[length(parts)])
+    for (part in rev(parts)) {
+      m <- regmatches(part, regexec(sprintf(tok, letter), part, perl = TRUE))[[1]]
+      if (length(m)) return(paste0("ex", as.integer(m[2]), m[3]))
+    }
+    NA_character_
+  }, character(1), USE.NAMES = FALSE)
+  text <- tryCatch(paste(paper$text$text, collapse = " "), error = function(e) "")
+  for (kind in list(c(letter = "e", word = "experiment"),
+                    c(letter = "s", word = "study"))) {
+    lab <- label_of(kind[["letter"]])
+    if (all(is.na(lab))) next
+    if (kind[["letter"]] == "s" &&
+        grepl("(?i)\\bsessions? ?[0-9]|\\bS[0-9]{1,2}[a-z]?\\b", text, perl = TRUE))
+      next
+    roster <- data_study_roster(paper, words = kind[["word"]])
+    if (!length(roster) || !all(lab[!is.na(lab)] %in% roster)) next
+    out[is.na(out)] <- lab[is.na(out)]
+  }
+  out
 }
 
 # Normalize an LLM-returned study-group code to the documented scheme and
@@ -1736,6 +1894,10 @@ data_study_roster <- function(paper) {
   # The regex is exact where a small LLM has misread such names. Files still
   # ambiguous AFTER both repo and path passes go to the LLM.
   pre <- .data_group_from_path(paths)
+  # A one-letter label ("Shift_E1A", "df_s1") counts only where the paper's own
+  # study names confirm it (see .data_group_from_short_label()).
+  short <- .data_group_from_short_label(paths, paper)
+  pre[is.na(pre)] <- short[is.na(pre)]
   fixed <- send & !is.na(pre)
   group[fixed] <- pre[fixed]
 
@@ -2376,6 +2538,25 @@ txt_classify_content <- function(path) {
           repaired[names(df)[j]] <- sum(bad)
         }
       }
+      # The column's variable label and value labels (haven's "label" and
+      # "labels"): an older Stata file (version 13 and earlier) or SPSS file
+      # stores them in its own encoding, haven gives them as stored, and
+      # codebook_check searches them with text patterns, which stop on text
+      # that is not valid UTF-8 ("input string 1 is invalid")
+      lab <- attr(df[[j]], "label", exact = TRUE)
+      if (is.character(lab) && any(!validUTF8(lab)))
+        attr(df[[j]], "label") <- .utf8_lines(lab)
+      vl <- attr(df[[j]], "labels", exact = TRUE)
+      if (!is.null(vl)) {
+        nms <- names(vl)
+        bad_names <- !is.null(nms) && any(!validUTF8(nms))
+        bad_codes <- is.character(vl) && any(!validUTF8(vl))
+        if (bad_names || bad_codes) {
+          if (bad_codes) vl[] <- .utf8_lines(unname(vl))
+          if (bad_names) names(vl) <- .utf8_lines(nms)
+          attr(df[[j]], "labels") <- vl
+        }
+      }
     }
     if (length(repaired) > 0) attr(df, "utf8_repaired") <- repaired
   }
@@ -2418,6 +2599,64 @@ txt_classify_content <- function(path) {
   }, args = list(p = path), timeout = 120)), error = function(e) FALSE)
   assign(key, ok, envir = .xls_readable_cache)
   ok
+}
+
+# The path from which readxl can read an .xlsx file without crashing R.
+# readxl (1.5.0) crashes the whole R process (a memory error, which tryCatch()
+# cannot catch) on a cell marked as an entry of the file's table of texts
+# (t="s") that holds no value, only a formula or nothing: the LIONESS
+# experiment software writes such a cell for each formula of its
+# "paymentsMTurk" sheet, and PsyArXiv preprint mqyu2_v3 got no report. When a
+# sheet has such cells, the file is read from a copy in the session's
+# temporary folder in which they lose the mark, so they read as empty cells
+# and every other cell as written. Any other file, a file that cannot be
+# opened as a zip, or a session without the zip package gives the path as it
+# is. Remembered per file for the session.
+.xlsx_safe_cache <- new.env(parent = emptyenv())
+.xlsx_safe_path <- function(path) {
+  if (length(path) != 1 || is.na(path) || !grepl("\\.xlsx$", path, ignore.case = TRUE) ||
+      !file.exists(path)) return(path)
+  key <- paste(normalizePath(path, winslash = "/", mustWork = FALSE), file.mtime(path))
+  if (exists(key, envir = .xlsx_safe_cache, inherits = FALSE))
+    return(get(key, envir = .xlsx_safe_cache, inherits = FALSE))
+  out <- tryCatch(.xlsx_without_empty_text_cells(path), error = function(e) path)
+  assign(key, out, envir = .xlsx_safe_cache)
+  out
+}
+
+# A cell marked as an entry of the table of texts with no value: closed at
+# once, or holding at most a formula (see .xlsx_safe_path()). The mark is the
+# part between the two groups.
+.xlsx_empty_text_cell <- paste0(
+  '(<c\\b[^>]*?)\\st="s"',
+  '([^>]*?(?:/>|>(?:<f\\b[^>]*/>|<f\\b[^>]*>[^<]*</f>)?</c>))')
+
+# A copy of an .xlsx file without the cells of .xlsx_empty_text_cell's
+# pattern, or the path itself when no sheet has one.
+.xlsx_without_empty_text_cells <- function(path) {
+  members <- utils::unzip(path, list = TRUE)
+  sheets <- members$Name[grepl("^xl/worksheets/[^/]+\\.xml$", members$Name)]
+  read_member <- function(m) {
+    con <- unz(path, m, "rb")
+    on.exit(close(con))
+    rawToChar(readBin(con, "raw", members$Length[members$Name == m]))
+  }
+  bad <- sheets[vapply(sheets, function(m)
+    grepl(.xlsx_empty_text_cell, read_member(m), perl = TRUE, useBytes = TRUE),
+    logical(1))]
+  if (!length(bad) || !requireNamespace("zip", quietly = TRUE)) return(path)
+  dir <- tempfile("xlsx_repair_")
+  utils::unzip(path, exdir = dir)
+  for (m in bad) {
+    f <- file.path(dir, m)
+    x <- gsub(.xlsx_empty_text_cell, "\\1\\2", read_member(m), perl = TRUE,
+              useBytes = TRUE)
+    writeBin(charToRaw(x), f)
+  }
+  out <- tempfile("xlsx_repair_", fileext = ".xlsx")
+  zip::zipr(out, list.files(dir, full.names = TRUE, all.files = TRUE, no.. = TRUE))
+  unlink(dir, recursive = TRUE)
+  out
 }
 
 # haven::read_sav() reads text in the encoding the file declares. A file made
@@ -2506,6 +2745,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
         if (!requireNamespace("readxl", quietly = TRUE))
           stop("The 'readxl' package is required to read Excel files.")
         if (!.xls_readable(path)) return(NULL)   # crashes the reader (see .xls_readable())
+        xpath <- .xlsx_safe_path(path)           # cells that crash readxl (see .xlsx_safe_path())
         nmax <- if (is.finite(n_rows)) n_rows else Inf
         # Suppress readxl's per-cell type-guess warnings ("Expecting numeric ...
         # got a date"): a mixed column can emit one per row (hundreds on a wide
@@ -2515,7 +2755,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
         # headers (...1, K...3, ...) -- we handle names ourselves -- but without printing
         # the "New names:" message on every such sheet.
         df <- suppressWarnings(as.data.frame(
-          readxl::read_excel(path, sheet = sheet %||% 1L, n_max = nmax,
+          readxl::read_excel(xpath, sheet = sheet %||% 1L, n_max = nmax,
                               .name_repair = "unique_quiet")))
         if (!is.null(df) && data_check_is_qualtrics(df))
           df <- data_strip_qualtrics_header(df)
@@ -2527,7 +2767,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
         # to in-memory promotion if the re-read fails.
         if (!is.null(df) && ncol(df) > 1) {
           raw <- tryCatch(.utf8_repair_df(as.data.frame(suppressWarnings(
-                   readxl::read_excel(path, sheet = sheet %||% 1L,
+                   readxl::read_excel(xpath, sheet = sheet %||% 1L,
                      col_names = FALSE, n_max = 6L,
                      col_types = "text", .name_repair = "minimal")))),
                  error = function(e) NULL)
@@ -2539,7 +2779,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
               k <- prom$promoted
               nmax2 <- if (is.finite(nmax)) nmax + k else Inf
               reread <- tryCatch(suppressWarnings(as.data.frame(
-                readxl::read_excel(path, sheet = sheet %||% 1L, skip = k,
+                readxl::read_excel(xpath, sheet = sheet %||% 1L, skip = k,
                                    n_max = nmax2, .name_repair = "unique_quiet"))),
                 error = function(e) NULL)
               df <- if (!is.null(reread) && ncol(reread) > 0) reread else prom$df
@@ -2627,7 +2867,7 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
       } else {
         obj <- readRDS(path)
         if (is.data.frame(obj)) {
-          obj <- .plain_s4_columns(obj)
+          obj <- .plain_s4_columns(.plain_table(obj))
           out <- .head_keep_attrs(obj, n_rows)
           attr(out, "s4_converted") <- attr(obj, "s4_converted")
           out
@@ -2673,6 +2913,77 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
   length(magic) == 4 && grepl("^RD[XAB][23]$", rawToChar(magic))
 }
 
+# A table from an .rds or .RData file as a plain data frame. These files can
+# hold a table made by any R package, with that package's classes and objects
+# still attached, and R functions that data_check uses later act on those
+# classes: a column marked "matrix" that is a plain row of numbers made
+# unique() stop in data_is_manifest() (loo's model comparison, PsyArXiv
+# nm3wd_v1); a data.table date column ("IDate") stored as decimal numbers made
+# the report's preview stop (v2x3b_v4); a marginaleffects table carrying its
+# fitted brms model made the preview need the rstan package (c3skb_v4). The
+# table keeps its columns, their names and its row names, and nothing else
+# but metacheck's own note "s4_converted". Each column goes through
+# .plain_column().
+.plain_table <- function(df) {
+  if (!is.data.frame(df)) return(df)
+  # .subset2() and attr() run no method of the table's own class
+  cols <- lapply(seq_along(names(df)), function(j) .plain_column(.subset2(df, j)))
+  out <- structure(cols, names = names(df), row.names = attr(df, "row.names"),
+                   class = "data.frame")
+  attr(out, "s4_converted") <- attr(df, "s4_converted", exact = TRUE)
+  out
+}
+
+# The classes of a column that data_check reads as they are: base R's
+# factors, dates and times, and haven's labelled values (with the classes
+# these build on).
+.plain_column_classes <- c(
+  "factor", "ordered", "Date", "POSIXct", "POSIXt", "difftime", "hms",
+  "haven_labelled", "haven_labelled_spss", "labelled", "vctrs_vctr",
+  "double", "integer", "character", "logical", "numeric")
+
+# A column of a table from an .rds or .RData file, as values data_check can
+# read (see .plain_table()). A column without a class, or with only classes of
+# .plain_column_classes, is kept as it is, and so is a column of a formal (S4)
+# class, which .plain_s4_columns() handles. A date or time of another
+# package's class becomes R's own (data.table's IDate a Date), a table inside
+# a column becomes a plain table, bit64's large whole numbers become numbers
+# when bit64 is installed, and any other column becomes its plain values: a
+# number, text or list, a matrix only when it has a matrix's dimensions. A
+# column's label is kept.
+.plain_column <- function(x) {
+  cl <- oldClass(x)
+  if (is.null(cl) || isS4(x) || all(cl %in% .plain_column_classes)) return(x)
+  label <- attr(x, "label", exact = TRUE)
+  v <- if (is.data.frame(x)) {
+    .plain_table(x)
+  } else if (inherits(x, "integer64")) {
+    # its values are stored as the bits of a whole number, which read as
+    # other numbers without bit64; left as it is when bit64 is not installed
+    if (!requireNamespace("bit64", quietly = TRUE)) return(x)
+    as.double(x)
+  } else if (inherits(x, "POSIXlt")) {
+    as.POSIXct(x)
+  } else if (inherits(x, "POSIXct")) {
+    structure(as.double(unclass(x)), class = c("POSIXct", "POSIXt"),
+              tzone = attr(x, "tzone", exact = TRUE))
+  } else if (inherits(x, "Date")) {
+    structure(as.double(unclass(x)), class = "Date")
+  } else if (is.factor(x)) {
+    structure(as.integer(unclass(x)), levels = attr(x, "levels", exact = TRUE),
+              class = if (inherits(x, "ordered")) c("ordered", "factor") else "factor")
+  } else {
+    p <- unclass(x)
+    d <- attr(p, "dim", exact = TRUE)
+    dn <- attr(p, "dimnames", exact = TRUE)
+    attributes(p) <- NULL
+    if (length(d) == 2) { dim(p) <- d; dimnames(p) <- dn }
+    p
+  }
+  if (!is.null(label)) attr(v, "label") <- label
+  v
+}
+
 # A column of values of a formal (S4) class, such as lubridate's periods and
 # durations, cannot be used without the package that defines the class: R
 # loads the file, but head() and every later step stop with "unable to load
@@ -2698,15 +3009,23 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
   df
 }
 
-# The first n rows of a data frame with each column's label, value labels
-# and class kept: head() drops the label of unclassed and factor columns, and
-# a haven_labelled column keeps its labels only when vctrs is loaded, so
-# variable labels from .rds/.RData files depended on the session (U61).
+# The first n rows of a data frame with each column's attributes kept (all but
+# its names and dimensions): head() drops the label of unclassed and factor
+# columns, and a haven_labelled column keeps its labels only when vctrs is
+# loaded, so variable labels from .rds/.RData files depended on the session
+# (U61). A tibble kept them all, but a table from an .rds file is now a plain
+# data frame (.plain_table()), and SPSS's codes for missing values
+# ("na_values", "na_range") are read from these attributes.
 .head_keep_attrs <- function(df, n) {
   out <- utils::head(df, n)
-  for (j in seq_along(df)) for (a in c("label", "labels", "class")) {
-    v <- attr(df[[j]], a, exact = TRUE)
-    if (!is.null(v) && is.null(attr(out[[j]], a, exact = TRUE))) attr(out[[j]], a) <- v
+  for (j in seq_along(df)) {
+    for (a in setdiff(names(attributes(df[[j]])), c("names", "dim", "dimnames"))) {
+      v <- attr(df[[j]], a, exact = TRUE)
+      # an attribute R checks against the values (a time series' "tsp") may
+      # not fit the first rows: it is left out
+      if (is.null(attr(out[[j]], a, exact = TRUE)))
+        try(attr(out[[j]], a) <- v, silent = TRUE)
+    }
   }
   out
 }
@@ -2762,9 +3081,10 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     "      conv[names(d)[j]] <- paste0(cl[[1]], ', from the R package ', p) }",
     "    d <- as.data.frame(d); n <- %s",
     "    df <- if (is.finite(n)) utils::head(d, n) else d",
-    "    for (j in seq_along(d)) for (a in c('label', 'labels', 'class')) {",
+    # each column's attributes, as .head_keep_attrs() keeps them
+    "    for (j in seq_along(d)) for (a in setdiff(names(attributes(d[[j]])), c('names', 'dim', 'dimnames'))) {",
     "      v <- attr(d[[j]], a, exact = TRUE)",
-    "      if (!is.null(v) && is.null(attr(df[[j]], a, exact = TRUE))) attr(df[[j]], a) <- v }",
+    "      if (is.null(attr(df[[j]], a, exact = TRUE))) try(attr(df[[j]], a) <- v, silent = TRUE) }",
     "    if (length(conv)) attr(df, 's4_converted') <- conv } }",
     # not compressed: the file is read back at once and then removed, and
     # compressing a table of 160,000 rows took 3 to 4 of the 7 seconds
@@ -2778,7 +3098,9 @@ data_read_head <- function(path, n_rows = 5, sheet = NULL) {
     error = function(e) NULL)
 
   if (!file.exists(out_rds)) return(NULL)
-  tryCatch(readRDS(out_rds), error = function(e) NULL)
+  # The table as a plain data frame (see .plain_table()): as.data.frame() in
+  # the separate process keeps what another package attached to it
+  tryCatch(.plain_table(readRDS(out_rds)), error = function(e) NULL)
 }
 
 # Path to the Rscript executable of the current R installation.
@@ -3857,7 +4179,7 @@ normalize_label <- function(x) {
 # ("|---|---|") whose preceding row is a codebook header, then reads rows until
 # the table ends. Returns a codebook-vars data.frame or NULL.
 .extract_markdown_codebook <- function(path, src, observed = list()) {
-  ln <- tryCatch(readLines(path, warn = FALSE), error = function(e) NULL)
+  ln <- tryCatch(.utf8_lines(readLines(path, warn = FALSE)), error = function(e) NULL)
   if (is.null(ln) || !length(ln)) return(NULL)
   ln <- iconv(ln, to = "UTF-8", sub = "")
   ln[is.na(ln)] <- ""
@@ -4008,8 +4330,13 @@ normalize_label <- function(x) {
 # "NOTES") which pushes the real header down, then a positional fallback.
 # Results are combined and `src` records the sheet so a variable can be traced.
 .extract_spreadsheet_codebook <- function(sheets, read, src, observed,
-                                          header_lookahead) {
+                                          header_lookahead, only = NULL) {
   sh_names <- tryCatch(sheets(), error = function(e) character(0))
+  # only the sheets asked for (parse_codebook()'s `sheets`)
+  if (!is.null(only)) {
+    sh_names <- intersect(sh_names, only)
+    if (!length(sh_names)) return(NULL)
+  }
   if (length(sh_names) == 0) sh_names <- NA_character_   # single default read
   parsed <- list()
   for (sh in sh_names) {
@@ -4286,7 +4613,7 @@ normalize_label <- function(x) {
         paste(pdftools::pdf_text(path), collapse = "\n")
       },
       rtf = {
-        .strip_rtf(paste(readLines(path, warn = FALSE), collapse = "\n"))
+        .strip_rtf(paste(.utf8_lines(readLines(path, warn = FALSE)), collapse = "\n"))
       },
       odt = {
         tmp <- tempfile()
@@ -4331,6 +4658,10 @@ normalize_label <- function(x) {
 #'   leak onto an unrelated same-named column in Study B (coded 1-6). Callers
 #'   that know the file's group should pass it. Mirrors `.extract_haven_labels`'s
 #'   `group` argument.
+#' @param sheets for a spreadsheet, the names of the sheets to read; `NULL`
+#'   (the default) reads every sheet. A codebook sheet inside a data
+#'   spreadsheet is read alone (#651), as the other sheets hold data, which
+#'   the positional fallback would turn into made-up definitions.
 #'
 #' @returns a data.frame of variable definitions (`codebook_variable`, `label`,
 #'   `codebook_source`, `group`, `parse_method`); a character vector of text
@@ -4341,7 +4672,7 @@ normalize_label <- function(x) {
 #' parse_codebook(file.path(demofile("repo"), "documentation",
 #'                           "stroop_data_codebook.csv"))
 parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
-                           group = NA_character_) {
+                           group = NA_character_, sheets = NULL) {
   if (!file.exists(path)) return(NULL)
   ext <- tolower(tools::file_ext(path))
   src <- basename(path)
@@ -4363,7 +4694,7 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
         # Sniff the first non-blank character and route rather than handing a
         # perfectly structured file to the LLM as raw text.
         first <- tryCatch({
-          h <- readLines(path, n = 5L, warn = FALSE)
+          h <- .utf8_lines(readLines(path, n = 5L, warn = FALSE))
           h <- trimws(h[nzchar(trimws(h))])
           if (length(h)) substr(h[1], 1, 1) else ""
         }, error = function(e) "")
@@ -4455,23 +4786,26 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
               as.data.frame(readODS::read_ods(
                 path, sheet = if (is.na(sh)) 1 else sh, col_names = header,
                 .name_repair = "unique_quiet")),
-            src = src, observed = observed, header_lookahead = header_lookahead)
+            src = src, observed = observed, header_lookahead = header_lookahead,
+            only = sheets)
         }
       },
       xlsx = , xls = {
         if (!requireNamespace("readxl", quietly = TRUE) || !.xls_readable(path)) {
           NULL
         } else {
+          xpath <- .xlsx_safe_path(path)   # cells that crash readxl (see .xlsx_safe_path())
           .extract_spreadsheet_codebook(
-            sheets = function() readxl::excel_sheets(path),
+            sheets = function() readxl::excel_sheets(xpath),
             read = function(sh, header)
               as.data.frame(if (is.na(sh))
-                readxl::read_excel(path, col_names = header,
+                readxl::read_excel(xpath, col_names = header,
                                    .name_repair = "unique_quiet")
               else
-                readxl::read_excel(path, sheet = sh, col_names = header,
+                readxl::read_excel(xpath, sheet = sh, col_names = header,
                                    .name_repair = "unique_quiet")),
-            src = src, observed = observed, header_lookahead = header_lookahead)
+            src = src, observed = observed, header_lookahead = header_lookahead,
+            only = sheets)
         }
       },
       sav = , dta = , sas7bdat = {
@@ -4482,7 +4816,9 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
             sav      = .read_sav_any(path),
             dta      = haven::read_dta(path),
             sas7bdat = haven::read_sas(path))
-          res <- .extract_haven_labels(as.data.frame(df), src)
+          # labels in another encoding repaired (.utf8_repair_df()), as when
+          # the file is read as data
+          res <- .extract_haven_labels(.utf8_repair_df(as.data.frame(df)), src)
           if (!is.null(res)) attr(res, ".is_haven") <- TRUE
           res
         }
@@ -4554,7 +4890,12 @@ parse_codebook <- function(path, header_lookahead = 5L, observed = list(),
   }
 
   # No structured definitions: return raw lines so the caller can try the LLM.
-  tryCatch(readLines(path, warn = FALSE), error = function(e) NULL)
+  # Not for a binary format, whose "lines" are the bytes of a zip or of a
+  # statistics program's file (an .xlsx whose sheets held no definitions gave
+  # "PK\003\004..." to the LLM, #651).
+  if (ext %in% c("xlsx", "xls", "ods", "sav", "dta", "sas7bdat", "jasp", "omv", "zip"))
+    return(NULL)
+  tryCatch(.utf8_lines(readLines(path, warn = FALSE)), error = function(e) NULL)
 }
 
 # -- Qualtrics survey-definition (.qsf) parsing --------------------------------
@@ -4815,6 +5156,7 @@ parse_qsf <- function(path) {
 #'                    column_name = c("congruent", "incongruent"))
 #' match_column_labels(cols, cb)[, c("column_name", "label")]
 match_column_labels <- function(columns_df, codebook_vars_df) {
+  .same_id <- function(a, b) (is.na(a) & is.na(b)) | (!is.na(a) & !is.na(b) & a == b)
   col_group <- if ("group" %in% names(columns_df)) columns_df$group else
                if ("experiment_group" %in% names(columns_df)) columns_df$experiment_group else
                rep(NA_character_, nrow(columns_df))
@@ -4903,7 +5245,10 @@ match_column_labels <- function(columns_df, codebook_vars_df) {
 
   for (i in seq_len(n)) {
     name_idx <- if (has_var_paper_id) {
-      which(norm_var == norm_col[i] & var_paper_id == col_paper_id[i])
+      # files checked without a paper have paper_id NA on both sides, and
+      # NA == NA matched nothing: no codebook ever labelled a column of a
+      # local folder (#651)
+      which(norm_var == norm_col[i] & .same_id(var_paper_id, col_paper_id[i]))
     } else {
       which(norm_var == norm_col[i])
     }
@@ -5709,10 +6054,11 @@ data_check_colname_collisions <- function(col_names) {
   email = list(
     regex = "(?i)\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b",
     kind  = "specific"),
-  # IPv4 with each octet 0-255.
+  # IPv4 with each octet 0-255; see .pii_ip_ok() for what is not one.
   ip_address = list(
     regex = "\\b(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\b",
-    kind  = "specific"),
+    kind  = "specific",
+    validate = ".pii_ip_ok"),
   # US SSN: 3-2-4 with separators, excluding obvious non-SSN (000/666/9xx area,
   # 00 group, 0000 serial).
   ssn = list(
@@ -5852,6 +6198,28 @@ data_check_colname_collisions <- function(col_names) {
   "gebruikersnaam", "benutzername", "initialen"
 )
 
+# Whether a value holds an IP address and not four numbers with dots that are
+# something else (#648, 3 of 132 preprints): a time after a date
+# ("06.04.2026 15.34.46.182"), a program's version ("Chrome 131.0.0.0",
+# "Chrome/84.0.4147.89" in a browser's user agent), or part of a longer run of
+# numbers with dots ("1.2.3.4.5").
+.pii_ip_ok <- function(value) {
+  ip <- "(?:(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(?:25[0-5]|2[0-4]\\d|1?\\d?\\d)"
+  m <- gregexpr(paste0("\\b", ip, "\\b"), value, perl = TRUE)[[1]]
+  if (m[[1]] < 0) return(FALSE)
+  for (k in seq_along(m)) {
+    start <- m[[k]]; end <- start + attr(m, "match.length")[[k]] - 1L
+    before <- substr(value, 1L, start - 1L)
+    after <- substr(value, end + 1L, nchar(value))
+    if (grepl("[0-9]\\.$", before) || grepl("^\\.[0-9]", after)) next
+    if (grepl("[0-9]{1,4}[./-][0-9]{1,2}[./-][0-9]{2,4}[ T]+$", before)) next
+    if (grepl("(?i)(?:chrome|chromium|firefox|safari|edge?|opera|opr|version|ver|mozilla|applewebkit|gecko|msie|crios|fxios|android|windows nt|os|build|v)[ /]?$",
+              before, perl = TRUE)) next
+    return(TRUE)
+  }
+  FALSE
+}
+
 #' Flag values that match a personal-information pattern
 #'
 #' Scans a column's values for standard PII patterns (email, IP address, SSN,
@@ -5905,13 +6273,20 @@ data_check_pii_values <- function(x, broad_min_frac = 0.30) {
     n_matched <- n[m]
     if (length(matched) == 0) next
 
-    # Validate the matched values, when the pattern has a validator.
+    # Validate the matched values, when the pattern has a validator. Every
+    # real card number passes it, while long codes pass by chance (about one
+    # in ten for the checksum, fewer with the issuer's prefix): so most of
+    # the values that look like one must pass. A column of clinical codes
+    # (SNOMED, dm+d) had 3 to 14 such values among hundreds (#648: 6 columns
+    # of OpenSAFELY codelists, 0.8% to 4% passing, the only card flags in the
+    # 2,359 tabular files of 141 deposits).
     if (!is.null(spec$validate)) {
       vfun <- get(spec$validate, mode = "function")
       ok <- vapply(matched, vfun, logical(1))
+      n_looked <- sum(n_matched)
       matched <- matched[ok]
       n_matched <- n_matched[ok]
-      if (length(matched) == 0) next
+      if (length(matched) == 0 || sum(n_matched) < 0.5 * n_looked) next
     }
     n_valid <- sum(n_matched)
     frac <- n_valid / total
@@ -5983,14 +6358,26 @@ data_check_pii_values <- function(x, broad_min_frac = 0.30) {
 #' vocabulary, this cut false positives from 14 to 2 while missing nothing the
 #' previous substring rule caught.
 #'
+#' Some words name a kind of value with a shape of its own. When the column's
+#' values `x` are given, such a word counts only when a value has that shape: a
+#' phone number for "phone", "mobile" or "fax"; an IP address for "ip"; a MAC
+#' address for "mac"; a date or a year of birth for "dob" and the like.
+#' Coordinates ("lat", "gps", "geolocation") are left to
+#' [data_check_pii_geo()], which checks their values. Without that, "phone"
+#' holding the kind of device, "hosp_ward_IP" (inpatient), "SiPhy_29way_logOdds"
+#' (read as "ip"), "HLA-DOB" (a gene) and "GEO_LOCATION_VILLAGE" (village names)
+#' were flagged in 19 of 132 preprints (#648, K6).
+#'
 #' @param col_name the column name
+#' @param x optional: the column's values, to confirm a word with a value shape
 #' @returns list(problem, message, values)
 #' @export
 #' @keywords internal
 #' @examples
 #' data_check_pii_name("email")$problem
 #' data_check_pii_name("rt")$problem
-data_check_pii_name <- function(col_name) {
+#' data_check_pii_name("phone", c("iPhone", "Android"))$problem
+data_check_pii_name <- function(col_name, x = NULL) {
   none <- list(problem = FALSE, message = "", values = NULL)
   if (is.null(col_name) || is.na(col_name) || !nzchar(col_name)) return(none)
 
@@ -6014,11 +6401,61 @@ data_check_pii_name <- function(col_name) {
 
   matched <- unique(cand[cand %in% .pii_name_tokens])
   if (!length(matched)) return(none)
+  if (!is.null(x)) {
+    shape <- .pii_token_shape(matched)
+    ok <- vapply(seq_along(matched), function(i)
+      is.na(shape[[i]]) || .pii_values_have_shape(x, shape[[i]]), logical(1))
+    matched <- matched[ok]
+    if (!length(matched)) return(none)
+  }
 
   list(problem = TRUE,
        message = sprintf("Column name suggests personal information (matched: %s). Review before sharing.",
                          paste(matched, collapse = ", ")),
        values = matched)
+}
+
+# The kind of value a word of .pii_name_tokens names, when it has a shape of
+# its own (see data_check_pii_name()): "phone", "ip", "mac", "birth" or "geo";
+# NA for a word whose values have no shape (a name, an address).
+.pii_token_shape <- function(token) {
+  out <- rep(NA_character_, length(token))
+  out[grepl("phone|mobil|tele|fax|gsm|rufnummer|handy|puhelin|movil|portable|cell", token)] <- "phone"
+  out[token %in% c("ip", "ipaddress")] <- "ip"
+  out[token %in% "mac"] <- "mac"
+  out[grepl("dob|yob|birth|geboorte|geburts|naissance|nacimiento|nascita", token)] <- "birth"
+  out[token %in% c("latitude", "longitude", "lat", "lon", "lng", "geolocation", "gps",
+                   "breitengrad", "laengengrad", "ortsangabe")] <- "geo"
+  out
+}
+
+# Whether any value of `x` has the shape of `shape` (see .pii_token_shape()).
+# Coordinates are left to data_check_pii_geo(), so "geo" is FALSE here.
+.pii_values_have_shape <- function(x, shape) {
+  if (shape == "geo") return(FALSE)
+  if (inherits(x, c("Date", "POSIXt"))) return(shape == "birth")
+  v <- trimws(as.character(x))
+  v <- v[!is.na(v) & nzchar(v)]
+  if (!length(v)) return(FALSE)
+  switch(shape,
+    # 7 to 15 digits, written with only spaces, brackets, dots, dashes or "+"
+    phone = any(grepl("^\\+?[0-9 ().-]{7,}$", v) & nchar(gsub("[^0-9]", "", v)) >= 7 &
+                  nchar(gsub("[^0-9]", "", v)) <= 15),
+    ip = any(grepl("^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$", v) |
+               grepl("^[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7}$", v, ignore.case = TRUE)),
+    mac = any(grepl("^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$", v, ignore.case = TRUE)),
+    # a date, however it is written: in numbers ("15/03/1985"), with a year a
+    # person now alive was born in ("15-Mar-1985", "March 15, 1985", "1985"),
+    # with a month's name ("15 Mar 85"), or as eight digits ("19850315");
+    # not a number with decimals ("1985.34")
+    birth = any(grepl("^[0-9]{1,4}[-/.][0-9]{1,2}[-/.][0-9]{1,4}$", v) |
+                  grepl("(?<![0-9.,])(?:19[0-9]{2}|20[0-2][0-9]|2030)(?![0-9]|[.,][0-9])", v, perl = TRUE) |
+                  grepl(paste0("(?i)(?:[0-9][ ./-]*\\b(?:jan|feb|m[a\u00e4]r|mrt|apr|ma[iy]|mei|jun|jul|aug|sep|o[ck]t|nov|de[cz])",
+                               "|\\b(?:jan|feb|m[a\u00e4]r|mrt|apr|ma[iy]|mei|jun|jul|aug|sep|o[ck]t|nov|de[cz])[a-z\u00e9\u00fb]*\\.?[ ,./-]*[0-9])"),
+                        v, perl = TRUE) |
+                  grepl(paste0("^(?:(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])|",
+                               "(?:0[1-9]|[12][0-9]|3[01])(?:0[1-9]|1[0-2])(?:19|20)[0-9]{2})$"), v)),
+    FALSE)
 }
 
 #' Flag a column that holds geographic coordinates
@@ -6106,8 +6543,14 @@ data_check_pii_geo <- function(col_name, x, sibling_names = NULL) {
 #' * long enough (`min_median_chars`),
 #' * varied enough to be responses rather than a repeated category
 #'   (`min_unique_frac`),
-#' * **multi-word** -- most values contain whitespace between words, and
-#' * **predominantly alphabetic** -- letters, not mostly digits/punctuation.
+#' * **multi-word** -- most values contain whitespace between words,
+#' * **predominantly alphabetic** -- letters, not mostly digits/punctuation,
+#' * **not file paths or web addresses** (fewer than half of the values), and
+#' * **written in the first person** -- at least `min_first_person_frac` of the
+#'   values contain "I", "my", "we" or a like word (also in Dutch, German,
+#'   French, Spanish and Italian). People write about themselves in the first
+#'   person, which is where personal detail comes in; a code list's terms,
+#'   titles or rules are prose that describes things.
 #'
 #' @param x a character or factor vector
 #' @param min_median_chars typical (median) length above which a column may be
@@ -6118,6 +6561,8 @@ data_check_pii_geo <- function(col_name, x, sibling_names = NULL) {
 #'   one word (a space between word characters)
 #' @param min_alpha_frac minimum share of alphabetic characters in the typical
 #'   value (screens out numeric/ID/hash/URL columns)
+#' @param min_first_person_frac minimum share of values written in the first
+#'   person
 #' @returns list(problem, message, values)
 #' @export
 #' @keywords internal
@@ -6132,7 +6577,8 @@ data_check_pii_geo <- function(col_name, x, sibling_names = NULL) {
 data_check_pii_freetext <- function(x, min_median_chars = 40,
                                     min_unique_frac = 0.8,
                                     min_multiword_frac = 0.6,
-                                    min_alpha_frac = 0.5) {
+                                    min_alpha_frac = 0.5,
+                                    min_first_person_frac = 0.1) {
   none <- list(problem = FALSE, message = "", values = NULL)
   if (is.numeric(x)) return(none)
   # each distinct value once, weighed by how often it occurs (#554)
@@ -6141,6 +6587,12 @@ data_check_pii_freetext <- function(x, min_median_chars = 40,
   x <- tc$values[keep]
   n <- tc$n[keep]
   if (sum(n) < 5) return(none)
+
+  # A file path or a web address is not writing, however long and varied it is
+  # and even when its folder names hold spaces (#648).
+  addr <- grepl("^\\s*(?:[A-Za-z]:[\\\\/]|[/~]|[.]{1,2}[\\\\/]|https?://|www[.])", x, perl = TRUE) |
+    grepl("[\\\\/][^\\\\/]*[.][A-Za-z0-9]{2,4}\\s*$", x, perl = TRUE)
+  if (sum(n[addr]) > 0.5 * sum(n)) return(none)
 
   chars <- nchar(x)
   med <- stats::median(rep(chars, n))
@@ -6159,11 +6611,28 @@ data_check_pii_freetext <- function(x, min_median_chars = 40,
   alpha_frac <- if (nchar(typical) > 0) n_alpha / nchar(typical) else 0
   if (alpha_frac < min_alpha_frac) return(none)
 
+  # People write about themselves in the first person, and that is where names,
+  # places and other personal detail come in. Text that describes things -- a
+  # code list's terms, titles, rules, registry fields, notes in a table -- is
+  # long, varied prose too, but rarely says "I", "my" or "we" (#648).
+  fp_frac <- sum(n[grepl(.first_person_rx, x, perl = TRUE)]) / sum(n)
+  if (fp_frac < min_first_person_frac) return(none)
+
   list(problem = TRUE,
-       message = sprintf("Free-text column (median %.0f characters, %.0f%% distinct) may contain names or other personal detail. Review before sharing.",
-                         med, 100 * uniq_frac),
+       message = sprintf("Free-text column (median %.0f characters, %.0f%% distinct, %.0f%% written in the first person) may contain names or other personal detail. Review before sharing.",
+                         med, 100 * uniq_frac, 100 * fp_frac),
        values = NULL)
 }
+
+# A word of the first person (I, me, my, we, us, our and their forms) in
+# English, Dutch, German, French, Spanish and Italian. Used by
+# data_check_pii_freetext().
+.first_person_rx <- paste0(
+  "(?i)(?<![\\p{L}'])(?:j'|(?:i(?![.]e)|i'm|i've|i'd|i'll|me|my|mine|myself|",
+  "we|us|our|ours|ourselves|",
+  "ik|mij|mijn|wij|ons|onze|ich|mich|mir|mein|meine|meinen|meiner|wir|uns|unser|unsere|",
+  "je|moi|mon|ma|mes|nous|notre|nos|yo|mis|nosotros|nuestro|nuestra|",
+  "io|mio|mia|miei|noi|nostro)(?![\\p{L}']))")
 
 # -- Demographic-column detection ----------------------------------------------
 # Detect the three demographic variables that almost every human-subjects study
@@ -7327,7 +7796,7 @@ data_promote_header_row <- function(df, raw_rows = NULL, max_scan = 4L) {
   fields <- tryCatch(suppressWarnings({
     con <- file(path, encoding = "UTF-8-BOM")
     on.exit(close(con), add = TRUE)
-    line <- readLines(con, n = 1L, warn = FALSE)
+    line <- .utf8_lines(readLines(con, n = 1L, warn = FALSE))
     if (!length(line)) character(0) else
       scan(text = line, what = "", sep = if (ext == "iqdat") "\t" else ",",
            quote = "\"", quiet = TRUE, na.strings = character(0))

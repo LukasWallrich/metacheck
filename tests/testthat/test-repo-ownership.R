@@ -150,6 +150,29 @@ test_that(".own_reference_links finds deposits cited only in the reference list 
   expect_equal(r$ref_authors, "Lee, T")
 })
 
+test_that("a deposit's DOI written in a reference and given as its link is one deposit (#644)", {
+  expect_equal(.own_key(c("10.6084/m9.figshare.29094266", "https://doi.org/10.6084/M9.figshare.29094266",
+                          "doi.org/10.6084/m9.figshare.29094266/")),
+               rep(.own_key("10.6084/m9.figshare.29094266"), 3))
+  expect_false(.own_key("10.6084/m9.figshare.29094266") == .own_key("10.6084/m9.figshare.c.8754103"))
+  p <- paper("p1")
+  p$text <- data.frame(
+    text = c("All scripts are available from Figshare [74].",
+             "Yang S. 2025 IGPC. Figshare. (doi:10.6084/m9.figshare.29094266)"),
+    text_id = 1:2, paragraph_id = 1:2, section_id = c(1L, 2L), paper_id = "p1")
+  p$section <- data.frame(section_id = 1:2, header = c("Data accessibility", "References"),
+                          section_type = c("availability", "references"))
+  p$bib <- data.frame(bib_id = "b74", authors = "Yang, S", year = "2025", title = "",
+                      doi = "10.6084/m9.figshare.29094266", text_id = 2L)
+  p$xref <- data.frame(xref_id = "b74", xref_type = "bibr", contents = "[74]", text_id = 1L)
+  r <- .own_reference_links(p)
+  expect_equal(r$repo_url, "https://doi.org/10.6084/m9.figshare.29094266")
+  # the lookup's record, under either form, marks the same row
+  out <- own1(source = "reference", repo_url = r$repo_url, repo_type = "figshare",
+              context = NA_character_)
+  expect_equal(.own_mark_publications(out, "10.6084/m9.figshare.29094266")$ownership, "not_data")
+})
+
 test_that(".own_dep_type reads InvenioRDM's combined types (#634, #636)", {
   expect_equal(.own_dep_type(c("zenodo", "zenodo", "zenodo"), c("publication-article", "dataset", "image-figure")),
                c("JournalArticle", "Dataset", "Image"))
@@ -283,4 +306,82 @@ test_that(".own_reference_links gives a GitHub name written alone its address (#
   expect_equal(r$repo_url, "https://github.com/bouralab/Prop3D")
   # the same repository linked in the text is not looked up twice
   expect_equal(nrow(.own_reference_links(p, exclude = "http://github.com/bouralab/Prop3D")), 0)
+})
+
+test_that("a family name with a particle matches only that family name, as a whole word (#682)", {
+  # the examples of the issue: "van" alone, or "lissa" inside a given name
+  expect_false(.own_names_author("Marcel A.L.M. van Assen; Melissa Lewis", family = "Van Lissa"))
+  expect_false(.own_names_author("Melissa Lewis", family = "Van Lissa"))
+  expect_false(.own_names_author("Marcel A.L.M. van Assen", family = "Van Lissa"))
+  expect_false(.own_people_author("Marcel A.L.M. van Assen; Melissa Lewis", "Van Lissa"))
+  expect_false(.own_people_author("Melissa Lewis", "Van Lissa"))
+  # the family name itself, written either way
+  expect_true(.own_people_author("Caspar J. van Lissa", "Van Lissa"))
+  expect_true(.own_people_author("Van Lissa, C.; Lee, T.", "Van Lissa"))
+  # an account name runs the name together
+  expect_true(.own_names_author("cjvanlissa", "Van Lissa", inside = TRUE))
+  expect_true(.own_names_author("rbmvanaert", "Van Aert", inside = TRUE))
+  # Grobid's family name can hold the given name, or noise
+  expect_true(.own_people_author("Heene, M.", "Moritz Heene"))
+  expect_true(.own_people_author("Hecker, L.", "Hecker -Orcid"))
+  expect_true(.own_people_author("Przybylski, A.", "Przybyl- Ski"))
+  expect_equal(.own_fam_keys(c("Van 't Veer", "De Bruin", "Van Der")), c("veer", "bruin", "vander"))
+  # a double family name matches either part, but not a given name
+  expect_true(.own_people_author("Gabriel García Márquez", "García Márquez"))
+  expect_true(.own_people_author("García, G.", "García Márquez"))
+  expect_false(.own_people_author("García Lopez", "García Márquez"))
+  # a family name followed by initials
+  expect_true(.own_people_author("Smith AB; Lee C", "Smith"))
+  # the OSF's own family names, where it gives them
+  expect_false(.own_people_author("Lissa Brown", "Van Lissa", families = "Brown"))
+  # a README may run names together, so a name of five letters or more can
+  # be part of a word there ("Chang" in "Changes"), which is why only its
+  # opening is read; the name an account gives itself is read word by word
+  expect_true(.own_names_author("Changes made", "Chang", inside = TRUE))
+  expect_false(.own_names_author("Changes made", "Chang"))
+  expect_true(is.na(.own_people_author(NA_character_, "Smith")))
+})
+
+test_that("an old OSF project with many contributors, none an author, is others' data (#682)", {
+  pf2 <- pf
+  pf2$family <- c("Hoijtink", "De Bruin", "Duken", "Flores", "Frankenhuis", "Van Lissa")
+  pf2$full <- c("Herbert Hoijtink", "Caspar J. Van Lissa")
+  pf2$year <- 2025; pf2$date <- as.Date("2025-07-01")
+  ten <- paste("Christopher Jon Anderson; Joanna Anderson; Marcel A.L.M. van Assen; Peter Raymond Attridge;",
+               "Angela Attwood; Jordan Axt; Molly Babel; Melissa Lewis; Erica Baranski; Michael Barnett-Cowan")
+  row <- list(source = "text", repo_url = "https://osf.io/ezcuj", repo_type = "osf",
+              context = "The Reproducibility Project (https://osf.io/ezcuj) replicated 100 studies.",
+              osf_type = "nodes", osf_category = "project", dep_date = "2012-10-08", dep_creators = ten,
+              osf_contributors = ten, listed = TRUE, n_files = 1756, has_data = TRUE, has_code = TRUE)
+  rpp <- function(...)
+    .repo_ownership(as.data.frame(utils::modifyList(row, list(...)), stringsAsFactors = FALSE), pf2)
+  x <- rpp(dep_n_creators = "270",
+           dep_creator_families = "Anderson; van Assen; Attridge; Attwood; Axt; Babel; Lewis; Baranski; Barnett-Cowan")
+  expect_equal(x$ownership, "others_data")
+  expect_equal(x$ownership_reason, "an OSF project more than 5 years older than the paper, without a paper author")
+  # a record stored before the OSF's count was kept: the same
+  expect_equal(rpp()$ownership, "others_data")
+  # a recent project whose list of contributors was cut short: the 10 it
+  # names do not show that the authors are not among the others
+  y <- rpp(dep_date = "2025-01-01", dep_n_creators = "30",
+           context = "Materials are at https://osf.io/ezcuj.")
+  expect_equal(y$ownership, "own_this")
+  # the whole list, without an author: made by others
+  z <- rpp(dep_date = "2025-01-01", dep_n_creators = "10",
+           context = "Materials are at https://osf.io/ezcuj.")
+  expect_equal(z$ownership, "others_data")
+  # an author among the 10 named settles it
+  w <- rpp(dep_n_creators = "270", osf_contributors = paste(ten, "; Caspar J. van Lissa"),
+           dep_creators = paste(ten, "; Caspar J. van Lissa"))
+  expect_equal(w$ownership_group, "own")
+})
+
+test_that(".own_facts keeps the OSF's family names and number of contributors (#682)", {
+  links <- data.frame(paper_id = "p1", repo_url = "https://osf.io/abcde", repo_type = "osf")
+  od <- data.frame(repo_url = "https://osf.io/abcde", title = "Faces", category = "project", osf_type = "nodes",
+                   creators = "Anna van Smith", creator_families = "van Smith", n_creators = "12",
+                   published = "2022-05-01")
+  x <- .own_facts(paper("p1"), links, NULL, NULL, od)
+  expect_equal(x$dep_creator_families, "van Smith")
+  expect_equal(x$dep_n_creators, "12")
 })

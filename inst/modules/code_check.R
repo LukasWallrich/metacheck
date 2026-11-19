@@ -79,6 +79,13 @@ code_check <- function(paper, local_path = NULL,
   # about below, before anything is downloaded
   listing_partial <- if (is.null(local_path))
     get_prev_outputs("repo_check", "partial_repos") else NULL
+  # repositories repo_check found but could not list (#501); named in the
+  # report with the ones above (#681)
+  listing_gated <- if (is.null(local_path))
+    get_prev_outputs("repo_check", "gated_repos") else NULL
+  # the authors' own deposits in sequence and expression archives (#660)
+  archive_deposits <- if (is.null(local_path))
+    get_prev_outputs("repo_check", "archive_deposits") else NULL
   if (is.null(all_files)) {
     # cache forwarded from this call's own `cache` argument: without it,
     # repo_check() falls back to its own default (cache = FALSE) regardless
@@ -100,9 +107,14 @@ code_check <- function(paper, local_path = NULL,
     }
     all_files <- mo$table %||% data.frame(file_name = character(0), repo_url = character(0))
     listing_partial <- mo$partial_repos
+    listing_gated <- mo$gated_repos
+    archive_deposits <- mo$archive_deposits
   }
   if (isTRUE(download) && nrow(all_files) > 0)
     .cap_report_partial(listing_partial, all_files$repo_url)
+  # repositories listed only in part or not at all: the checks below do not
+  # see all their files, which the report and summary say (#681)
+  not_listed <- .repos_not_listed_text(listing_partial, listing_gated, all_files$repo_url)
   all_files$language <- code_lang(all_files$file_name)
 
   # Download every file the steps below might need (spv/smcl/mplus/html
@@ -212,8 +224,10 @@ code_check <- function(paper, local_path = NULL,
   checked_langs <- setdiff(listed_langs, "JASP")
 
   # renv's own files (renv/activate.R, renv/library/) are not the paper's
-  # code; see .in_renv_folder()
-  relevant <- all_files$language %in% listed_langs & !.in_renv_folder(all_files)
+  # code; see .in_renv_folder(); nor is code by others the deposit bundles,
+  # such as Stata packages in extra_ados/ (#648; see .is_others_code_path())
+  relevant <- all_files$language %in% listed_langs & !.in_renv_folder(all_files) &
+    !.in_others_code_folder(all_files)
   code_files <- all_files[relevant, , drop = FALSE]
 
   lang_counts <- sapply(listed_langs, \(l) sum(code_files$language == l))
@@ -240,8 +254,12 @@ code_check <- function(paper, local_path = NULL,
       # every OTHER paper in that batch too -- confirmed on a real 2-paper
       # batch where neither paper had any code file.
       table = code_files,
-      traffic_light = "na",
-      summary_text = summary_code,
+      # yellow when a repository was not listed in full: its code may exist
+      # unseen (#681)
+      traffic_light = if (is.null(not_listed$summary)) "na" else "yellow",
+      summary_text = if (is.null(not_listed$summary)) summary_code else
+        paste("\n- ", c(summary_code, not_listed$summary), collapse = ""),
+      report = not_listed$report,
       # code_n (not code_file_n): must match the normal-path summary_table's
       # column name below, or a corpus batch mixing papers with and without
       # code files ends up with two disjoint, sparsely-populated columns
@@ -451,20 +469,14 @@ code_check <- function(paper, local_path = NULL,
       the_file$percentage_comment <- line_stats$percent_comments
       the_file$has_docstring <- line_stats$has_docstring
 
-      # missing loaded files
-      file_refs <- code_file_refs(file_nc, the_file$language)
-      files_in_repo <- all_files[all_files$repo_url == the_file$repo_url, ]$file_name
-      # fix possible winslashes
-      base_ref <- gsub("\\\\", "/", file_refs) |> basename()
-      base_repo <- gsub("\\\\", "/", files_in_repo) |> basename()
-      # Case-insensitive: a real file that exists in the repo only under a
-      # different letter case (e.g. code references "REM_tools.r", the repo
-      # holds "REM_tools.R") is a match, not a missing file -- most filesystems
-      # authors develop on (Windows, macOS default) are themselves
-      # case-insensitive, so this is not an error on their end to flag.
-      missing_files <- base_ref[!tolower(base_ref) %in% tolower(base_repo)]
-      the_file$loaded_files_missing <- length(missing_files)
-      the_file$loaded_files_missing_names <- paste(missing_files, collapse = ", ")
+      # the files the code reads, and those it writes or downloads; which
+      # of the files it reads are missing is decided after every script is
+      # read (.code_missing_files()), as another script may make them (#648)
+      the_file$loaded_refs <- paste(code_file_refs(file_nc, the_file$language), collapse = "\u001f")
+      the_file$files_written <- paste(unique(code_file_refs(file_nc, the_file$language, writes_only = TRUE)),
+                                      collapse = ", ")
+      # downloads or unpacks files it does not name (#648)
+      the_file$fetches_unnamed <- .code_fetches_unnamed(file_nc, the_file$language)
 
       return(the_file)
     },
@@ -487,8 +499,9 @@ code_check <- function(paper, local_path = NULL,
                        "library_max_between", "packages_n", "packages",
                        "comment_lines", "code_lines",
                        "percentage_comment", "has_docstring",
+                       "loaded_refs", "files_written", "fetches_unnamed",
                        "loaded_files_missing",
-                       "loaded_files_missing_names", "error")
+                       "loaded_files_missing_names", "loaded_files_fetched_names", "error")
     for (col in analysis_cols)
       if (!col %in% names(code_files)) code_files[[col]] <- NA
   } else {
@@ -506,6 +519,7 @@ code_check <- function(paper, local_path = NULL,
     unchecked <- code_files[!code_files$language %in% checked_langs, , drop = FALSE]
     code_files <- dplyr::bind_rows(collected_df, unchecked)
   }
+  code_files <- .code_missing_files(code_files, all_files)
   code_files$checked[is.na(code_files$checked)] <- FALSE
 
   # Reporting ----
@@ -638,9 +652,18 @@ code_check <- function(paper, local_path = NULL,
 
   ## Missing files ----
   missingfiles_issue <- code_files$file_name[which(code_files$loaded_files_missing > 0)]
+  # Only the code files that were read count for "all present": a file that
+  # did not parse or was not downloaded was not looked at (#648, "all files
+  # present" for code the check could not look at, 7 preprints)
+  n_read <- sum(!is.na(code_files$loaded_files_missing %||% NA))
+  n_code <- nrow(code_files)
   if (length(missingfiles_issue) == 0) {
-    summary_missingfiles <- "All files loaded in the code were present in the repository."
-    report_missingfiles <- summary_missingfiles
+    summary_missingfiles <- if (n_read == 0) NULL else if (n_read == n_code)
+      "All files loaded in the code were present in the repository." else
+      sprintf("All files loaded in the %d of %d code files we could read were present in the repository.",
+              n_read, n_code)
+    report_missingfiles <- summary_missingfiles %||%
+      "We could not read any code file, so we could not check which files the code loads."
     report_table_files_missing <- NULL
   } else {
     n_missing <- sum(code_files$loaded_files_missing, na.rm = TRUE)
@@ -650,17 +673,57 @@ code_check <- function(paper, local_path = NULL,
     )
 
     report_missingfiles <- sprintf(
-      "The scripts load files, but %d script%s loaded %d file%s that could not be automatically identified in the repository. Check if the following files are made available, so that others can reproduce your code, or that the files are missing:",
+      "The scripts load files, but %d script%s loaded %d file%s that could not be automatically identified in the repository.%s Check if the following files are made available, so that others can reproduce your code, or that the files are missing:",
       length(missingfiles_issue),
       plural(length(missingfiles_issue)),
       n_missing,
-      plural(n_missing)
+      plural(n_missing),
+      # a file may be in a folder that was not listed (#681)
+      if (is.null(not_listed$report)) "" else
+        " This may be because a repository was listed only in part or not at all (see Repositories not listed in full above)."
     )
 
     rows <- which(code_files$loaded_files_missing > 0)
     cols <- c("file_name", "loaded_files_missing_names")
     report_table_files_missing <- code_files[rows, cols]
     colnames(report_table_files_missing) <- c("File name", "Missing Files")
+  }
+  # files not in the deposit that code of the paper may download or unpack
+  fetched <- code_files$loaded_files_fetched_names %||% rep(NA_character_, n_code)
+  fetched <- unique(unlist(strsplit(fetched[!is.na(fetched) & nzchar(fetched)], ",\\s*")))
+  if (length(fetched)) {
+    fetched_text <- sprintf(paste(
+      "%d file%s the code reads %s not in the repository, but the code downloads or unpacks files",
+      "without naming them (such as <code>osf_download()</code> or <code>unzip()</code>), so %s may be",
+      "made by it and %s not counted as missing: %s."),
+      length(fetched), plural(length(fetched)), plural(length(fetched), "is", "are"),
+      plural(length(fetched), "it", "they"), plural(length(fetched), "is", "are"),
+      paste(utils::head(fetched, 10), collapse = ", "))
+    if (!length(missingfiles_issue)) {
+      summary_missingfiles <- sub("^All files", "All other files", summary_missingfiles)
+      report_missingfiles <- sub("^All files", "All other files", report_missingfiles)
+    }
+    summary_missingfiles <- c(summary_missingfiles, fetched_text)
+    report_missingfiles <- paste(c(report_missingfiles, fetched_text), collapse = " ")
+  }
+  # Files the code reads are missing, and the authors deposited raw data in a
+  # sequence or expression archive (#660): in 16 papers (13 BES, 3 medRxiv)
+  # the missing files were never the archive's own files, and in 11 they
+  # included tables a processing pipeline makes from them (OTU, ASV and count
+  # tables, alignments, genotype files). File names cannot tell which ones,
+  # so the sentence is conditional.
+  if (length(missingfiles_issue) && is.data.frame(archive_deposits) && nrow(archive_deposits)) {
+    ids <- unique(code_files$paper_id[which(code_files$loaded_files_missing > 0)] %||% character(0))
+    ad <- archive_deposits[archive_deposits$paper_id %in% ids | !length(ids), , drop = FALSE]
+    if (nrow(ad)) {
+      arch_txt <- sprintf(paste(
+        "The paper deposited raw data in %s. If some of these files were made from those raw data by a processing",
+        "pipeline (for example OTU, ASV or count tables, alignments, or genotype files), deposit them as well, so the",
+        "analysis can be rerun without the pipeline."),
+        paste(sprintf("%s: %s", ad$archive, ad$accession), collapse = "; "))
+      summary_missingfiles <- c(summary_missingfiles, arch_txt)
+      report_missingfiles <- paste(c(report_missingfiles, arch_txt), collapse = " ")
+    }
   }
 
   ## set up table of code file links ----
@@ -765,11 +828,13 @@ code_check <- function(paper, local_path = NULL,
     }
   }
 
-  # R advice for R code, Python advice for Python code: the R part is shown
-  # when there is R code, or when there is neither R nor Python code (as
-  # before); the Python part when there is Python code.
+  # R advice for R code, Python advice for Python code. The R part was also
+  # shown for code in neither language, so a deposit of SAS, MATLAB or SPSS
+  # code was told to add an renv.lock (#648, K2c); it gets a note on its own
+  # software instead (below).
   code_langs <- code_files$language
-  show_r <- "R" %in% code_langs || !"Python" %in% code_langs
+  show_r <- "R" %in% code_langs
+  other_langs <- setdiff(unique(code_langs[!is.na(code_langs)]), c("R", "Python", "JASP"))
   if (!version_pin$pinned) {
     report_version_pin <- "No `renv.lock` file, `sessionInfo()`/`session_info()` record, or `groundhog`/`checkpoint` date-pin call was found anywhere in the repository. Without one of these, the exact R and package versions used for the analysis are not recoverable, and package versions may drift between when this analysis was run and any later reproduction attempt. Consider depositing an `renv.lock` (via the `renv` package), a `sessionInfo()` text dump, or a `groundhog`/`checkpoint` date-pin alongside the code."
     summary_version_pin <- "No pinned R/package environment (renv.lock, sessionInfo(), or groundhog/checkpoint) was found. Consider adding a solution to improve computational reproducibility."
@@ -822,6 +887,14 @@ code_check <- function(paper, local_path = NULL,
       report_version_pin <- c(report_version_pin, "No list of the Python packages the code needs (a `requirements.txt`, `environment.yml`, `Pipfile.lock`, `poetry.lock`, `uv.lock` or `pyproject.toml`) was found anywhere in the repository. Without one, the package versions used for the analysis are not recoverable, and they may drift between when this analysis was run and any later reproduction attempt. Consider depositing a `requirements.txt` that lists each package with its version (for example the output of `pip freeze`).")
       summary_version_pin <- c(summary_version_pin, "No list of Python package versions (requirements.txt or similar) was found. Consider adding one to improve computational reproducibility.")
     }
+  }
+  if (length(other_langs)) {
+    lang_txt <- paste(other_langs, collapse = " and ")
+    report_version_pin <- c(report_version_pin, sprintf(paste(
+      "The repository holds %s code. State the version of %s used in the README, and list any",
+      "add-ons the code needs (for Stata, the user-written commands installed with `ssc install`;",
+      "for MATLAB, the toolboxes), so that readers can run the code with the same software."),
+      lang_txt, lang_txt))
   }
   report_version_pin <- paste(report_version_pin, collapse = "\n\n")
   env_pinned <- .code_env_pinned(version_pin, code_langs)
@@ -906,8 +979,12 @@ code_check <- function(paper, local_path = NULL,
     }
   }
 
+  # code files whose download failed: not checked (#667)
+  failed_text <- .download_failed_text(code_failed_files)
   report <- c(
     "Below, we describe some best coding practices and give the results of automatic evaluation of these practices in the code files below. This check may miss things or produce false positives if your scripts are less typical.",
+    failed_text$report,
+    not_listed$report,
     scroll_table(report_table, maxrows = 5),
     "#### Code Comments",
     report_comments,
@@ -956,6 +1033,10 @@ code_check <- function(paper, local_path = NULL,
   } else {
     tl <- "yellow"
   }
+  # at least yellow when a repository was listed only in part or not at all:
+  # files went unchecked, so neither "no issues" nor "nothing to check" holds
+  # (#681)
+  if (!is.null(not_listed$summary) && tl %in% c("na", "green")) tl <- "yellow"
 
   # Aggregate by paper
   # Every code_* column below except code_n/code_checked is only set inside
@@ -999,6 +1080,10 @@ code_check <- function(paper, local_path = NULL,
   summary_table$code_packages_n <-
     pkg_counts[as.character(summary_table$paper_id)] |> unname()
   summary_table$code_packages_n[is.na(summary_table$code_packages_n)] <- 0L
+  # code files whose download failed, per paper (#667)
+  summary_table$code_files_failed <- if (!is.data.frame(code_failed_files) || !nrow(code_failed_files)) 0L else
+    if (nrow(summary_table) == 1 || !"paper_id" %in% names(code_failed_files)) nrow(code_failed_files) else
+      vapply(summary_table$paper_id, \(id) sum(code_failed_files$paper_id %in% id), integer(1), USE.NAMES = FALSE)
 
   # Version-pinning is genuinely per-paper (renv.lock/sessionInfo.txt belong to
   # ONE paper's repository, unlike the whole-run `version_pin` used for the
@@ -1053,6 +1138,8 @@ code_check <- function(paper, local_path = NULL,
   # count is not an error or something to fix, just informational.
   summary_text <- c(
     summary_code,
+    failed_text$summary,
+    not_listed$summary,
     summary_comments,
     if (length(setwd_issues) > 0) summary_setwd,
     if (length(install_packages_issues) > 0) summary_install_packages,

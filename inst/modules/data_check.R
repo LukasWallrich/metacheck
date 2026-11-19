@@ -194,13 +194,17 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # lets the framework handle tab switching and widget sizing, rather than
   # hand-rolled show/hide JS. Tab-heading level (##) becomes a tab label and is
   # not added to the report TOC.
+  # At most .report_file_tabs() files get a table (R/report-helpers.R), with a
+  # note when there are more, so the report stays small for large deposits.
   file_tabset <- function(files, table_fun) {
     if (length(files) == 0) return(NULL)
+    files <- .report_file_tabs(files)
+    note <- attr(files, "note")
     if (.report_is_static(report_type())) {
       secs <- vapply(files, function(f) {
         paste(c(paste0("##### ", f), table_fun(f)), collapse = "\n\n")
       }, character(1))
-      return(paste(secs, collapse = "\n\n"))
+      return(paste(c(note, secs), collapse = "\n\n"))
     }
     # Each tab heading and its body are separate blocks joined by a blank line:
     # Pandoc only parses a `## heading` when a blank line precedes it, so a
@@ -209,7 +213,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     tabs <- vapply(files, function(f) {
       paste(c(paste0("## ", f), table_fun(f)), collapse = "\n\n")
     }, character(1))
-    paste(c("::: {.panel-tabset}", tabs, ":::"), collapse = "\n\n")
+    paste(c(note, "::: {.panel-tabset}", tabs, ":::"), collapse = "\n\n")
   }
 
   # One descriptives table per source file. `desc` must include a `source_file`
@@ -309,6 +313,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   }
   if (download != "none" && nrow(all_files) > 0)
     .cap_report_partial(listing_partial, all_files$repo_url)
+  # repositories listed only in part or not at all: the checks below do not
+  # see all their files, which the report and summary say (#681)
+  not_listed <- .repos_not_listed_text(listing_partial, listing_gated, all_files$repo_url)
 
   # ── 2. Classify every file into a data_check semantic type ───────────────────
   if (nrow(all_files) == 0) {
@@ -338,8 +345,12 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # code_check.R's and codebook_check.R's equivalent empty-result paths).
       table = all_files,
       structure = all_files,
-      traffic_light = "na",
-      summary_text = "We found no files to analyse.",
+      # yellow when a repository was not listed in full: its data may exist
+      # unseen (#681)
+      traffic_light = if (is.null(not_listed$summary)) "na" else "yellow",
+      summary_text = if (is.null(not_listed$summary)) "We found no files to analyse." else
+        paste("\n- ", c("We found no files to analyse.", not_listed$summary), collapse = ""),
+      report = not_listed$report,
       gated_repos = listing_gated,
       manifest_path = if (!is.null(manifest)) manifest_path else NULL,
       summary_table = data.frame(
@@ -349,7 +360,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     ))
   }
 
-  all_files$data_type <- data_classify_files(all_files$file_name, all_files$file_path)
+  all_files$data_type <- data_classify_files(all_files$file_name, all_files$file_path,
+                                             group = all_files$repo_url)
   # Fine-grained documentation role (readme / codebook / supplemental), NA for
   # non-documentation rows. Drives root-vs-per-study placement (readme is
   # collection-level) and which files codebook_check parses.
@@ -368,6 +380,10 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
 
   llm_file_updates <- 0L
   llm_col_updates <- 0L
+  # files and columns the model gave no usable answer for, also when asked
+  # again (#673): the paper each belongs to, for the report and summary_table
+  llm_file_unanswered <- character(0)
+  llm_col_unanswered  <- character(0)
   llm_group_updates <- 0L
   roster_check      <- NULL
   group_unresolved  <- character(0)
@@ -398,6 +414,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
                                     phase = "Classifying file types")
       if (is.na(llm_model_used))
         llm_model_used <- attr(pred, "llm_model") %||% NA_character_
+      llm_file_unanswered <- as.character(
+        (all_files$paper_id %||% rep(NA_character_, nrow(all_files)))[
+          amb_files[attr(pred, "llm_unanswered")]])
 
       ok <- !is.na(pred)
       if (any(ok)) {
@@ -465,6 +484,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   gated_repos <- NULL
   oversize_files <- NULL
   failed_files   <- NULL
+  # members of zips that could not be unpacked (.expand_zip(), #680)
+  unpack_failed  <- NULL
   # Which files this run WANTS to download (kept in scope for the manifest).
   want <- if (download == "all") {
     rep(TRUE, nrow(all_files))
@@ -657,6 +678,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
         if (!is.null(ov) && nrow(ov) > 0)
           oversize_files <- rbind(oversize_files, data.frame(
             repo_url = row1$repo_url, file_name = ov$file_name, file_size = ov$file_size))
+        uf <- attr(rows, "unpack_failed")
+        if (!is.null(uf) && nrow(uf) > 0) unpack_failed <- rbind(unpack_failed, uf)
         if (nrow(rows) > 0) extracted[[length(extracted) + 1L]] <- rows
       }
       # Drop the consumed container rows (see comment above); `want` is kept
@@ -771,6 +794,12 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   # files) rather than real data; demoted to documentation (doc_role
   # "supplemental") after extraction.
   manifest_files <- character(0)
+  # Sheets of notes or a codebook that a data spreadsheet holds beside its
+  # data, set aside below as documentation: one row per sheet. Returned as
+  # `doc_sheets`, so codebook_check reads them (#651).
+  doc_sheets <- data.frame(paper_id = character(0), source_file = character(0),
+                           file_location = character(0), sheet = character(0),
+                           group = character(0))
   # .RData/.rda workspaces that held no reusable tabular data (only fitted
   # models / session objects, or could not be restored). Flagged as a
   # data-sharing recommendation: share the underlying data as CSV + codebook.
@@ -890,6 +919,14 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
           !is.null(p$df) && !is.null(.find_codebook_cols(names(p$df))), logical(1))
         keep <- which(is_table & !is_doc)
         if (!length(keep)) keep <- utils::head(which(is_table), 1)
+        set_aside <- setdiff(which(is_doc), keep)
+        if (length(set_aside) && length(keep)) {
+          doc_sheets <<- rbind(doc_sheets, data.frame(
+            paper_id = as.character(f$paper_id %||% NA_character_),
+            source_file = f$source_file, file_location = f$file_location,
+            sheet = sheets[set_aside],
+            group = as.character(f$group %||% NA_character_)))
+        }
         if (!length(keep)) {
           if (first$manifest) {
             manifest_files <<- c(manifest_files, f$source_file)
@@ -1058,6 +1095,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
           phase = "Classifying column concepts")
         if (is.na(llm_model_used))
           llm_model_used <- attr(pred_concept, "llm_model") %||% NA_character_
+        un_cols <- gap_idx[attr(pred_concept, "llm_unanswered")]
+        llm_col_unanswered <- as.character(
+          (columns_df$paper_id %||% rep(NA_character_, nrow(columns_df)))[un_cols])
         # 'measure'/'other' are non-informative concepts → leave NA.
         fill <- !is.na(pred_concept) & !pred_concept %in% c("measure", "other") &
           is.na(columns_df$concept[gap_idx])
@@ -1264,6 +1304,11 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   report <- c(
     "This module classifies repository files and, for tabular data files available locally, extracts each column's type and summary statistics."
   )
+  # files whose download failed: the checks below did not see them (#667)
+  failed_text <- .download_failed_text(failed_files)
+  report <- c(report, failed_text$report, not_listed$report)
+  unpack_text <- .unzip_failed_text(unpack_failed)
+  report <- c(report, unpack_text$report)
 
   # The data tree replaces the former "File Types" count table: it lists every
   # file with the same classification, so a separate per-type tally was a less
@@ -1340,6 +1385,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       llm_col_updates, plural(llm_col_updates),
       n_groups, plural(n_groups)
     )
+    # items the model gave no usable answer for, also when asked again (#673)
+    n_un_cols <- length(llm_col_unanswered)
+    n_un_files <- length(llm_file_unanswered)
+    if (n_un_cols + n_un_files > 0)
+      llm_text <- paste(llm_text, sprintf(
+        "The model gave no usable answer for %s, also when asked again in smaller batches; the rules alone classified %s.",
+        paste(c(if (n_un_cols) sprintf("%d column%s", n_un_cols, plural(n_un_cols)),
+                if (n_un_files) sprintf("%d file%s", n_un_files, plural(n_un_files))),
+              collapse = " and "),
+        if (n_un_cols + n_un_files == 1) "it" else "them"))
     report <- c(report, llm_text)
   }
 
@@ -1472,6 +1527,19 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
   summary_table$key_n[is.na(summary_table$key_n)] <- 0L
   # one paper whose id is unknown (local files only) has all the keys found
   if (nrow(summary_table) == 1) summary_table$key_n <- length(unique(key_found$key))
+  # files whose download failed, per paper (#667)
+  ff <- if (is.data.frame(failed_files) && nrow(failed_files))
+    failed_files[!duplicated(paste(failed_files$repo_url, failed_files$file_name)), , drop = FALSE] else NULL
+  summary_table$files_failed <- if (is.null(ff)) 0L else if (nrow(summary_table) == 1) nrow(ff) else
+    vapply(summary_table$paper_id, \(id) sum(ff$paper_id %in% id), integer(1), USE.NAMES = FALSE)
+  # columns and files the model gave no usable answer for, per paper (#673);
+  # NA when the model was not used, so a run without it does not read as one
+  # without failures
+  count_by_paper <- function(pids) if (!llm_use()) NA_integer_ else
+    if (nrow(summary_table) == 1) length(pids) else
+    vapply(summary_table$paper_id, \(id) sum(pids %in% id), integer(1), USE.NAMES = FALSE)
+  summary_table$llm_cols_unanswered <- count_by_paper(llm_col_unanswered)
+  summary_table$llm_files_unanswered <- count_by_paper(llm_file_unanswered)
 
   # A brief report (report_type() "brief" or "simple_brief", set while the
   # modules run) is about what to improve. How the files were grouped into
@@ -1482,7 +1550,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     summary_studies <- NULL
     summary_ungrouped <- NULL
   }
-  summary_text <- c(summary_keys, summary_files, summary_data, summary_studies,
+  summary_text <- c(failed_text$summary, not_listed$summary, unpack_text$summary, summary_keys, summary_files,
+                     summary_data, summary_studies,
                      summary_ungrouped, summary_nolocal, summary_omitted,
                      summary_workspace, summary_nontabular, summary_trial_level) |>
     paste("\n- ", x = _, collapse = "")
@@ -1619,6 +1688,10 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     both <- both[both %in% names(rank)]
     empty_tl <- if (!length(both)) "na" else
       names(rank)[which(rank == max(rank[both]))[1]]
+    # at least yellow when a repository was listed only in part or not at all:
+    # files went unchecked, so neither "no issues" nor "nothing to check" holds
+    # (#681)
+    if (!is.null(not_listed$summary) && empty_tl %in% c("na", "green")) empty_tl <- "yellow"
     dv_summary_table <- summary_table["paper_id"] |>
       dplyr::left_join(n_spreadsheet_files_by_paper, by = "paper_id") |>
       dplyr::left_join(n_flagged_files_spreadsheet_by_paper, by = "paper_id")
@@ -1637,6 +1710,7 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       report = c(report, dv_report),
       summary_text = paste(summary_text, text),
       keys = key_found,
+      doc_sheets = doc_sheets,
       structure = all_files,
       previews = file_previews,
       gated_repos = listing_gated,
@@ -1846,7 +1920,8 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
       # sharing" prompts, never echoing the matching value.
       pv <- data_check_pii_values(x)
       if (pv$problem) col_finds[["Personal info (values)"]] <- pv$message
-      pn <- data_check_pii_name(col)
+      # with the values, which confirm a word such as "phone" or "ip" (#648)
+      pn <- data_check_pii_name(col, x)
       if (pn$problem) col_finds[["Personal info (column name)"]] <- pn$message
       # sibling_names lets the geo check require a partner column: a latitude is
       # only a coordinate when a longitude sits beside it, which is what tells a
@@ -2356,6 +2431,10 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     # low (green+yellow -> "green", yellow+red -> "yellow").
     if (!length(both)) "na" else names(rank)[which(rank == max(rank[both]))[1]]
   }
+  # at least yellow when a repository was listed only in part or not at all:
+  # files went unchecked, so neither "no issues" nor "nothing to check" holds
+  # (#681)
+  if (!is.null(not_listed$summary) && tl %in% c("na", "green")) tl <- "yellow"
 
   list(
     # One row per COLUMN: what each column is (representation, level, concept,
@@ -2389,6 +2468,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     # One row per KEY found in the repository's files (#607): file, line,
     # type and only the beginning of the key.
     keys = key_found,
+    # Sheets of notes or a codebook beside the data in a spreadsheet, which
+    # codebook_check reads (#651).
+    doc_sheets = doc_sheets,
     traffic_light = tl,
     report = c(report, dv_report),
     summary_text = paste(summary_text, dv_summary_text)
@@ -2442,6 +2524,16 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
 .dv_careless_block <- function(block, ids, scale, prefix) {
   block <- as.data.frame(lapply(block, function(x)
     suppressWarnings(as.numeric(as.character(x)))))
+  # A file that repeats a person's answers on several rows (a log with one row
+  # per trial, and the questionnaire on each) holds one response: each copy
+  # was flagged, so one person was "flagged in 20 blocks" (#648, 5b3xh_v3:
+  # 5,085 rows for 255 ids). Rows that repeat an id and its answers are left
+  # out.
+  again <- duplicated(data.frame(.id = as.character(ids), block))
+  if (any(again)) {
+    block <- block[!again, , drop = FALSE]
+    ids <- ids[!again]
+  }
   n_items <- ncol(block)
   ls <- careless::longstring(block)
   iv <- careless::irv(block, na.rm = TRUE)
@@ -2531,7 +2623,9 @@ data_check <- function(paper, local_path = NULL, local_only = FALSE,
     data.frame(
       respondent       = g$respondent[1],
       source_file      = g$source_file[1],
-      n_blocks_flagged = nrow(g),
+      # scales, not rows: one scale flagged on two rows of a person is one
+      # block (#648)
+      n_blocks_flagged = length(unique(g$scale)),
       scales           = paste(sort(unique(g$scale)), collapse = "; "),
       reasons          = paste(sort(unique(g$reason)), collapse = "; "),
       max_longstring   = max(g$longstring, na.rm = TRUE),
@@ -3110,9 +3204,9 @@ data_validate_dist_facets <- function(plot_specs, max_facets = .dv_max_facets) {
         path, col_names = FALSE, .name_repair = "minimal")))
       utils::head(d, 6L)
     }, error = function(e) NULL)
-  } else if (.xls_readable(path)) {   # see .xls_readable()
+  } else if (.xls_readable(path)) {   # see .xls_readable() and .xlsx_safe_path()
     tryCatch(as.data.frame(suppressWarnings(readxl::read_excel(
-      path, col_names = FALSE, n_max = 6L, col_types = "text",
+      .xlsx_safe_path(path), col_names = FALSE, n_max = 6L, col_types = "text",
       .name_repair = "minimal"))), error = function(e) NULL)
   } else NULL
   if (is.null(raw) || nrow(raw) < 2 || ncol(raw) < 2) return(NULL)

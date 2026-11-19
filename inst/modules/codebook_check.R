@@ -102,6 +102,7 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
   columns_df <- get_prev_outputs("data_check", "table")
   structure_df <- get_prev_outputs("data_check", "structure")
   previews   <- get_prev_outputs("data_check", "previews")
+  doc_sheets <- get_prev_outputs("data_check", "doc_sheets")
   if (is.null(columns_df) || is.null(structure_df)) {
     mo <- if (!is.null(local_path)) {
       module_run(paper, "data_check", local_path = local_path,
@@ -112,6 +113,7 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
     columns_df   <- mo$table
     structure_df <- mo$structure
     previews     <- mo$previews
+    doc_sheets   <- mo$doc_sheets
   }
 
   empty_summary <- function(text) {
@@ -242,6 +244,25 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
     }
   }
 
+  # A codebook sheet inside a data spreadsheet (a "Data_Dictionary" sheet
+  # beside the data): data_check reads the data sheet as the table and sets
+  # the other aside as documentation, but the file is data, not a codebook,
+  # so it was never parsed, and the module said there was no codebook
+  # (#651). Only the sheets set aside are read, as the positional fallback
+  # would make definitions of a data sheet's rows.
+  if (is.data.frame(doc_sheets) && nrow(doc_sheets) > 0) {
+    ds <- doc_sheets[!is.na(doc_sheets$file_location) & file.exists(doc_sheets$file_location) &
+                       !doc_sheets$file_location %in% cb_rows$file_location, , drop = FALSE]
+    for (loc in unique(ds$file_location)) {
+      rows <- ds[ds$file_location == loc, , drop = FALSE]
+      pv <- parse_codebook(loc, group = rows$group[1], sheets = rows$sheet)
+      if (is.data.frame(pv) && nrow(pv) > 0) {
+        pv$paper_id <- rows$paper_id[1]
+        parsed_list[[length(parsed_list) + 1L]] <- pv
+      }
+    }
+  }
+
   # Harvest embedded labels directly from data files. haven files (sav/dta/
   # sas7bdat) are read labels-only (n_max = 0L) and need the haven package;
   # .jasp/.omv carry the same haven-style attributes but are decoded by their
@@ -268,7 +289,9 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
       # named like data_check's tables (`source_file`: the file name, or its
       # path where several files share a name)
       src <- if ("source_file" %in% names(haven_rows)) haven_rows$source_file[i] else basename(p)
-      res <- .extract_haven_labels(df, src, group = file_group)
+      # labels in another encoding (an older Stata or SPSS file) repaired
+      # first: the extractor's text patterns stop on them (.utf8_repair_df())
+      res <- .extract_haven_labels(.utf8_repair_df(df), src, group = file_group)
       if (is.null(res)) next
       # parse_method = "haven" for ALL embedded data-file labels (sav/dta/sas AND
       # jasp/omv). These labels live inside the data file, so downstream logic
@@ -1007,13 +1030,17 @@ codebook_check <- function(paper, local_path = NULL, local_only = FALSE,
 codebook_file_tabset <- function(tbl) {
   files <- unique(tbl$source_file)
   if (length(files) == 0) return(NULL)
+  # at most .report_file_tabs() files (R/report-helpers.R), with a note when
+  # there are more, so the report stays small for large deposits
+  files <- .report_file_tabs(files)
+  note <- attr(files, "note")
   if (.report_is_static(report_type())) {
     secs <- vapply(files, function(f) {
       sub <- tbl[tbl$source_file == f, setdiff(names(tbl), "source_file"),
                  drop = FALSE]
       paste(c(paste0("##### ", f), scroll_table(sub, maxrows = 25)), collapse = "\n\n")
     }, character(1))
-    return(paste(secs, collapse = "\n\n"))
+    return(paste(c(note, secs), collapse = "\n\n"))
   }
   # Blank-line-separate every block so Pandoc parses each `## file` as a tab
   # heading rather than swallowing it into the preceding table block.
@@ -1022,7 +1049,7 @@ codebook_file_tabset <- function(tbl) {
                drop = FALSE]
     paste(c(paste0("## ", f), scroll_table(sub, maxrows = 25)), collapse = "\n\n")
   }, character(1))
-  paste(c("::: {.panel-tabset}", tabs, ":::"), collapse = "\n\n")
+  paste(c(note, "::: {.panel-tabset}", tabs, ":::"), collapse = "\n\n")
 }
 
 # LLM tier 1: parse unstructured codebook text (a character vector of lines) into
@@ -3415,13 +3442,15 @@ codebook_match_llm <- function(labels_df, columns_df, codebook_vars_df,
   # inside is unchanged from before -- only the paper_id scoping is new.
   paper_ids_here <- unique(labels_df$paper_id)
   for (pid in paper_ids_here) {
-  labels_paper_idx <- which(labels_df$paper_id == pid)
-  cbk_paper_idx    <- which(codebook_vars_df$paper_id == pid)
+  # %in%, not ==: a local folder checked without a paper has paper_id NA
+  # (#651), and NA == NA selects nothing
+  labels_paper_idx <- which(labels_df$paper_id %in% pid)
+  cbk_paper_idx    <- which(codebook_vars_df$paper_id %in% pid)
 
   documented <- labels_df$label_status %in% c("labelled", "llm")
   unlabelled_idx <- labels_paper_idx[labels_df$label_status[labels_paper_idx] == "unlabelled"]
   matched_norm <- unique(normalize_varname(
-    labels_df$codebook_variable[documented & labels_df$paper_id == pid &
+    labels_df$codebook_variable[documented & labels_df$paper_id %in% pid &
                                 !is.na(labels_df$codebook_variable)]
   ))
   unmatched_vars <- codebook_vars_df[
