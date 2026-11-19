@@ -12,18 +12,18 @@
 #'
 #' **References without a DOI** are compared with Crossref's match when its title is almost the cited title (a character similarity of at least 0.9), or is similar and has a Crossref score of at least `suggest_score`; the others are searched by their title in Crossref, DataCite and Semantic Scholar. A record whose title, authors, journal or year differ flags the reference. A record that agrees has its DOI suggested, if it is the only work with a DOI, that title and that year among the records found. A reference found in none of the sources is listed as not found, not flagged: most are books, reports and web pages that these sources do not hold, but a journal article that cannot be found may have a wrong title or may not exist. Each reference without a suggested DOI is listed with the reason. Titles of fewer than three words, and works the reference calls unpublished, are not searched.
 #'
-#' **Books** and other works not cited as articles (as the PDF reader classifies the reference) are never flagged when they have no DOI, because the record found by their title is often not the cited work: another edition, a review of the book, an encyclopedia entry, or a record that lists a volume's editors as its authors. They can still get a suggested DOI, when the record lists the cited authors or lists no authors (as publishers' records of books often do). A journal article is not suggested for a cited book, as a journal article with a book's title is usually a review of it; the exception is a reference that names the journal outside the title, which is probably an article that the PDF reader wrongly classified as a book.
+#' **Books** and other works not cited as articles (as the PDF reader classifies the reference) are never flagged when they have no DOI, because the record found by their title is often not the cited work. They can still get a suggested DOI, when the record lists the cited authors or lists no authors (as publishers' records of books often do). A journal article is not suggested for a cited book, as a journal article with a book's title is usually a review of it; the exception is a reference that names the journal outside the title, which is probably an article that the PDF reader wrongly classified as a book.
 #'
 #' **Fields.** Differences that are usually harmless are tolerated:
 #'
 #' - **DOI**: URL wrappers, spaces, punctuation and the old double slash (`10.1037//`). A cited DOI that the registry lists as an alias of the record's DOI is a note.
 #' - **Year**: up to `year_tolerance` years, or the year of the record's online, print or issue date. A year off by one more year is a note when it is near the year the DOI was created or the work accepted.
-#' - **Authors**: the record's first `max_authors` surnames must all be cited, its first author first. Surnames are compared on their letters (accents, spacing and case are ignored), allowing shortened compound surnames and particles. A list truncated with "et al." needs only the authors it cites, and given and family names swapped on one side are a note.
+#' - **Authors**: the record's first `max_authors` surnames must all be cited, its first author first. Surnames are compared on their letters (accents, spacing and case are ignored), allowing shortened compound surnames and particles. A list truncated with "et al." needs only the authors it cites, and given and family names swapped on one side are a note (as they are often metadata errors).
 #' - **Journal**: ISO 4 abbreviations, acronyms, "&" for "and", British and American spellings, a missing subtitle, and a conference's proceedings cited without "Proceedings of", or by the short name in the conference's name ("AAAI" for "Proceedings of the AAAI Conference on Artificial Intelligence"). No word may be skipped. A journal cited by another of its names is accepted when Wikidata gives that name for the journal or for its predecessor or successor, as Crossref's records of back issues may give a journal's current name (a 1972 article in the Journal of the Royal Statistical Society, Series B (Methodological), is in its successor, Series B: Statistical Methodology); other names may be flagged. Only journal articles are compared.
 #' - **Title**: case, punctuation, Unicode forms, a missing subtitle, a translation in square brackets, and British, Canadian and Australian spellings (folded to the American from VarCon's list of spelling variants). Any other difference, even of one word, is flagged.
 #' - **Preprints**: a cited preprint is not compared on its year, journal or title with its published version, which is a note. A reference cited in a journal whose work is found only as a preprint is flagged, unless its venue is a conference.
 #'
-#' Each limit errs towards not flagging, to keep false alarms few; they are judgement calls set on the papers described under validation, not calibrated. Raising `title_similarity` or `suggest_score` compares fewer records, so it gives fewer flags but also fewer suggested DOIs. Entries that were not read reliably from the PDF (two references read as one, a DOI read without its reference) are listed and not compared. The report shows each difference as a diff of the printed reference and the record.
+#' Each limit errs towards not flagging, to keep false alarms few; they are judgement calls set on the papers described under validation. Raising `title_similarity` or `suggest_score` compares fewer records, so it gives fewer flags but also fewer suggested DOIs. Entries that were not read reliably from the PDF (two references read as one, a DOI read without its reference) are listed and not compared. The report shows each difference as a diff of the printed reference and the record.
 #'
 #' <validation>In 30 randomly sampled Psychological Science papers (1,269 references, November 2026), the module flagged 29 references, of which 24 were citation errors when checked by hand. Of the 706 references without a DOI, 561 were given a suggested DOI; 63 of the 64 checked by hand were the cited work. It flagged 140 of 141 errors added to references with a DOI. On CiteTracer's synthetic benchmark (`data-raw/ref_accuracy_citetracer.R`), it flagged or listed as not found 68% of citations with a fabricated field, and flagged 0.7% of real citations. The rules were developed on these data, so they may perform less well on others.</validation>
 #'
@@ -44,11 +44,11 @@
 #'   stripping case, punctuation, footnote markers and diacritics) for a record
 #'   to be taken as the cited work. Its title must then be the cited title, by
 #'   the rules under Details.
-#' @param min_mismatches how many of the fields most affected by reading the
-#'   PDF (title and authors) must disagree with the record before a reference
-#'   is flagged. The default (1) flags a single title or author mismatch. Set
-#'   to 2 to require both; in the validation this lost all seven author
-#'   errors and all ten title errors, so it is not recommended. A mismatched
+#' @param min_mismatches deprecated, and will be removed. How many of the
+#'   fields most affected by reading the PDF (title and authors) must disagree
+#'   with the record before a reference is flagged. The default (1) flags a
+#'   single title or author mismatch. Set to 2 to require both; in the
+#'   validation this lost all seven author errors and all ten title errors. A mismatched
 #'   DOI, journal or year flags on its own, whatever this setting.
 #' @param year_tolerance how many years the cited year may differ from the
 #'   retrieved record before the year is flagged. The default (1) allows a
@@ -57,10 +57,10 @@
 #'   year (apart from the date and version rules under Details), or higher
 #'   to be more lenient.
 #' @param suggest_score for references with no DOI, the minimum Crossref
-#'   relevance score for a match with a similar title to be compared and its
-#'   DOI suggested. Low-scoring matches are often the wrong paper; below this
-#'   score, a match is compared, and suggested when nothing differs, only when
-#'   it has almost the cited title. Raise to be more conservative, lower to
+#'   relevance score for Crossref's match to be compared with the
+#'   reference, and its DOI suggested when nothing differs. A match with a
+#'   lower score is compared only when it has almost the cited title, as
+#'   low-scoring matches are often the wrong paper. Raise to be more conservative, lower to
 #'   suggest more.
 #'   Scores of 1 or less, as bibr 12.x exports give, are on a 0-1 scale and
 #'   are compared with `suggest_score / 100`.
@@ -113,6 +113,9 @@
 ref_accuracy <- function(paper, max_authors = 6, title_similarity = 0.7,
                          min_mismatches = 1, year_tolerance = 1,
                          suggest_score = 70, semantic_scholar = TRUE) {
+  if (!missing(min_mismatches))
+    warning("`min_mismatches` is deprecated and will be removed: set to 2, it misses ",
+            "citation errors in a title or in the authors.", call. = FALSE)
   # table ----
   bib <- paper_table(paper, "bib")
   bib_match <- paper_table(paper, "bib_match")

@@ -146,7 +146,7 @@ test_that("ref_accuracy", {
   auth <- demopaper()
   auth$bib$authors[auth$bib$bib_id == checked_id] <- "Nonexistent, A; Madeup, B"
   loose  <- module_run(auth, module)                       # default = 1
-  strict <- module_run(auth, module, min_mismatches = 2)   # conservative
+  expect_warning(strict <- module_run(auth, module, min_mismatches = 2), "deprecated")
   # the lone author mismatch adds one only at the sensitive setting
   expect_equal(loose$summary_table$incoherent, 3)
   expect_equal(strict$summary_table$incoherent, 1)
@@ -1204,7 +1204,7 @@ test_that("ref_accuracy names the missing author, and ref_summary reports the sa
 
   # at min_mismatches = 2 a lone author mismatch is not flagged, and its
   # mismatch column is FALSE, so that ref_summary does not report it
-  mo <- module_run(p, "ref_accuracy", min_mismatches = 2)
+  expect_warning(mo <- module_run(p, "ref_accuracy", min_mismatches = 2), "deprecated")
   r <- mo$table[mo$table$bib_id == 1, ]
   expect_false(r$incoherent)
   expect_false(r$author_mismatch)
@@ -1378,7 +1378,7 @@ test_that("ref_accuracy compares a reference without a DOI only with a record it
   p$bib_match$score[k] <- 85
   tbl <- module_run(p, "ref_accuracy")$table
   expect_equal(tbl$author_note[tbl$bib_id == 3], "Scheel is in the record but not in the reference; Isager is in the record but not in the reference")
-  tbl <- module_run(p, "ref_accuracy", min_mismatches = 2)$table
+  expect_warning(tbl <- module_run(p, "ref_accuracy", min_mismatches = 2)$table, "deprecated")
   expect_false(tbl$incoherent[tbl$bib_id == 3])
   expect_true(tbl$doi_suggested[tbl$bib_id == 3])
 
